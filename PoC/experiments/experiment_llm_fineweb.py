@@ -7,6 +7,10 @@ import os
 import time
 import random
 from tokenizers import Tokenizer, ByteLevelBPETokenizer
+try:
+    import tiktoken
+except ImportError:
+    pass
 
 # --- ENVIRONMENT & IMPORTS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -45,8 +49,12 @@ REGENERATION_THRESHOLD = 0.01
 REGENERATION_PERCENTAGE = 0.001
 REGENERATION_INTERVAL = 10
 
+# TOKENIZER CONFIG
+USE_TIKTOKEN = False
+TIKTOKEN_ENCODING = "o200k_base" # e.g. "o200k_base" (GPT-4o) or "cl100k_base" (GPT-4)
+CUSTOM_VOCAB_SIZE = 8192 # Used only if USE_TIKTOKEN is False
+
 # OPTIMIZER CONFIG
-VOCAB_SIZE = 8192
 RESET_OPTIMIZER_ON_LOAD = False
 OVERWRITE_LR_OF_CKPT = True
 LEARNING_RATE = 1e-4
@@ -60,13 +68,14 @@ SCHEDULER_ETA_MIN = 1e-6
 def get_or_train_tokenizer():
     CKPT_DIR = os.path.join(os.path.dirname(__file__), 'ckpt')
     os.makedirs(CKPT_DIR, exist_ok=True)
-    TOKENIZER_PATH = os.path.join(CKPT_DIR, "poc_tokenizer_8k.json")
+    k_size = CUSTOM_VOCAB_SIZE // 1000
+    TOKENIZER_PATH = os.path.join(CKPT_DIR, f"poc_tokenizer_{k_size}k.json")
     
     if os.path.exists(TOKENIZER_PATH):
-        print(f"📚 Loading existing 8k BPE Tokenizer from {TOKENIZER_PATH}...")
+        print(f"📚 Loading existing {k_size}k BPE Tokenizer from {TOKENIZER_PATH}...")
         return Tokenizer.from_file(TOKENIZER_PATH)
     
-    print("📚 Training new 8k BPE Tokenizer from FineWeb slice...")
+    print(f"📚 Training new {k_size}k BPE Tokenizer from FineWeb slice...")
     tokenizer = ByteLevelBPETokenizer()
     
     # We need a slice to train.
@@ -79,7 +88,7 @@ def get_or_train_tokenizer():
         count += 1
         if count >= 100000: break
     
-    tokenizer.train_from_iterator(texts, vocab_size=VOCAB_SIZE, min_frequency=2, special_tokens=[
+    tokenizer.train_from_iterator(texts, vocab_size=CUSTOM_VOCAB_SIZE, min_frequency=2, special_tokens=[
         "<s>",
         "<pad>",
         "</s>",
@@ -91,7 +100,44 @@ def get_or_train_tokenizer():
     print(f"✅ Tokenizer saved to {TOKENIZER_PATH}")
     return tokenizer
 
-TOKENIZER = get_or_train_tokenizer()
+class TiktokenWrapper:
+    def __init__(self, encoding_name="o200k_base"):
+        try:
+            import tiktoken
+        except ImportError:
+            raise ImportError("tiktoken is not installed. Please `pip install tiktoken` or set USE_TIKTOKEN = False.")
+        self.tokenizer = tiktoken.get_encoding(encoding_name)
+        self.eos_id = self.tokenizer.eot_token
+        
+    def encode(self, text):
+        class Encoded:
+            def __init__(self, ids):
+                self.ids = ids
+        return Encoded(self.tokenizer.encode(text, allowed_special="all"))
+        
+    def decode(self, ids):
+        return self.tokenizer.decode(ids)
+        
+    def get_vocab_size(self):
+        return self.tokenizer.n_vocab
+        
+    def token_to_id(self, token):
+        if token == "</s>" or token == "<|endoftext|>":
+            return self.eos_id
+        try:
+            return self.tokenizer.encode(token, allowed_special="all")[0]
+        except Exception:
+            return self.eos_id
+
+def get_tokenizer():
+    if USE_TIKTOKEN:
+        print(f"📚 Loading Tiktoken tokenizer: {TIKTOKEN_ENCODING}...")
+        return TiktokenWrapper(TIKTOKEN_ENCODING)
+    else:
+        return get_or_train_tokenizer()
+
+TOKENIZER = get_tokenizer()
+VOCAB_SIZE = TOKENIZER.get_vocab_size()
 
 # --- DATASET ---
 
@@ -314,7 +360,8 @@ def main():
     print(f"GENERATION_LENGTH: {GENERATION_LENGTH}")
     print(f"THINK_GAP: {THINK_GAP}")
     print(f"ACTIVATION: {ACTIVATION}")
-    print(f"VOCAB_SIZE: {VOCAB_SIZE}")
+    tiktoken_info = f", Encoding: {TIKTOKEN_ENCODING}" if USE_TIKTOKEN else ""
+    print(f"VOCAB_SIZE: {VOCAB_SIZE} (Tiktoken: {USE_TIKTOKEN}{tiktoken_info})")
     print(f"DEVICE: {DEVICE}")
     print(f"NEUROGENESIS: Enabled={NEUROGENESIS_ENABLED}, MaxLossInc={MAX_LOSS_INCREASE}, Amount={NEUROGENESIS_AMOUNT}")
     if DARWINIAN_REGENERATION:
@@ -442,6 +489,11 @@ def main():
     # RealNet now returns (Batch, Steps, VocabSize) directly due to built-in decoder.
     def flatten_logits(out):
         return out.reshape(-1, dataset.get_vocab_size())
+
+    # --- MODEL INFO ---
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"\n--- MODEL INFO ---")
+    print(f"Total Trainable Parameters: {total_params:,}")
 
     # --- INITIAL TESTS ---
     print("\n--- GENERATION PREVIEW ---")
