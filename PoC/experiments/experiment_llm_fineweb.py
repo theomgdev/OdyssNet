@@ -6,6 +6,7 @@ import sys
 import os
 import time
 import random
+import math
 from tokenizers import Tokenizer, ByteLevelBPETokenizer
 try:
     import tiktoken
@@ -62,10 +63,11 @@ LEARNING_RATE = 1e-4
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
 TIE_EMBEDDINGS = False
 
-# SCHEDULER CONFIG
-USE_SCHEDULER = False
-SCHEDULER_T0 = 100
-SCHEDULER_ETA_MIN = 1e-6 
+# SCHEDULER CONFIG (Modern LLM Standard)
+USE_SCHEDULER = True
+WARMUP_STEPS = 500       # Linear warmup phase
+MAX_STEPS = 5000         # Total steps for cosine decay to reach minimum
+MIN_LR_RATIO = 0.01      # Decay down to 1% of max LR (i.e., 1e-6)
 
 # --- TOKENIZER ---
 def get_or_train_tokenizer():
@@ -394,7 +396,7 @@ def main():
     else:
         print(f"PHOENIX (Regeneration): Disabled")
     print(f"RESET_OPTIM_ON_LOAD: {RESET_OPTIMIZER_ON_LOAD}")
-    print(f"SCHEDULER: Enabled={USE_SCHEDULER}, T0={SCHEDULER_T0}, MinLR={SCHEDULER_ETA_MIN}")
+    print(f"SCHEDULER: Enabled={USE_SCHEDULER}, Warmup={WARMUP_STEPS}, MaxSteps={MAX_STEPS}, MinRatio={MIN_LR_RATIO}")
     print(f"LEARNING_RATE: {LEARNING_RATE}")
     print(f"OVERWRITE_LR_OF_CKPT: {OVERWRITE_LR_OF_CKPT}")
     print(f"---------------------")
@@ -540,10 +542,18 @@ def main():
 
     scheduler = None
     if USE_SCHEDULER:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        def get_lr_multiplier(step):
+            if step < WARMUP_STEPS:
+                return float(step) / float(max(1, WARMUP_STEPS))
+            if step > MAX_STEPS:
+                return MIN_LR_RATIO
+            decay_ratio = (step - WARMUP_STEPS) / (MAX_STEPS - WARMUP_STEPS)
+            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+            return MIN_LR_RATIO + coeff * (1.0 - MIN_LR_RATIO)
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
             trainer.optimizer,
-            T_0=SCHEDULER_T0,
-            eta_min=SCHEDULER_ETA_MIN
+            lr_lambda=get_lr_multiplier
         )
 
     data_iterator = iter(dataloader)
