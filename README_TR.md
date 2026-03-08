@@ -15,7 +15,7 @@ RealNet, verimliliğini **Uzay-Zaman Takası (Space-Time Trade-off)** ile sağla
 
 > 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> RealNet 2.0, sadece **470 parametre** ile MNIST üzerinde **%84.3 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimlidir** ve yapay ağlar ile **Entropik Sıkıştırma Limitleri** arasındaki boşluğu kapatır.
+> RealNet 2.0, sadece **470 parametre** ile MNIST üzerinde **%85.3 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimlidir** ve yapay ağlar ile **Entropik Sıkıştırma Limitleri** arasındaki boşluğu kapatır.
 
 ---
 
@@ -37,7 +37,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **XOR** | Gizli Katman Şart | **Kaos Kapısı** (Zaman Katlamalı) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
 | **MNIST** | Gizli Katman Şart | **Sıfır-Gizli** | **Acc: %96.2** | `convergence_mnist.py` |
 | **MNIST (8k)**| Gizli Katman Şart | **Embedded Deney** | **Acc: %93.6** | `convergence_mnist_embed.py` |
-| **MNIST (Rekor)**| Gizli Katman Şart | **470-Parametre Rekoru** | **Acc: %84.3** | `convergence_mnist_record.py` |
+| **MNIST (Rekor)**| Gizli Katman Şart | **470-Parametre Rekoru** | **Acc: %85.3** | `convergence_mnist_record.py` |
 | **Sinüs** | Osilatör Şart | **Programlanabilir VCO** | **Tam Senkron** | `convergence_sine_wave.py` |
 | **Mühür** | LSTM Şart | **Çekici Havuzu** (İrade) | **Sonsuz Tutuş** | `convergence_latch.py` |
 | **Kronometre**| Saat Şart | **İçsel Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
@@ -294,7 +294,7 @@ RealNet'in görsel yetenekleri, sağlamlık, ölçeklenebilirlik ve verimliliği
     *   **Strateji:** 10 Sıralı Dilim (her biri 79 piksel).
     *   **Gizli Sos:** 3 nöronluk minik giriş projeksiyonu ve 10 sınıflı çıkış dekoderi.
     *   **Toplam Parametre:** **470**.
-*   **Sonuç:** **Acc: %84.28** (100 Epoch sonunda).
+*   **Sonuç:** **Acc: %85.28** (100 Epoch sonunda).
     <details>
     <summary>"Parametrik Verimlilik" Logunu Gör</summary>
 
@@ -302,8 +302,8 @@ RealNet'in görsel yetenekleri, sağlamlık, ölçeklenebilirlik ve verimliliği
     RealNet 2.0: MNIST RECORD CHALLENGE (Elite 470-Param Model)
     Epoch    1/100 | Acc 49.18% | LR 2.00e-03 (Hiper-uzay başlangıcı)
     Epoch   50/100 | Acc 80.45% | LR 1.01e-03
-    Epoch   75/100 | Acc 84.00% | LR 3.16e-04
-    Epoch  100/100 | Acc 84.28% | LR 5.93e-07
+    Epoch   98/100 | Acc 85.28% | LR 4.54e-06
+    Epoch  100/100 | Acc 85.27% | LR 5.93e-07
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_record.py`

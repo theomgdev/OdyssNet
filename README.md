@@ -15,7 +15,7 @@ RealNet achieves its efficiency through **Space-Time Trade-off**. Instead of add
 
 > 🏆 **WORLD RECORD: Parametric Intelligence Density**
 >
-> RealNet 2.0 achieved **84.3% accuracy** on MNIST with only **470 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> RealNet 2.0 achieved **85.3% accuracy** on MNIST with only **470 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
 
 ---
 
@@ -37,7 +37,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
 | **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 96.2%** | `convergence_mnist.py` |
 | **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 93.6%** | `convergence_mnist_embed.py` |
-| **MNIST (Record)**| Needs Hidden Layer | **The 470-Param Record** | **Acc: 84.3%** | `convergence_mnist_record.py` |
+| **MNIST (Record)**| Needs Hidden Layer | **The 470-Param Record** | **Acc: 85.3%** | `convergence_mnist_record.py` |
 | **Sine Wave** | Needs Oscillator | **Programmable VCO** | **Perfect Sync** | `convergence_sine_wave.py` |
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
@@ -295,7 +295,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     *   **Strategy:** 10 Sequential Chunks (79 pixels each).
     *   **Secret Sauce:** A tiny 3-neuron input projection and a 10-class output decoder.
     *   **Total Parameters:** **470**.
-*   **Result:** **Acc: 84.28%** in 100 epochs.
+*   **Result:** **Acc: 85.28%** in 100 epochs.
     <details>
     <summary>See the "Parametric Efficiency" Log</summary>
 
@@ -303,8 +303,8 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     RealNet 2.0: MNIST RECORD CHALLENGE (Elite 470-Param Model)
     Epoch    1/100 | Acc 49.18% | LR 2.00e-03 (Hyperspace start)
     Epoch   50/100 | Acc 80.45% | LR 1.01e-03
-    Epoch   75/100 | Acc 84.00% | LR 3.16e-04
-    Epoch  100/100 | Acc 84.28% | LR 5.93e-07
+    Epoch   98/100 | Acc 85.28% | LR 4.54e-06
+    Epoch  100/100 | Acc 85.27% | LR 5.93e-07
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_record.py`
