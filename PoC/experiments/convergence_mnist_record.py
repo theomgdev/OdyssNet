@@ -85,7 +85,7 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
     trainer.optimizer = optimizer
     
-    NUM_EPOCHS = 100
+    NUM_EPOCHS = 1000
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-7)
     
     print(f"Training with Batch Size: {BATCH_SIZE} for {NUM_EPOCHS} Epochs...")
