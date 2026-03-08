@@ -51,8 +51,8 @@ REGENERATION_INTERVAL = 10
 
 # TOKENIZER CONFIG
 USE_TIKTOKEN = False
-TIKTOKEN_ENCODING = "o200k_base" # e.g. "o200k_base" (GPT-4o) or "cl100k_base" (GPT-4)
-CUSTOM_VOCAB_SIZE = 8192 # Used only if USE_TIKTOKEN is False
+TIKTOKEN_ENCODING = "o200k_base"
+CUSTOM_VOCAB_SIZE = 8192
 
 # OPTIMIZER CONFIG
 RESET_OPTIMIZER_ON_LOAD = False
@@ -414,7 +414,6 @@ def main():
          )
 
     # DataLoader for IterableDataset
-    # Streaming with 1 worker allows background downloading without duplication
     dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
@@ -481,12 +480,10 @@ def main():
             print(f"⚠️ Failed to load/inspect checkpoint: {e}. Starting fresh.")
 
     # CrossEntropy
-    # Note: 'ignore_index' is less critical now as outputs are perfectly aligned!
     criterion = nn.CrossEntropyLoss(label_smoothing=0.0)
     trainer.loss_fn = criterion
 
     # OUTPUT TRANSFORM: Flatten (Batch, Steps, Out) -> (N, Out)
-    # RealNet now returns (Batch, Steps, VocabSize) directly due to built-in decoder.
     def flatten_logits(out):
         return out.reshape(-1, dataset.get_vocab_size())
 
