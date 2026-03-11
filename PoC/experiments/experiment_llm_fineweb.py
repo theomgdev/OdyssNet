@@ -478,7 +478,7 @@ def main():
 
                     elif action == '2':
                         print(f"⚠️ Transplanting Weights...")
-                        transplant_weights(model, CKPT_PATH, device=DEVICE)
+                        transplant_weights(model, CKPT_PATH, device=DEVICE, init_new='micro_quiet')
                         print(f"🧬 Transplant complete.")
 
                     else:
