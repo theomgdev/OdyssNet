@@ -57,7 +57,7 @@ CUSTOM_VOCAB_SIZE = 8192
 
 # OPTIMIZER CONFIG
 RESET_OPTIMIZER_ON_LOAD = False
-OVERWRITE_LR_OF_CKPT = False
+OVERWRITE_LR_OF_CKPT = True
 LEARNING_RATE = 1e-4
 
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
@@ -80,9 +80,9 @@ def get_or_train_tokenizer():
         print(f"📚 Loading existing {k_size}k BPE Tokenizer from {TOKENIZER_PATH}...")
         return Tokenizer.from_file(TOKENIZER_PATH)
     
-    print(f"📚 Training new {k_size}k BPE Tokenizer from FineWeb slice...")
+    print(f"📚 Training new {k_size}k BPE Tokenizer from data slice...")
     tokenizer = ByteLevelBPETokenizer()
-    dataset = load_dataset("HuggingFaceFW/fineweb-edu", name="CC-MAIN-2024-10", split="train", streaming=True)
+    dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
     
     texts = []
     count = 0
@@ -144,15 +144,15 @@ VOCAB_SIZE = TOKENIZER.get_vocab_size()
 
 # --- DATASET ---
 
-class FineWebIterableDataset(torch.utils.data.IterableDataset):
+class TinyStoriesIterableDataset(torch.utils.data.IterableDataset):
     def __init__(self, seq_len, tokenizer, skip_offset=0, debug=False):
         self.seq_len = seq_len
         self.tokenizer = tokenizer
         self.skip_offset = skip_offset
         self.debug = debug
         self.current_doc_index = skip_offset
-        print("🌊 Connecting to FineWeb-Edu (CC-MAIN-2024-10)...")
-        self.dataset = load_dataset("HuggingFaceFW/fineweb-edu", name="CC-MAIN-2024-10", split="train", streaming=True)
+        print("🌊 Connecting to the dataset...")
+        self.dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
 
     def __iter__(self):
         start_skip = self.skip_offset
@@ -387,7 +387,7 @@ def calculate_optimal_batch_size(model, device, seq_len, think_gap, truncated_bp
 def main():
     global NUM_NEURONS, BATCH_SIZE # Allow updating global config if needed
 
-    print(f"🚀 RealNet-1B (FineWeb Streaming) - NATIVE THINKING MODE")
+    print(f"🚀 RealNet-LLM (TinyStories Streaming) - NATIVE THINKING MODE")
     print(f"--- Configuration ---")
     print(f"SEQ_LEN: {SEQ_LEN}")
     print(f"BATCH_SIZE: {BATCH_SIZE} (Will Auto-Tune if -1)")
@@ -421,8 +421,8 @@ def main():
     # --- CHECKPOINT PRE-LOAD (For Data Resume) ---
     CKPT_DIR = os.path.join(os.path.dirname(__file__), 'ckpt')
     os.makedirs(CKPT_DIR, exist_ok=True)
-    CKPT_PATH = os.path.join(CKPT_DIR, f'llm_fineweb_{ACTIVATION}_latest.pth')
-    CKPT_BEST_PATH = os.path.join(CKPT_DIR, f'llm_fineweb_{ACTIVATION}_best.pth')
+    CKPT_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{ACTIVATION}_latest.pth')
+    CKPT_BEST_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{ACTIVATION}_best.pth')
 
     resume_doc_index = 0
     start_epoch = 0
@@ -439,7 +439,7 @@ def main():
         except:
              pass
 
-    dataset = FineWebIterableDataset(SEQ_LEN, TOKENIZER, skip_offset=resume_doc_index, debug=False)
+    dataset = TinyStoriesIterableDataset(SEQ_LEN, TOKENIZER, skip_offset=resume_doc_index, debug=False)
 
     # --- MODEL SETUP ---
     model, trainer, input_ids, output_ids = initialize_system(VOCAB_SIZE, NUM_NEURONS, DEVICE, input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, lr=LEARNING_RATE, activation=ACTIVATION)
@@ -537,7 +537,7 @@ def main():
     # --- INITIAL TESTS ---
     print("\n--- GENERATION PREVIEW ---")
     try:
-        gen_text = generate(model, TOKENIZER, start_str="The meaning of life is")
+        gen_text = generate(model, TOKENIZER, start_str="Once upon a time")
         print(f"Sample: {gen_text}\n")
     except Exception as e:
         print(f"Error: {e}")
@@ -657,7 +657,7 @@ def main():
         # --- PERIODIC GENERATION ---
         print("--- GENERATION ---")
         try:
-            gen_text = generate(model, TOKENIZER, start_str="The meaning of life is ")
+            gen_text = generate(model, TOKENIZER, start_str="Once upon a time ")
             print(gen_text)
         except Exception as e:
             print(f"Generation Error: {e}")
