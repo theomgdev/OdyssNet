@@ -74,9 +74,11 @@ class Neurogenesis:
         new_W = torch.zeros(new_n, new_n, device=device)
         new_W[:old_n, :old_n] = model.W.data
         
-        # Symmetry breaking
-        noise_std = 1e-5
+        # micro_quiet init for new connections:
+        noise_std = 1e-3
         new_W[:old_n, old_n:] = torch.randn(old_n, amount, device=device) * noise_std
+        new_W[old_n:, :old_n] = torch.randn(amount, old_n, device=device) * noise_std
+        new_W[old_n:, old_n:] = torch.randn(amount, amount, device=device) * noise_std
         
         # Expand B
         new_B = torch.zeros(new_n, device=device)

@@ -83,7 +83,7 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None):
     return checkpoint
 
 
-def transplant_weights(model, checkpoint_path, device='cpu', verbose=True):
+def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_new='micro_quiet_8bit'):
     """
     🧬 Weight Transplantation: Transfer learned weights from a checkpoint to a model,
     even if the architectures (num_neurons) don't match.
@@ -95,13 +95,16 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True):
     
     How it works:
     - For each parameter (W, B, LayerNorm), the overlapping region is copied.
-    - Non-overlapping regions keep their initialized values.
+    - Non-overlapping regions are initialized with `init_new` strategy (default: 'micro_quiet_8bit').
     
     Args:
         model: The target RealNet model instance (already initialized).
         checkpoint_path (str): Path to the source checkpoint.
         device (str): Device to load tensors to.
         verbose (bool): If True, prints transplant statistics.
+        init_new (str): Weight init strategy for new (non-overlapping) regions.
+            Default 'micro_quiet_8bit' — stays silent while existing weights dominate,
+            safe for fp16 AMP and 8-bit optimizers.
     
     Returns:
         dict: Statistics about the transplant operation.
@@ -111,6 +114,17 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True):
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     source_state = checkpoint.get('model_state_dict', checkpoint)
+    
+    # Re-init core weight matrix with the safe strategy BEFORE transplanting
+    if init_new is not None and hasattr(model, '_apply_init'):
+        with torch.no_grad():
+            model._apply_init(model.W.data, init_new)
+            if hasattr(model, 'embed') and model.embed is not None:
+                model._apply_init(model.embed.weight.data, init_new)
+            if hasattr(model, 'proj') and model.proj is not None:
+                model._apply_init(model.proj.weight.data, init_new)
+            if hasattr(model, 'output_decoder') and model.output_decoder is not None:
+                model._apply_init(model.output_decoder.weight.data, init_new)
     
     target_state = model.state_dict()
     
@@ -164,7 +178,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True):
     model.load_state_dict(target_state)
     
     if verbose:
-        print("🧬 Weight Transplantation Complete!")
+        print(f"🧬 Weight Transplantation Complete! (New regions: {init_new})")
         print(f"   Total Parameters: {stats['total_params']:,}")
         print(f"   Transplanted: {stats['transplanted_params']:,} ({100*stats['transplanted_params']/stats['total_params']:.1f}%)")
         print(f"   New (Initialized): {stats['new_params']:,} ({100*stats['new_params']/stats['total_params']:.1f}%)")
