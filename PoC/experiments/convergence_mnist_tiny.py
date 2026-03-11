@@ -6,7 +6,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
 def main():
     print("RealNet 2.0: TINY EXPERIMENT (7x7 Input)...")
@@ -39,7 +39,6 @@ def main():
         dropout_rate=0.05, 
         device=DEVICE
     )
-    trainer = RealNetTrainer(model, device=DEVICE)
     
     transform = transforms.Compose([
         transforms.Resize((7, 7)), # Downscaling for experimental constraints
@@ -57,9 +56,9 @@ def main():
     test_subset = Subset(test_dataset, range(1000))
     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+    trainer = RealNetTrainer(model, device=DEVICE,
+                             chaos_config=ChaosGradConfig.default(lr=1e-3))
     loss_fn = nn.MSELoss()
-    trainer.optimizer = optimizer
     trainer.loss_fn = loss_fn
     
     NUM_EPOCHS = 50 

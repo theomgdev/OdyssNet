@@ -150,23 +150,38 @@ Runs the dynamic system.
 
 ## RealNet Trainer (`realnet.training.trainer`)
 
-The `RealNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients.
+The `RealNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. It now supports the **ChaosGrad** optimizer and **TemporalScheduler** for RealNet-native training.
 
 ### Initialization
 
 ```python
-from realnet import RealNetTrainer
+from realnet import RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
+# Standard (Legacy Compatible — uses AdamW8bit or AdamW)
+trainer = RealNetTrainer(model, device='cuda')
+
+# ChaosGrad Only — Fixed LR, No Scheduler (Observe with your own LR)
+trainer = RealNetTrainer(model, lr=1e-3, device='cuda',
+                         use_chaos_grad=True)
+# Or with a specific config:
+trainer = RealNetTrainer(model, lr=1e-3, device='cuda',
+                         chaos_config=ChaosGradConfig.default(lr=1e-3))
+
+# Full Featured — ChaosGrad + TemporalScheduler
 trainer = RealNetTrainer(
     model, 
-    optimizer=None,      # Optional: Custom Optimizer
-    loss_fn=None,        # Optional: Custom Loss Function (Default: MSELoss)
-    lr=1e-4,             # Initial Learning Rate (Stored in trainer.initial_lr)
+    lr=1e-4,
     device='cuda',
+    chaos_config=ChaosGradConfig.default(lr=1e-4),       # ChaosGrad Optimizer
+    scheduler_config=TemporalSchedulerConfig.adaptive(),  # Adaptive Scheduler
     gradient_persistence=0.0,   # Ghost Gradients (Persistence)
     synaptic_noise=1e-6         # Thermal Noise (Default: 1e-6)
 )
 ```
+
+> **Note:** When using ChaosGrad without a scheduler, LR stays fixed at the value you set. 
+> ChaosGrad's per-parameter adaptive scaling and gradient centralization still apply — 
+> you get all the optimizer benefits without automatic LR decay.
 
 **Auto-Optimization (bitsandbytes):**
 *   If `optimizer` is `None` AND `device` is `'cuda'`, the trainer will attempt to load `bitsandbytes` and use `AdamW8bit`.
@@ -218,6 +233,112 @@ Triggers **Darwinian Regeneration**. Instead of pruning weak weights, this metho
 *   **Purpose**: Allows the network to escape local minima and constantly explore new pathways. Transforms "dead" capacity into "fresh" capacity.
 *   **Returns**: `(revived_count, total_synapses)`
 
+#### `trainer.get_diagnostics()`
+Returns comprehensive training diagnostics including optimizer and scheduler health.
+
+#### `trainer.get_input_health()`
+Returns input gradient health score (0.0 = dead, 1.0 = healthy). Detects **input-blind local minima** in large networks.
+
+#### `trainer.get_spectral_radius()`
+Returns estimated spectral radius of the W matrix (chaos engine stability metric).
+
+---
+
+## ChaosGrad Optimizer (`realnet.training.chaos_optimizer`)
+
+A **RealNet-native optimizer** that understands and exploits the chaos chamber dynamics. Unlike generic AdamW which treats all parameters identically, ChaosGrad classifies parameters into groups and applies different strategies.
+
+### Parameter Groups
+| Group | Parameters | Strategy |
+| :--- | :--- | :--- |
+| **chaos_core** | W matrix (NxN) | Spectral monitoring, adaptive LR, plateau escape |
+| **projections** | Embeddings, Projections, Decoder | Standard LR with configurable decay |
+| **lightweight** | Bias, Scale, Norm | Higher LR, no weight decay |
+
+### Key Features
+*   **Gradient Centralization**: Removes gradient mean for faster convergence.
+*   **Adaptive LR**: Per-parameter LR scaling based on gradient consistency.
+*   **Plateau Escape**: Controlled gradient perturbation when training stalls.
+*   **Spectral Clipping**: Keeps chaos core's spectral radius bounded (edge-of-chaos control).
+*   **Input Sentinel**: Monitors input gradient health to detect networks that ignore input.
+
+### Pre-built Configurations
+
+```python
+from realnet import ChaosGradConfig
+
+ChaosGradConfig.default(lr=1e-4)       # Balanced (Standard training)
+ChaosGradConfig.aggressive(lr=3e-4)    # Explorer (Fresh/small networks)
+ChaosGradConfig.finetune(lr=1e-5)      # Conservative (Fine-tuning)
+ChaosGradConfig.large_network(lr=1e-4) # Sentinel (1000+ neuron networks)
+ChaosGradConfig.tiny_network(lr=0.01)  # Minimal (XOR, Identity)
+```
+
+### Direct Usage
+
+```python
+from realnet import ChaosGrad
+
+# Classify parameters and create optimizer manually
+param_groups, sentinel_ids = ChaosGrad.classify_params(model)
+optimizer = ChaosGrad(param_groups, lr=1e-4, plateau_patience=100)
+optimizer.set_sentinel_params(sentinel_ids)
+
+# Report loss for plateau detection
+optimizer.report_loss(loss_value)
+
+# Get diagnostics
+diag = optimizer.get_diagnostics()
+```
+
+---
+
+## TemporalScheduler (`realnet.training.chaos_scheduler`)
+
+An **adaptive LR scheduler** that monitors the training process and adjusts in real-time.
+
+### Training Phases
+1.  **Warmup**: Linear ramp from 0 to `max_lr` (prevents chaos explosion at start).
+2.  **Cosine Decay**: Smooth decay to `min_lr_ratio × max_lr`.
+3.  **Warm Restart**: When plateau detected, temporarily boosts LR with decaying restarts.
+
+### Pre-built Configurations
+
+```python
+from realnet import TemporalSchedulerConfig
+
+TemporalSchedulerConfig.default()          # Standard cosine decay
+TemporalSchedulerConfig.llm()              # LLM-style long training
+TemporalSchedulerConfig.short_experiment() # Quick PoC runs
+TemporalSchedulerConfig.finetune()         # Conservative schedule
+TemporalSchedulerConfig.adaptive()         # Full auto-restart mode
+```
+
+### Features
+*   **Loss-Trend Awareness**: Adapts decay speed based on convergence rate.
+*   **Plateau Detection**: Auto-triggers warm restarts when training stalls.
+*   **Convergence Rate Tracking**: `scheduler.get_convergence_rate()` returns positive (bad) or negative (good).
+*   **Checkpoint Support**: Full `state_dict()` / `load_state_dict()` for seamless resume.
+
+```python
+# Direct usage (standalone)
+from realnet import TemporalScheduler
+
+scheduler = TemporalScheduler(
+    optimizer,
+    warmup_steps=500,
+    max_steps=5000,
+    patience=100  # Auto-restart on plateau
+)
+
+# In training loop:
+scheduler.step(loss=current_loss)  # Pass loss for adaptive behavior
+
+# Or integrated via Trainer:
+trainer = RealNetTrainer(model, scheduler_config=TemporalSchedulerConfig.adaptive())
+# Scheduler steps automatically inside train_batch()
+```
+
 ---
 
 ## Advanced Capabilities
@@ -245,7 +366,7 @@ By setting `gradient_persistence > 0`, the network retains a fraction of the pre
 ### 4. Synaptic Regeneration (Darwinian Revive)
 RealNet can re-initialize synapses that are no longer contributing to the loss signal (stagnant weights).
 *   **Concept**: Instead of pruning, near-zero weights are re-initialized using the original weight strategy.
-*   **Benefit**: Maximizes network plasticitity and parameter efficiency by converting dead capacity into fresh exploration.
+*   **Benefit**: Maximizes network plasticity and parameter efficiency by converting dead capacity into fresh exploration.
 *   **Usage**: 
     *   **Threshold Mode**: `trainer.regenerate_synapses(threshold=0.01)`
     *   **Percent Mode**: `trainer.regenerate_synapses(percentage=0.05)`

@@ -3,7 +3,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: The Atomic Identity...")
@@ -27,11 +27,8 @@ def main():
         dropout_rate=0.0,
         device=DEVICE
     )
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
-
-    # CRITICAL OPTIMIZER: NO WEIGHT DECAY
-    # Small networks shouldn't be penalized for magnitude.
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
     
     # Data
     inputs_val = torch.randint(0, 2, (100, 1)).float() * 2 - 1 

@@ -15,7 +15,7 @@ except ImportError:
 
 # --- ENVIRONMENT & IMPORTS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, save_checkpoint, load_checkpoint, transplant_weights
+from realnet import RealNet, RealNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, ChaosGradConfig, TemporalSchedulerConfig
 from datasets import load_dataset
 
 # TF32 Optimization (Consistent with Notebook)
@@ -63,8 +63,8 @@ LEARNING_RATE = 1e-4
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
 TIE_EMBEDDINGS = False
 
-# SCHEDULER CONFIG (Modern LLM Standard)
-USE_SCHEDULER = True
+# SCHEDULER CONFIG (Now uses TemporalScheduler)
+USE_SCHEDULER = False
 WARMUP_STEPS = 500       # Linear warmup phase
 MAX_STEPS = 5000         # Total steps for cosine decay to reach minimum
 MIN_LR_RATIO = 0.01      # Decay down to 1% of max LR (i.e., 1e-6)
@@ -295,7 +295,24 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         tie_embeddings=TIE_EMBEDDINGS
     )
 
-    trainer = RealNetTrainer(model, lr=lr, device=device, gradient_persistence=0.0, synaptic_noise=0)
+    # Build scheduler config from global settings
+    sched_config = None
+    if USE_SCHEDULER:
+        sched_config = dict(
+            warmup_steps=WARMUP_STEPS,
+            max_steps=MAX_STEPS,
+            min_lr_ratio=MIN_LR_RATIO,
+            patience=200,
+            cooldown=100,
+            auto_extend=True,
+        )
+
+    trainer = RealNetTrainer(
+        model, lr=lr, device=device,
+        gradient_persistence=0.0, synaptic_noise=0,
+        chaos_config=ChaosGradConfig.aggressive(lr=lr),
+        scheduler_config=sched_config,
+    )
 
     return model, trainer, input_ids, output_ids
 
@@ -540,21 +557,8 @@ def main():
         except:
             pass
 
-    scheduler = None
-    if USE_SCHEDULER:
-        def get_lr_multiplier(step):
-            if step < WARMUP_STEPS:
-                return float(step) / float(max(1, WARMUP_STEPS))
-            if step > MAX_STEPS:
-                return MIN_LR_RATIO
-            decay_ratio = (step - WARMUP_STEPS) / (MAX_STEPS - WARMUP_STEPS)
-            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-            return MIN_LR_RATIO + coeff * (1.0 - MIN_LR_RATIO)
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            trainer.optimizer,
-            lr_lambda=get_lr_multiplier
-        )
+    # NOTE: TemporalScheduler is now integrated into the trainer.
+    # It auto-steps inside train_batch(). No manual scheduler needed.
 
     data_iterator = iter(dataloader)
 
@@ -631,12 +635,10 @@ def main():
                     output_transform=flatten_logits
                 )
 
-            # Scheduler Step
-            current_lr = 0.0
-            if USE_SCHEDULER and scheduler:
-                scheduler.step()
-                current_lr = scheduler.get_last_lr()[0]
-            elif trainer.optimizer:
+            # LR Tracking (TemporalScheduler auto-steps inside train_batch)
+            if trainer.scheduler:
+                current_lr = trainer.scheduler.get_last_lr()[0]
+            else:
                 current_lr = trainer.optimizer.param_groups[0]['lr']
 
             total_loss += loss
