@@ -94,15 +94,18 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     - Warm starts: Any learned weights are better than random initialization.
     
     How it works:
-    - For each parameter (W, B, LayerNorm), the overlapping region is copied.
-    - Non-overlapping regions are initialized with `init_new` strategy (default: 'micro_quiet_8bit').
+    - For each parameter tensor, the overlapping region between source and target shapes is copied.
+    - Core weight matrices (e.g., W and selected embed/proj/output_decoder weights) have their
+      non-overlapping regions re-initialized using the `init_new` strategy (default: 'micro_quiet_8bit').
+    - Biases and normalization parameters keep the initialization from the target model and are
+      not re-initialized with `init_new`.
     
     Args:
         model: The target RealNet model instance (already initialized).
         checkpoint_path (str): Path to the source checkpoint.
         device (str): Device to load tensors to.
         verbose (bool): If True, prints transplant statistics.
-        init_new (str): Weight init strategy for new (non-overlapping) regions.
+        init_new (str): Weight init strategy for new (non-overlapping) regions of the core weights.
             Default 'micro_quiet_8bit' — stays silent while existing weights dominate,
             safe for fp16 AMP and 8-bit optimizers.
     
