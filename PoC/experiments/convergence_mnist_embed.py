@@ -8,7 +8,7 @@ import os
 import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: EMBEDDED MNIST CHALLENGE (8k Params)")
@@ -47,7 +47,8 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Params: {total_params}")
     
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.default(lr=1e-3))
     loss_fn = nn.CrossEntropyLoss()
     trainer.loss_fn = loss_fn
     
@@ -63,9 +64,6 @@ def main():
     kwargs = {'num_workers': 0, 'pin_memory': True} if DEVICE == 'cuda' else {}
     train_loader = DataLoader(train_dataset, batch_size=1024, shuffle=True, **kwargs)
     test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False, **kwargs)
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
-    trainer.optimizer = optimizer
     
     NUM_EPOCHS = 100
     THINKING_STEPS = 10

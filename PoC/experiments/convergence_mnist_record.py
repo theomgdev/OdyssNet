@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()
 os.environ["NO_BNB"] = "1"
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: MNIST RECORD CHALLENGE (Elite 470-Param Model)")
@@ -64,7 +64,8 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total Params: {total_params} (Goal: < 1000)")
     
-    trainer = RealNetTrainer(model, device=DEVICE)
+    trainer = RealNetTrainer(model, device=DEVICE,
+                             chaos_config=ChaosGradConfig.aggressive(lr=2e-3))
     loss_fn = nn.CrossEntropyLoss()
     trainer.loss_fn = loss_fn
     
@@ -88,11 +89,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=8)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=8)
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
-    trainer.optimizer = optimizer
-    
     NUM_EPOCHS = 1000
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-7)
     
     print(f"Training with Batch Size: {BATCH_SIZE} for {NUM_EPOCHS} Epochs...")
     start_time = time.time()
@@ -141,7 +138,7 @@ def main():
                 total += target.size(0)
         
         acc = 100.0 * correct / total
-        current_lr = scheduler.get_last_lr()[0]
+        current_lr = trainer.scheduler.get_last_lr()[0] if trainer.scheduler else trainer.optimizer.param_groups[0]['lr']
         
         # Calculate time metrics
         elapsed = time.time() - start_time
@@ -156,8 +153,6 @@ def main():
 
         print(f"Epoch {epoch+1:4d}/{NUM_EPOCHS} | Loss {avg_loss:.4f} | Acc {acc:5.2f}% | "
               f"LR {current_lr:.2e} | Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
-        
-        scheduler.step()
 
 if __name__ == "__main__":
     main()

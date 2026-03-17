@@ -6,7 +6,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
 def main():
     print("RealNet 2.0: PURE MNIST CHALLENGE (28x28 Raw Input)...")
@@ -49,7 +49,10 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
     
-    trainer = RealNetTrainer(model, device=DEVICE)
+    trainer = RealNetTrainer(model, device=DEVICE,
+                             chaos_config=ChaosGradConfig.default(lr=1e-4))
+    loss_fn = nn.MSELoss()
+    trainer.loss_fn = loss_fn
     
     # NO RESIZE used. Pure 28x28.
     transform = transforms.Compose([
@@ -69,11 +72,6 @@ def main():
     kwargs = {'num_workers': 4, 'pin_memory': True} if DEVICE == 'cuda' else {}
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, **kwargs)
     test_loader = DataLoader(test_subset, batch_size=64, shuffle=False, **kwargs)
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
-    loss_fn = nn.MSELoss()
-    trainer.optimizer = optimizer
-    trainer.loss_fn = loss_fn
     
     NUM_EPOCHS = 100
     THINKING_STEPS = 10 # 10 Steps should be enough for full resolution

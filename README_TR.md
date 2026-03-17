@@ -239,7 +239,7 @@ RealNet'in görsel yetenekleri, sağlamlık, ölçeklenebilirlik ve verimliliği
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **İçgörü:** Kapasiteyi küçülten standart budamanın aksine, RealNet zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doygunluk olmadan **Sürekli Öğrenmeyi** (FineWeb'deki gibi) mümkün kılar. "Hata, Özellik Oldu (Bug became a Feature)."
+*   **İçgörü:** Kapasiteyi küçülten standart budamanın aksine, RealNet zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doygunluk olmadan **Sürekli Öğrenmeyi** mümkün kılar. "Hata, Özellik Oldu (Bug became a Feature)."
 
 #### 3. Tiny Challenge (Aşırı Kısıtlamalar)
 *   **Hedef:** 7x7 Küçültülmüş MNIST. (Bir ikondan bile küçük).

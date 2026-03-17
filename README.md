@@ -240,7 +240,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **Insight:** Unlike standard pruning which shrinks capacity, RealNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** (like in FineWeb) without saturation. "Bug became a Feature."
+*   **Insight:** Unlike standard pruning which shrinks capacity, RealNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation. "Bug became a Feature."
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).

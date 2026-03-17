@@ -7,7 +7,7 @@ import random
 
 # Adjust path to import realnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 from realnet.utils.data import prepare_input
 
 def generate_db_data(batch_size, num_keys, seq_per_op, num_ops, device):
@@ -88,8 +88,8 @@ def main():
         weight_init='quiet' # We need silence to save data
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE, gradient_persistence=0.0, synaptic_noise=0.0)
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-5)
+    trainer = RealNetTrainer(model, device=DEVICE, gradient_persistence=0.0, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.default(lr=5e-4))
 
     print(f"Config: {NUM_KEYS} Keys | {NUM_OPS} Ops per Batch | {NUM_NEURONS} Neurons | Persistence: 0.0")
     print("Training...")

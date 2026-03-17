@@ -6,7 +6,7 @@ import os
 
 # Adjust path to import realnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def generate_latch_data(batch_size, seq_len, device):
     """
@@ -53,8 +53,8 @@ def main():
         dropout_rate=0.0 # overfitting to a mental mechanic is desired
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.aggressive(lr=0.01))
     
     print("Training...")
     

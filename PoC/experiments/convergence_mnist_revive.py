@@ -8,7 +8,7 @@ import time
 
 # Ensure library path is correct
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
@@ -42,11 +42,9 @@ def main():
     # Compile model
     model = model.compile()
     
-    trainer = RealNetTrainer(model, device=DEVICE)
+    trainer = RealNetTrainer(model, device=DEVICE,
+                             chaos_config=ChaosGradConfig.default(lr=1e-4))
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
-    
-    trainer.optimizer = optimizer
     trainer.loss_fn = loss_fn
     
     transform = transforms.Compose([

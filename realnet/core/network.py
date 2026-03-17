@@ -127,6 +127,10 @@ class RealNet(nn.Module):
         with torch.no_grad():
             if strategy == 'quiet':
                 nn.init.normal_(tensor, mean=0.0, std=0.02)
+            elif strategy == 'micro_quiet':
+                nn.init.normal_(tensor, mean=0.0, std=1e-6)
+            elif strategy == 'micro_quiet_8bit':
+                nn.init.normal_(tensor, mean=0.0, std=1e-3)
             elif strategy == 'classic':
                 nn.init.normal_(tensor)
             elif strategy == 'xavier_uniform':

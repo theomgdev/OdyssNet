@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -43,11 +43,8 @@ def main():
         weight_init='xavier_uniform'
     )
 
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
-    
-    # CRITICAL OPTIMIZER: NO WEIGHT DECAY
-    # Small networks shouldn't be penalized for magnitude.
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.0)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
     
     # XOR Data
     data = [

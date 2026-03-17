@@ -7,7 +7,7 @@ import math
 
 # Adjust path to import realnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def generate_sine_data(batch_size, steps, device):
     """
@@ -58,8 +58,8 @@ def main():
     )
     
     # Initialize Trainer
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, weight_decay=1e-5)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.default(lr=5e-5))
     
     print(f"Model: {NUM_NEURONS} Neurons. Thinking for {STEPS} steps.")
     

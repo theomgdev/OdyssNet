@@ -6,7 +6,7 @@ import os
 
 # Adjust path to import realnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def generate_adder_data(batch_size, seq_len, delay_1, delay_2, device):
     """
@@ -63,8 +63,8 @@ def main():
         device=DEVICE
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0)
-    trainer.optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = RealNetTrainer(model, device=DEVICE, synaptic_noise=0.0,
+                             chaos_config=ChaosGradConfig.default(lr=1e-3))
     
     print(f"Structure: Pulse A at t={DELAY_1}. Pulse B at t={DELAY_2}. Target at t={SEQ_LEN-1}.")
     
