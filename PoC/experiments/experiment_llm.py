@@ -65,9 +65,9 @@ TIE_EMBEDDINGS = False
 
 # SCHEDULER CONFIG (Now uses TemporalScheduler)
 USE_SCHEDULER = False
-WARMUP_STEPS = 50        # Linear warmup phase
-MAX_STEPS = 500          # Total steps for cosine decay to reach minimum
-MIN_LR_RATIO = 0.01      # Decay down to 1% of max LR (i.e., 1e-6)
+WARMUP_STEPS = 50
+MAX_STEPS = 500
+MIN_LR_RATIO = 0.01
 
 # --- TOKENIZER ---
 def get_or_train_tokenizer():
