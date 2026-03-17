@@ -288,12 +288,10 @@ class ChaosGrad(torch.optim.Optimizer):
                 
                 # --- Adaptive LR Scaling ---
                 if use_adaptive:
-                    # Use Python floats for norms and variance to avoid
-                    # ambiguous tensor booleans and hot-loop .item() calls.
+                    # Calculate scalar gradient norm for adaptive scaling.
                     current_grad_norm = grad.norm().item()
 
-                    # prev_grad_norm may have been initialized as a tensor; convert
-                    # it to a float once and then keep it as a float in state.
+                    # Retrieve previous gradient norm, converting to scalar if necessary.
                     prev_grad_norm = state.get('prev_grad_norm', 0.0)
                     if not isinstance(prev_grad_norm, float):
                         prev_grad_norm = prev_grad_norm.item()
@@ -304,8 +302,7 @@ class ChaosGrad(torch.optim.Optimizer):
                     if prev_grad_norm > 0.0 and current_grad_norm > 0.0:
                         ratio = current_grad_norm / (prev_grad_norm + eps)
 
-                        # grad_variance may also have been initialized as a tensor;
-                        # convert once to float, then maintain as float.
+                        # Retrieve smoothed gradient variance, converting to scalar if necessary.
                         grad_var = state.get('grad_variance', 1.0)
                         if not isinstance(grad_var, float):
                             grad_var = grad_var.item()
@@ -313,15 +310,15 @@ class ChaosGrad(torch.optim.Optimizer):
                         # Smooth the ratio (exponential moving average)
                         grad_var = grad_var * 0.99 + ratio * 0.01
 
-                        # Apply adaptive scaling using float math
+                        # Apply smoothed adaptive scaling multiplier to the step size
                         adaptive_mult = 1.0 / (grad_var + eps)
                         adaptive_mult = max(adaptive_clip[0], min(adaptive_clip[1], adaptive_mult))
                         step_size *= adaptive_mult
 
-                        # Persist updated variance as a float
+                        # Update variance tracked state
                         state['grad_variance'] = grad_var
                     
-                    # Persist previous gradient norm as a float
+                    # Update previous norm tracked state
                     state['prev_grad_norm'] = current_grad_norm
                 
                 # --- Parameter Update ---

@@ -67,7 +67,7 @@ class RealNetTrainer:
         self.synaptic_noise = synaptic_noise
         self.initial_lr = lr
         
-        # --- Optimizer Selection (Backward Compatible) ---
+        # --- Optimizer Initialization ---
         self._using_chaos_grad = False
         self._chaos_config = chaos_config  # Store for re-use after neurogenesis
         self._sentinel_param_ids = set()
@@ -93,7 +93,7 @@ class RealNetTrainer:
                 print("RealNetTrainer: bitsandbytes not found or CPU mode. Using standard AdamW.")
                 self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
         
-        # --- Scheduler Selection (Backward Compatible) ---
+        # --- Scheduler Setup ---
         should_use_scheduler = False
         if use_temporal_scheduler is True:
             should_use_scheduler = True
@@ -200,7 +200,7 @@ class RealNetTrainer:
                      # Prediction on last step only: (B, T, Vocab) -> (B, Vocab) at T=-1
                      predicted_outputs = raw_output[:, -1, :]
             else:
-                # Legacy Mode: Extract from Neuron Activity
+                # Continuous Activity Mode: Extract from explicit output neurons
                 output_indices = self.model.output_ids
                 if full_sequence:
                     predicted_outputs = all_states[:, :, output_indices]
@@ -295,7 +295,7 @@ class RealNetTrainer:
                 else:
                      return raw_output[:, -1, :]
             else:
-                # Legacy Mode: Slice neurons
+                # Continuous Activity Mode: Feature extraction from output neurons
                 output_indices = self.model.output_ids
                 
                 if full_sequence:
@@ -370,13 +370,11 @@ class RealNetTrainer:
         from ..utils.neurogenesis import Neurogenesis
         self.optimizer = Neurogenesis.expand(self.model, self.optimizer, amount, verbose)
 
-        # When using ChaosGrad, rely on Neurogenesis.expand to preserve and
-        # migrate optimizer state; avoid re-initializing ChaosGrad here,
-        # which would discard the transferred momentum/state.
+        # Neurogenesis internally orchestrates optimizer state migration.
         if self._using_chaos_grad and verbose:
             print("   🌪️ ChaosGrad: Optimizer state preserved after neurogenesis.")
 
-    # --- NEW: Diagnostic Methods ---
+    # --- Diagnostic Methods ---
     
     def get_diagnostics(self):
         """

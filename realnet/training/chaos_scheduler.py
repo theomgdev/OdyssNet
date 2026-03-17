@@ -109,7 +109,7 @@ class TemporalScheduler:
     def _cosine_lr(self, step):
         """Calculate cosine decay LR multiplier."""
         effective_step = step - self._cycle_start_step
-        # Treat max_steps as cycle length, independent of restarts
+        # Defines the absolute length of a full cosine cycle.
         effective_max = self.max_steps
         
         if effective_max <= 0:
@@ -119,6 +119,8 @@ class TemporalScheduler:
             return self.min_lr_ratio
             
         # Cosine decay
+        # The initial cycle accounts for the warmup phase, whereas subsequent
+        # cycles (post-restart) apply the cosine decay immediately.
         if self._cycle_start_step == 0:
             decay_numerator = effective_step - self.warmup_steps
             decay_denominator = max(1, effective_max - self.warmup_steps)
@@ -197,7 +199,7 @@ class TemporalScheduler:
         # Decay the restart factor over time
         self._current_max_lr_factor = self.restart_factor * (self.restart_decay ** (self._restart_count - 1))
         
-        # Auto-extend schedule via T_mult factor
+        # Dynamically extends the cycle length to encourage wider exploration.
         if self.auto_extend:
             self.max_steps = int(self.max_steps * 1.5)
         

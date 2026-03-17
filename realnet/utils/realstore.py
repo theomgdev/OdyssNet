@@ -118,7 +118,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     checkpoint = torch.load(checkpoint_path, map_location=device)
     source_state = checkpoint.get('model_state_dict', checkpoint)
     
-    # Re-init core weight matrix with the safe strategy BEFORE transplanting
+    # Apply safe initialization strategy to core weights prior to region transplant.
     if init_new is not None and hasattr(model, '_apply_init'):
         with torch.no_grad():
             model._apply_init(model.W.data, init_new)
