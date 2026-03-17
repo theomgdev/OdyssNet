@@ -8,7 +8,7 @@ import os
 import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: EMBEDDED MNIST CHALLENGE (8k Params)")
