@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()
 os.environ["NO_BNB"] = "1"
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from realnet import RealNet, RealNetTrainer, ChaosGradConfig
 
 def main():
     print("RealNet 2.0: MNIST RECORD CHALLENGE (Elite 470-Param Model)")
