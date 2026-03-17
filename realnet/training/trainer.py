@@ -369,14 +369,12 @@ class RealNetTrainer:
         """
         from ..utils.neurogenesis import Neurogenesis
         self.optimizer = Neurogenesis.expand(self.model, self.optimizer, amount, verbose)
-        
-        # Re-classify params for ChaosGrad if it was in use
-        if self._using_chaos_grad:
-            # After expansion, we need to rebuild the optimizer
-            # because parameter objects have changed
-            self._init_chaos_grad(self.model, self.initial_lr, self._chaos_config)
-            if verbose:
-                print("   🌪️ ChaosGrad: Parameter groups re-classified after neurogenesis.")
+
+        # When using ChaosGrad, rely on Neurogenesis.expand to preserve and
+        # migrate optimizer state; avoid re-initializing ChaosGrad here,
+        # which would discard the transferred momentum/state.
+        if self._using_chaos_grad and verbose:
+            print("   🌪️ ChaosGrad: Optimizer state preserved after neurogenesis.")
 
     # --- NEW: Diagnostic Methods ---
     
