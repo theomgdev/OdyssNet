@@ -276,9 +276,7 @@ class ChaosGrad(torch.optim.Optimizer):
                 # --- Plateau Escape (Controlled Perturbation) ---
                 if is_plateau and is_core:
                     intensity = group.get('plateau_noise_intensity', 0.1)
-                    # Scale noise primarily by gradient magnitude so it remains effective
-                    # even when parameters are near zero. Fall back to parameter magnitude
-                    # and finally to a small constant if needed.
+                    
                     noise_scale = grad.abs().mean()
                     if (not torch.isfinite(noise_scale)) or noise_scale < 1e-8:
                         noise_scale = p.abs().mean()
