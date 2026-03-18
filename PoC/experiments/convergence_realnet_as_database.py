@@ -89,7 +89,7 @@ def main():
     )
     
     trainer = RealNetTrainer(model, device=DEVICE, gradient_persistence=0.0, synaptic_noise=0.0,
-                             chaos_config=ChaosGradConfig.aggressive(lr=5e-4))
+                             chaos_config=ChaosGradConfig.default(lr=5e-4))
 
     print(f"Config: {NUM_KEYS} Keys | {NUM_OPS} Ops per Batch | {NUM_NEURONS} Neurons | Persistence: 0.0")
     print("Training...")
