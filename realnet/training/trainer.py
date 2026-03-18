@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from typing import Any, cast
 from ..utils.data import prepare_input, to_tensor
 
 import os
@@ -88,7 +89,12 @@ class RealNetTrainer:
                 self._init_chaos_grad(model, lr, chaos_config)
             elif HAS_BNB and device == 'cuda':
                 print("RealNetTrainer: Using bitsandbytes 8-bit AdamW for VRAM efficiency.")
-                self.optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=lr, weight_decay=0.01)
+                adamw8bit_cls = getattr(bnb.optim, 'AdamW8bit', None)
+                if adamw8bit_cls is not None:
+                    self.optimizer = adamw8bit_cls(model.parameters(), lr=lr, weight_decay=0.01)
+                else:
+                    print("RealNetTrainer: AdamW8bit symbol not found. Falling back to standard AdamW.")
+                    self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
             else:
                 print("RealNetTrainer: bitsandbytes not found or CPU mode. Using standard AdamW.")
                 self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
@@ -101,7 +107,7 @@ class RealNetTrainer:
             should_use_scheduler = True
             
         if should_use_scheduler:
-            sched_cfg = scheduler_config or TemporalSchedulerConfig.default()
+            sched_cfg = cast(dict[str, Any], scheduler_config or TemporalSchedulerConfig.default())
             self.scheduler = TemporalScheduler(self.optimizer, **sched_cfg)
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()
@@ -112,7 +118,7 @@ class RealNetTrainer:
     
     def _init_chaos_grad(self, model, lr, chaos_config):
         """Initialize ChaosGrad optimizer with parameter classification."""
-        config = chaos_config or ChaosGradConfig.default(lr=lr)
+        config = cast(dict[str, Any], chaos_config or ChaosGradConfig.default(lr=lr))
         
         # Set base LR in config
         if 'lr' not in config:
@@ -143,8 +149,10 @@ class RealNetTrainer:
         
         # Initialize Scaler (AMP)
         if not hasattr(self, 'scaler'):
-            if hasattr(torch.amp, 'GradScaler'):
-                self.scaler = torch.amp.GradScaler('cuda', enabled=(self.device == 'cuda'))
+            amp_mod = getattr(torch, 'amp', None)
+            scaler_cls = getattr(amp_mod, 'GradScaler', None) if amp_mod is not None else None
+            if scaler_cls is not None:
+                self.scaler = scaler_cls('cuda', enabled=(self.device == 'cuda'))
             else:
                 self.scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
 
@@ -174,10 +182,12 @@ class RealNetTrainer:
 
         # Forward Pass (with AMP)
         device_type = 'cuda' if self.device == 'cuda' else 'cpu'
-        if hasattr(torch.amp, 'autocast'):
-             autocast_ctx = torch.amp.autocast(device_type=device_type, enabled=(self.device == 'cuda'))
+        amp_mod = getattr(torch, 'amp', None)
+        autocast_fn = getattr(amp_mod, 'autocast', None) if amp_mod is not None else None
+        if autocast_fn is not None:
+            autocast_ctx = autocast_fn(device_type=device_type, enabled=(self.device == 'cuda'))
         else:
-             autocast_ctx = torch.cuda.amp.autocast(enabled=(self.device == 'cuda'))
+            autocast_ctx = torch.cuda.amp.autocast(enabled=(self.device == 'cuda'))
              
         with autocast_ctx:
             # Use initial_state if provided, otherwise reset
@@ -261,7 +271,8 @@ class RealNetTrainer:
         
         # Report loss to ChaosGrad for plateau detection
         if self._using_chaos_grad and step_now:
-            self.optimizer.report_loss(loss_val)
+            chaos_opt = cast(ChaosGrad, self.optimizer)
+            chaos_opt.report_loss(loss_val)
         
         # Step scheduler if active
         if self.scheduler is not None and step_now:
@@ -391,7 +402,8 @@ class RealNetTrainer:
         }
         
         if self._using_chaos_grad:
-            diag['optimizer'] = self.optimizer.get_diagnostics()
+            chaos_opt = cast(ChaosGrad, self.optimizer)
+            diag['optimizer'] = chaos_opt.get_diagnostics()
         
         if self.scheduler is not None:
             diag['scheduler'] = self.scheduler.get_diagnostics()
@@ -408,7 +420,8 @@ class RealNetTrainer:
         alone, ignoring actual input.
         """
         if self._using_chaos_grad:
-            return self.optimizer._input_grad_health
+            chaos_opt = cast(ChaosGrad, self.optimizer)
+            return chaos_opt._input_grad_health
         return -1.0  # Not available
     
     def get_spectral_radius(self):
@@ -419,5 +432,6 @@ class RealNetTrainer:
         Values > 1.0 indicate potentially chaotic dynamics.
         """
         if self._using_chaos_grad:
-            return self.optimizer._spectral_radius
+            chaos_opt = cast(ChaosGrad, self.optimizer)
+            return chaos_opt._spectral_radius
         return -1.0  # Not available

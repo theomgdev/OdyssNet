@@ -21,7 +21,7 @@ def generate_stopwatch_data(batch_size, seq_len, device):
     
     for i in range(batch_size):
         # Determine duration
-        duration = torch.randint(5, seq_len - 5, (1,)).item()
+        duration = int(torch.randint(5, seq_len - 5, (1,)).item())
         
         # Input Value: Normalized duration
         input_val = duration / 20.0

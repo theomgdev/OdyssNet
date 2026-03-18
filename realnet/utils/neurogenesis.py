@@ -182,7 +182,14 @@ class Neurogenesis:
                     new_opt.state[new_p] = new_s
                 
         # Transfer state for each parameter
-        is_bnb = HAS_BNB and isinstance(new_opt, (bnb.optim.Adam8bit, bnb.optim.AdamW8bit))
+        is_bnb = False
+        if HAS_BNB:
+            adam8_cls = getattr(bnb.optim, 'Adam8bit', None)
+            adamw8_cls = getattr(bnb.optim, 'AdamW8bit', None)
+            if isinstance(adam8_cls, type) and isinstance(new_opt, adam8_cls):
+                is_bnb = True
+            if isinstance(adamw8_cls, type) and isinstance(new_opt, adamw8_cls):
+                is_bnb = True
         
         if is_bnb:
              print("   👉 BNB Optimizer Detected. Skipping State Transfer (Cold Restart) to avoid quantization explosion.")

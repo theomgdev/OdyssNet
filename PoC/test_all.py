@@ -116,10 +116,7 @@ def main():
     targets = []
     for s in all_scripts:
         filename = os.path.basename(s)
-        if hasattr(s, "stem"): 
-            name = s.stem
-        else:
-            name = os.path.splitext(filename)[0]
+        name = os.path.splitext(filename)[0]
             
         if name not in blacklist:
             targets.append(s)

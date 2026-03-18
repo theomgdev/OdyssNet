@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
 import numpy as np
+from typing import cast
 
 class RealNet(nn.Module):
     def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.1, device='cpu', weight_init='orthogonal', activation='tanh', gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False):
@@ -228,6 +229,8 @@ class RealNet(nn.Module):
 
         h_t = current_state
         outputs = []
+        input_pos = cast(torch.Tensor, self.input_pos)
+        output_pos = cast(torch.Tensor, self.output_pos)
 
         def _single_step(h_t_in, t_idx, x_input_info):
             # Projection
@@ -238,10 +241,13 @@ class RealNet(nn.Module):
                 if isinstance(x_input_info, tuple):
                     if len(x_input_info) == 2 and x_input_info[0] is True:
                         # Out-of-place sparse injection for graph compiler compatibility
-                        signal = signal.index_add(1, self.input_pos, x_input_info[1].to(signal.dtype))
-                    else:
+                        sparse_vec = cast(torch.Tensor, x_input_info[1])
+                        signal = signal.index_add(1, input_pos, sparse_vec.to(signal.dtype))
+                    elif len(x_input_info) == 3:
                         # Index-based Sparse Injection (Legacy)
-                        v_mask, v_neurons, s_idx = x_input_info
+                        v_mask = cast(torch.Tensor, x_input_info[0])
+                        v_neurons = cast(torch.Tensor, x_input_info[1])
+                        s_idx = cast(torch.Tensor, x_input_info[2])
                         if v_mask.any():
                             signal[v_mask, v_neurons] += self.input_scale[s_idx].to(signal.dtype)
                 else:
@@ -353,19 +359,19 @@ class RealNet(nn.Module):
                         # Sequential Input: (Batch, MultiSteps, Neurons)
                         if t % ratio == 0 and (t // ratio) < x_input.shape[1]:
                             x_step = x_input[:, t // ratio, :].clone()
-                            x_step[:, self.input_pos] = x_step[:, self.input_pos] * self.input_scale.to(x_step.dtype)
+                            x_step[:, input_pos] = x_step[:, input_pos] * self.input_scale.to(x_step.dtype)
                             x_step_info = x_step
                             
                     elif self.pulse_mode:
                         if t == 0:
                             x_step = x_input.clone()
-                            x_step[:, self.input_pos] = x_step[:, self.input_pos] * self.input_scale.to(x_step.dtype)
+                            x_step[:, input_pos] = x_step[:, input_pos] * self.input_scale.to(x_step.dtype)
                             x_step_info = x_step
                     else:
                         # Continuous mode
                         if t == 0:
                             self._cached_scaled_input = x_input.clone()
-                            self._cached_scaled_input[:, self.input_pos] = self._cached_scaled_input[:, self.input_pos] * self.input_scale.to(self._cached_scaled_input.dtype)
+                            self._cached_scaled_input[:, input_pos] = self._cached_scaled_input[:, input_pos] * self.input_scale.to(self._cached_scaled_input.dtype)
                         x_step_info = self._cached_scaled_input
             
             # Gradient checkpointing
@@ -380,16 +386,16 @@ class RealNet(nn.Module):
 
         # Apply Output Scaling
         stacked_outputs = torch.stack(outputs, dim=1)
-        stacked_outputs[:, :, self.output_pos] = stacked_outputs[:, :, self.output_pos] * self.output_scale.to(stacked_outputs.dtype)
-        
+        stacked_outputs[:, :, output_pos] = stacked_outputs[:, :, output_pos] * self.output_scale.to(stacked_outputs.dtype)
+
         # Vocab Decoding
         if self.output_decoder is not None:
-             # Extract only the output neurons
-             out_activity = stacked_outputs[:, :, self.output_pos]
-             # Project to Vocab
-             # Shape: (Batch, Steps, OutNeurons) -> (Batch, Steps, Vocab)
-             decoded = self.output_decoder(out_activity)
-             return decoded, h_t
+            # Extract only the output neurons
+            out_activity = stacked_outputs[:, :, output_pos]
+            # Project to Vocab
+            # Shape: (Batch, Steps, OutNeurons) -> (Batch, Steps, Vocab)
+            decoded = self.output_decoder(out_activity)
+            return decoded, h_t
 
         return stacked_outputs, h_t
 

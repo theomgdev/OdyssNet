@@ -7,7 +7,9 @@ import os
 import time
 import random
 import math
-from tokenizers import Tokenizer, ByteLevelBPETokenizer
+from typing import Any, Mapping, cast
+from tokenizers import Tokenizer
+from tokenizers.implementations import ByteLevelBPETokenizer
 try:
     import tiktoken
 except ImportError:
@@ -84,14 +86,15 @@ def get_or_train_tokenizer():
     tokenizer = ByteLevelBPETokenizer()
     dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
     
-    texts = []
+    texts: list[str] = []
     count = 0
     for item in dataset:
-        texts.append(item['text'])
+        row = cast(Mapping[str, Any], item)
+        texts.append(str(row.get('text', '')))
         count += 1
         if count >= 100000: break
     
-    tokenizer.train_from_iterator(texts, vocab_size=CUSTOM_VOCAB_SIZE, min_frequency=2, special_tokens=[
+    tokenizer.train_from_iterator(iter(texts), vocab_size=CUSTOM_VOCAB_SIZE, min_frequency=2, special_tokens=[
         "<s>",
         "<pad>",
         "</s>",
@@ -152,7 +155,7 @@ class TinyStoriesIterableDataset(torch.utils.data.IterableDataset):
         self.debug = debug
         self.current_doc_index = skip_offset
         print("🌊 Connecting to the dataset...")
-        self.dataset = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+        self.dataset: Any = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
 
     def __iter__(self):
         start_skip = self.skip_offset
@@ -167,9 +170,9 @@ class TinyStoriesIterableDataset(torch.utils.data.IterableDataset):
         local_doc_index = start_skip
 
         if start_skip > 0:
-            iterator = iter(self.dataset.skip(start_skip))
+            iterator = iter(cast(Any, self.dataset).skip(start_skip))
         else:
-            iterator = iter(self.dataset)
+            iterator = iter(cast(Any, self.dataset))
 
         buffer_tokens = []
 
@@ -181,7 +184,8 @@ class TinyStoriesIterableDataset(torch.utils.data.IterableDataset):
                     local_doc_index += 1
                     if self.debug and local_doc_index % 1000 == 0:
                         print(f"📊 Streaming Index: Document #{local_doc_index}")
-                    text = item.get('text', '')
+                    row = cast(Mapping[str, Any], item)
+                    text = str(row.get('text', ''))
                     encoded = self.tokenizer.encode(text)
                     buffer_tokens.extend(encoded.ids)
                     buffer_tokens.append(self.tokenizer.token_to_id("</s>"))
@@ -689,10 +693,6 @@ def main():
                 NUM_NEURONS = model.num_neurons
                 loss_increase_counter = 0
                 prev_loss = float('inf')
-
-                if USE_SCHEDULER:
-                    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                        trainer.optimizer, T_0=SCHEDULER_T0, eta_min=SCHEDULER_ETA_MIN)
             else:
                 prev_loss = avg_loss
 

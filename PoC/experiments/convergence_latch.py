@@ -19,7 +19,7 @@ def generate_latch_data(batch_size, seq_len, device):
     
     for i in range(batch_size):
         # Trigger happens somewhere between step 2 and seq_len-5
-        trigger = torch.randint(2, seq_len - 5, (1,)).item()
+        trigger = int(torch.randint(2, seq_len - 5, (1,)).item())
         
         # Pulse input at trigger
         inputs[i, trigger, 0] = 1.0
