@@ -61,7 +61,7 @@ class ChaosGrad(torch.optim.Optimizer):
                  plateau_patience=0, plateau_noise_scale=0.01,
                  spectral_clip=0.0, input_sentinel=False,
                  adaptive_lr=True, adaptive_lr_clip=(0.1, 10.0),
-                 adaptive_ema=0.99, grad_centralization=True,
+                 grad_centralization=True, adaptive_ema=0.99,
                  plateau_noise_intensity=0.1,
                  loss_history_min=200, sentinel_threshold=0.1):
         
