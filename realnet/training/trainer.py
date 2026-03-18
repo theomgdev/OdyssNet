@@ -36,7 +36,7 @@ from .chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 
 class RealNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu', 
-                 gradient_persistence=0.0, synaptic_noise=1e-6,
+                 gradient_persistence=0.0, synaptic_noise=1e-6, max_grad_norm=1.0,
                  chaos_config=None, scheduler_config=None,
                  use_chaos_grad=None, use_temporal_scheduler=None):
         """
@@ -65,6 +65,7 @@ class RealNetTrainer:
         self.model.to(self.device)
         self.gradient_persistence = gradient_persistence
         self.synaptic_noise = synaptic_noise
+        self.max_grad_norm = max_grad_norm
         self.initial_lr = lr
         
         # --- Optimizer Initialization ---
@@ -234,14 +235,13 @@ class RealNetTrainer:
 
         if step_now:
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            if self.max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
             if self.gradient_persistence > 0.0:
-                 # Gradient Persistence
-                 # Project persistent gradients into the active AMP scale 
-                 # to maintain numeric consistency across accumulation boundaries.
+                 # Synchronize persistent gradients with active AMP scale 
                  scale = self.scaler.get_scale() if hasattr(self, 'scaler') and self.scaler.is_enabled() else 1.0
                  with torch.no_grad():
                     for param in self.model.parameters():
