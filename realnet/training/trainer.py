@@ -36,9 +36,9 @@ from .chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 
 class RealNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu', 
-                 gradient_persistence=0.0, synaptic_noise=1e-6, max_grad_norm=1.0,
+                 gradient_persistence=0.0, synaptic_noise=1e-6,
                  chaos_config=None, scheduler_config=None,
-                 use_chaos_grad=None, use_temporal_scheduler=None):
+                 use_chaos_grad=None, use_temporal_scheduler=None, max_grad_norm=1.0):
         """
         Initializes the trainer.
         
