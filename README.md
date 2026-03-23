@@ -222,7 +222,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Insight:** Standard linear models cap at ~92%. RealNet achieves Deep Learning performance (~96%) without Deep Learning layers, purely through **Temporal Depth**.
+*   **Insight:** Standard linear models cap at 92%. RealNet achieves Deep Learning performance (96%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
 *   **Hypothesis:** Can we reach 100% parameter efficiency by **reviving** dead synapses (random re-initialization) instead of just killing them?

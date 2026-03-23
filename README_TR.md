@@ -222,7 +222,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Çıkarım:** Standart doğrusal modeller ~%92'de tavan yapar. RealNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (~%96) elde eder.
+*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. RealNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%96) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
 *   **Hipotez:** Ölü sinapsları öldürmek yerine **canlandırarak** (rastgele yeniden başlatma) %100 parametre verimliliğine ulaşabilir miyiz?
