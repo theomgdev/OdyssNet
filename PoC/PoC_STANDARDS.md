@@ -61,7 +61,7 @@ RealNet is sensitive to initialization. The default `weight_init='resonant'` is 
 For any task without a specific constraint, use the native resonant init.
 *   **Activation:** `'tanh'`
 *   **Weight Init:** `'resonant'` *(Default)* — Rademacher ±1 skeleton + spectral normalization to ρ = 1.0. Ensures signal fidelity without exploding or vanishing. Projecton layers (embed/proj/decoder) automatically use `quiet` init.
-*   **Dropout:** `0.0` for memory/logic tasks, `0.1`+ for generalization tasks (MNIST).
+*   **Dropout:** `0.0` *(Default)* — Enable explicitly (e.g. `0.1`) only when overfitting is observed.
 
 ```python
 model = RealNet(..., activation='tanh')  # weight_init='resonant' is already the default
@@ -82,7 +82,7 @@ trainer = RealNetTrainer(model, ..., synaptic_noise=0.0)  # Disable noise for pu
 If long-horizon temporal stability is the priority:
 *   **Activation:** `'tanh'`
 *   **Weight Init:** `'orthogonal'` — solid fallback for pure stability.
-*   **Dropout:** `0.0` for memory tasks (Latch/Adder), `0.1`+ for generalization (MNIST).
+*   **Dropout:** `0.0` *(Default)* — Enable explicitly when overfitting is a concern.
 
 ```python
 model = RealNet(..., activation='tanh', weight_init='orthogonal')

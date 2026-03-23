@@ -6,7 +6,7 @@ import numpy as np
 from typing import cast
 
 class RealNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.1, device='cpu', weight_init='resonant', activation='tanh', gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init='resonant', activation='tanh', gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False):
         super(RealNet, self).__init__()
         
         # Auto-size to unique input+output IDs

@@ -34,7 +34,7 @@ def main():
         input_ids=input_ids, 
         output_ids=output_ids, 
         pulse_mode=True, 
-        dropout_rate=0.1,
+        dropout_rate=0.0,
         # Default activation is 'tanh', weight_init is 'resonant'
         device=DEVICE
     )
@@ -47,13 +47,19 @@ def main():
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     
-    transform = transforms.Compose([
-        transforms.ToTensor(), 
+    train_transform = transforms.Compose([
+        transforms.RandomAffine(degrees=5, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+        transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    
-    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
+    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
     SUBSET_SIZE = 10000
     train_subset = Subset(train_dataset, range(SUBSET_SIZE))
@@ -64,7 +70,7 @@ def main():
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, **kwargs)
     test_loader = DataLoader(test_subset, batch_size=64, shuffle=False, **kwargs)
     
-    NUM_EPOCHS = 50 
+    NUM_EPOCHS = 100 
     THINKING_STEPS = 10
     REGENERATE_THRESHOLD = 0.01 
     

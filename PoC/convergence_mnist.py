@@ -42,7 +42,7 @@ def main():
         input_ids=input_ids, 
         output_ids=output_ids, 
         pulse_mode=True, 
-        dropout_rate=0.1, 
+        dropout_rate=0.0, 
         device=DEVICE
     )
     
@@ -55,13 +55,19 @@ def main():
     trainer.loss_fn = loss_fn
     
     # NO RESIZE used. Pure 28x28.
-    transform = transforms.Compose([
-        transforms.ToTensor(), 
+    train_transform = transforms.Compose([
+        transforms.RandomAffine(degrees=5, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+        transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    
-    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
+    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
     # Fair subset size
     SUBSET_SIZE = 10000 

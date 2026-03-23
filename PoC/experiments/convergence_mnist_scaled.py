@@ -36,18 +36,25 @@ def main():
         input_ids=input_ids, 
         output_ids=output_ids, 
         pulse_mode=True, 
-        dropout_rate=0.1, 
+        dropout_rate=0.0, 
         device=DEVICE
     )
     
-    transform = transforms.Compose([
-        transforms.Resize((14, 14)), # Medium Downscaling
-        transforms.ToTensor(), 
+    train_transform = transforms.Compose([
+        transforms.Resize((14, 14)),
+        transforms.RandomAffine(degrees=5, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+        transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    
-    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
+    test_transform = transforms.Compose([
+        transforms.Resize((14, 14)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
+    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
     SUBSET_SIZE = 5000 
     train_subset = Subset(train_dataset, range(SUBSET_SIZE))
@@ -61,7 +68,7 @@ def main():
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     
-    NUM_EPOCHS = 20
+    NUM_EPOCHS = 100
     THINKING_STEPS = 15
     
     print("Training Scaled RealNet...")

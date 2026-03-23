@@ -38,7 +38,7 @@ from ..utils.neurogenesis import Neurogenesis
 
 class RealNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu',
-                 gradient_persistence=0.0, synaptic_noise=1e-6,
+                 gradient_persistence=0.0, synaptic_noise=0.0,
                  chaos_config=None, scheduler_config=None,
                  use_chaos_grad=None, use_temporal_scheduler=None):
         """
@@ -52,7 +52,7 @@ class RealNetTrainer:
             lr (float): Initial learning rate (Default: 1e-4). Used if optimizer is None.
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0 - 0.9).
-            synaptic_noise (float): Scale of noise added to weights during training (Regularization). Default 1e-6.
+            synaptic_noise (float): Scale of noise added to weights during training (Regularization). Default 0.0.
             chaos_config (dict, optional): Config dict for ChaosGrad. See ChaosGradConfig presets.
                 Use ChaosGradConfig.default(), ChaosGradConfig.aggressive(), etc.
             scheduler_config (dict, optional): Config dict for TemporalScheduler.

@@ -11,7 +11,7 @@ Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğ
 >
 > Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak RealNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
 
-RealNet verimliliğini **Uzay-Zaman Dengesiyle** sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
+RealNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
 
 > 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
@@ -115,7 +115,7 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 *   Bilgi yankılanır, ayrılır ve çarpışır. Sol üstteki bir piksel, doğrudan bağlantı veya ara yankılar aracılığıyla sağ alttaki bir piksel ile etkileşime girer.
 *   **Holografik İşleme:** Bir görüntünün "kedi-liği" belirli bir katmanda saklanmaz; tüm sinyallerin çarpışmasının *girişim deseninden* ortaya çıkar.
 
-### 3. Zaman-Katlama (Hesaplama)
+### 3. Zamanı Katlama (Time-Folding)
 **Sıfır-Gizli** performansının sihri burada yatar.
 *   Adım 1: Ham sinyaller karışır. (MLP'nin 1. Katmanına eşdeğer)
 *   Adım 2: Karışık sinyaller yeniden karışır. (2. Katmana eşdeğer)
@@ -147,7 +147,7 @@ RealNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi 
 RealNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağlardan çok daha fazla beyne benzer:
 
 *   **Katman Yok:** Beynin "1. Katmanı" ve "2. Katmanı" yoktur. Birbirine bağlı nöronların bölgeleri vardır. RealNet tek bir bölgedir.
-*   **İrade (Mandal):** Soluklaşan standart RNN'lerin aksine RealNet bir karara kilitlenebilir ve onu entropiye karşı tutabilir, "Bilişsel Kalıcılık" sergiler.
+*   **İrade (Mandal):** Sönümlenen (fading) standart RNN'lerin aksine RealNet bir karara kilitlenebilir ve onu entropiye karşı tutabilir, "Bilişsel Kalıcılık" sergiler.
 *   **Ritim (Kronometre):** Herhangi bir dış saat olmadan RealNet zamanı öznel olarak deneyimler ve tam anlarda saymasına, beklemesine ve hareket etmesine izin verir.
 *   **Sabır (Dedektif):** "Düşünme Süresinden" yararlanır. Tıpkı insanların karmaşık mantığı işlemek için bir ana ihtiyaç duyması gibi, RealNet olası çözümleri sindirmek için birkaç sessizlik adımı verildiğinde imkânsız problemleri çözer.
 

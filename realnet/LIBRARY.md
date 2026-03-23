@@ -25,7 +25,7 @@ model = RealNet(
     input_ids=[0, 1], 
     output_ids=[9], 
     pulse_mode=True, 
-    dropout_rate=0.1, 
+    dropout_rate=0.0, 
     device='cuda'
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid'  # 'hybrid', 'discrete', or 'continuous'
@@ -183,7 +183,7 @@ trainer = RealNetTrainer(
     chaos_config=ChaosGradConfig.default(lr=1e-4),       # ChaosGrad Optimizer
     scheduler_config=TemporalSchedulerConfig.adaptive(),  # Adaptive Scheduler
     gradient_persistence=0.0,   # Ghost Gradients (Persistence)
-    synaptic_noise=1e-6         # Thermal Noise (Default: 1e-6)
+    synaptic_noise=0.0          # Thermal Noise (Default: 0.0)
 )
 ```
 
@@ -206,7 +206,7 @@ trainer = RealNetTrainer(
 *   `synaptic_noise` (float): **Thermal Noise**.
     *   Adds Gaussian noise (std dev = `synaptic_noise`) to all weights *before* every training step.
     *   Simulates biological thermal noise and prevents overfitting (Stochastic Resonance).
-    *   **Default:** `1e-6` (Set to `0.0` for pure logic/math tasks).
+    *   **Default:** `0.0` (Enable for regularization, e.g. `1e-6`, on large or overfitting-prone networks).
 
 ### Key Methods
 
