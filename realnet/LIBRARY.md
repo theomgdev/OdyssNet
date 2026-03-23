@@ -142,6 +142,9 @@ output = model(tokens, steps=640)
 
 ### Key Methods
 
+#### `model.get_num_params(only_trainable=True)`
+Returns the **effective** parameter count of the network. It accounts for the `memory_feedback` separation by properly discounting the inactive diagonal of the `W` matrix to give you a true representation of learning capacity.
+
 #### `model.compile()`
 Optimizes the model using `torch.compile` (PyTorch 2.0+) for faster execution. Returns the compiled model.
 
@@ -259,7 +262,8 @@ A **RealNet-native optimizer** that understands and exploits the chaos chamber d
 ### Parameter Groups
 | Group | Parameters | Strategy |
 | :--- | :--- | :--- |
-| **chaos_core** | W matrix (NxN) | Spectral monitoring, adaptive LR, plateau escape |
+| **chaos_core** | W matrix (cross-connections) | Spectral monitoring, adaptive LR, plateau escape |
+| **memory_feedback** | Neuron self-connections | Independent LR and ultra-low decay to preserve temporal memories |
 | **projections** | Embeddings, Projections, Decoder | Standard LR with configurable decay |
 | **lightweight** | Bias, Scale, Norm | Higher LR, no weight decay |
 

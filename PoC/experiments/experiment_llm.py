@@ -333,7 +333,7 @@ def calculate_optimal_batch_size(model, device, seq_len, think_gap, truncated_bp
         # 1. BASELINE VRAM (Batch-size independent)
         # Note: 'actual_total_params' naturally reflects True param count. If tie_embeddings is enabled,
         # the parameter count is automatically smaller, accurately reflecting the VRAM savings.
-        actual_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        actual_total_params = model.get_num_params(only_trainable=True)
         
         # Optimizer overhead + PyTorch/CUBLAS contexts (~1.5 GB workspace limit)
         baseline_vram = (actual_total_params * 16) + (1.5 * 1024 * 1024 * 1024)
@@ -542,7 +542,7 @@ def main():
         return out.reshape(-1, dataset.get_vocab_size())
 
     # --- MODEL INFO ---
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = model.get_num_params(only_trainable=True)
     print(f"\n--- MODEL INFO ---")
     print(f"Total Trainable Parameters: {total_params:,}")
 

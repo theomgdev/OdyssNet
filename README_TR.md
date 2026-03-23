@@ -127,6 +127,7 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 Kontrolsüz geri besleme döngüleri patlamaya yol açar. RealNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **GELU** anlamlı sinyalleri filtreler.
+*   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (Nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder. Projeksiyon öğrenme oranlarını bozmadan kritik zamansal derinliği korumak için hafıza durumlarını bağımsız olarak optimize eder.
 *   **Mandal Deneyi** RealNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için "derin bir kuyu" yani kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?

@@ -83,6 +83,16 @@ class RealNet(nn.Module):
         self.W = nn.Parameter(torch.empty(num_neurons, num_neurons, device=device))
         self._init_weights(weight_init)
         
+        # Memory Feedback (Neuron self-connections)
+        self.memory_feedback = nn.Parameter(torch.empty(num_neurons, device=device))
+        with torch.no_grad():
+            self.memory_feedback.copy_(torch.diagonal(self.W))
+            self.W.fill_diagonal_(0.0)
+            
+        def _zero_diagonal_grad(grad):
+            return grad.clone().fill_diagonal_(0.0)
+        self.W.register_hook(_zero_diagonal_grad)
+        
         # Bias Vector
         self.B = nn.Parameter(torch.zeros(num_neurons, device=device))
 
@@ -198,6 +208,7 @@ class RealNet(nn.Module):
             
             # Find weak spots
             weak_mask = torch.abs(self.W) < current_threshold
+            weak_mask.fill_diagonal_(False) # The diagonal is dead memory capacity, ignore it
             
             # Transplant fresh cells into weak spots
             count = weak_mask.sum().item()
@@ -205,9 +216,20 @@ class RealNet(nn.Module):
                 self.W.data[weak_mask] = fresh_W[weak_mask]
             
             total_revived = count
-            total_params = self.W.numel()
+            total_params = self.W.numel() - self.W.shape[0]
             
             return total_revived, total_params
+            
+    def get_num_params(self, only_trainable=True):
+        """
+        Calculates the effective number of parameters.
+        Subtracts the zeroed-out diagonal of the W matrix from the total count
+        since those connections are handled independently by memory_feedback.
+        """
+        total = sum(p.numel() for p in self.parameters() if not only_trainable or p.requires_grad)
+        if hasattr(self, 'W'):
+            total -= self.W.shape[0]
+        return total
 
     def compile(self):
         """
@@ -264,6 +286,9 @@ class RealNet(nn.Module):
         def _single_step(h_t_in, t_idx, x_input_info):
             # Projection
             signal = F.linear(h_t_in, self.W.t(), self.B)
+            
+            # Memory Feedback (Attractor State)
+            signal = signal + h_t_in * self.memory_feedback
             
             # Input Injection
             if x_input_info is not None:

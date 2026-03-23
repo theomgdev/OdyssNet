@@ -56,6 +56,7 @@ class Neurogenesis:
         # Preserve old parameters
         old_W_param = model.W
         old_B_param = model.B
+        old_memory_param = model.memory_feedback
         
         # Norm Preservation (StepNorm)
         old_norm_w_param = model.norm.weight
@@ -83,6 +84,11 @@ class Neurogenesis:
         # Expand B
         new_B = torch.zeros(new_n, device=device)
         new_B[:old_n] = model.B.data
+        
+        # Expand memory_feedback
+        new_memory = torch.zeros(new_n, device=device)
+        new_memory[:old_n] = model.memory_feedback.data
+        new_memory[old_n:] = torch.randn(amount, device=device) * noise_std
 
         # Preserve original normalization family to avoid training-dynamics drift.
         if isinstance(model.norm, nn.RMSNorm):
@@ -109,6 +115,7 @@ class Neurogenesis:
         model.num_neurons = new_n
         model.W = nn.Parameter(new_W)
         model.B = nn.Parameter(new_B)
+        model.memory_feedback = nn.Parameter(new_memory)
         
         # StepNorm
         model.norm = new_norm
@@ -222,6 +229,7 @@ class Neurogenesis:
             try:
                 transfer_state(old_W_param, model.W, is_matrix=True)
                 transfer_state(old_B_param, model.B, is_matrix=False)
+                transfer_state(old_memory_param, model.memory_feedback, is_matrix=False)
                 
                 # Transfer StepNorm State
                 transfer_state(old_norm_w_param, model.norm.weight, is_matrix=False)
@@ -248,6 +256,7 @@ class Neurogenesis:
         # Cleanup
         del old_W_param
         del old_B_param
+        del old_memory_param
         del old_norm_w_param
         del old_norm_b_param
         del old_opt

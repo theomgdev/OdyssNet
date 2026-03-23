@@ -58,7 +58,7 @@ def main():
     if 'model_compile' in locals() and model_compile:
         model = torch.compile(model)
     
-    total_params = sum(p.numel() for p in model.parameters())
+    total_params = model.get_num_params(only_trainable=False)
     print(f"Total Params: {total_params} (Goal: < 1000)")
     
     trainer = RealNetTrainer(model, device=DEVICE,

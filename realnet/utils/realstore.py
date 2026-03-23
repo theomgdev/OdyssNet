@@ -232,6 +232,9 @@ def get_checkpoint_info(path, device='cpu'):
         total_params = sum(
             t.numel() for t in checkpoint['model_state_dict'].values()
         )
+        if 'W' in checkpoint['model_state_dict']:
+            total_params -= checkpoint['model_state_dict']['W'].shape[0]
+            
         info['total_params'] = total_params
         
         # Infer num_neurons from W shape

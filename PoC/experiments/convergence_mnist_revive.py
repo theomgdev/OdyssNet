@@ -73,7 +73,7 @@ def main():
     THINKING_STEPS = 10
     REGENERATE_THRESHOLD = 0.01 
     
-    print(f"Total Connections: {model.W.numel()}")
+    print(f"Total Connections: {model.get_num_params()}")
     print(f"Regeneration Threshold: abs(W) < {REGENERATE_THRESHOLD}")
     
     start_time = time.time()

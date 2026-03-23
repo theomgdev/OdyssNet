@@ -127,6 +127,7 @@ By "thinking" for 15 steps, RealNet simulates a 15-layer deep network using **on
 Uncontrolled feedback loops lead to explosion. RealNet engineers the chaos to form stable **Attractors**.
 *   **StepNorm** acts as gravity, keeping energy bounded.
 *   **GELU** filters meaningful signals.
+*   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (Neuron self-connections) from the **Chaos Core** (cross-connections). It independently optimizes memory states to preserve critical temporal depth without degrading projection learning rates.
 *   **The Latch Experiment** proved RealNet can create a "deep well" aka a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?

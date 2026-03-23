@@ -51,9 +51,9 @@ class ChaosGrad(torch.optim.Optimizer):
     """
     
     def __init__(self, params, lr=1e-4, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0.01, projection_decay=0.01,
+                 weight_decay=0.01, projection_decay=0.01, memory_decay=0.0,
                  lightweight_lr_mult=2.0, chaos_core_lr_mult=1.0,
-                 projection_lr_mult=1.0,
+                 projection_lr_mult=1.0, memory_lr_mult=1.0,
                  plateau_patience=0, plateau_noise_scale=0.01,
                  spectral_clip=0.0, input_sentinel=False,
                  adaptive_lr=True, adaptive_lr_clip=(0.1, 10.0),
@@ -63,9 +63,11 @@ class ChaosGrad(torch.optim.Optimizer):
             lr=lr, betas=betas, eps=eps,
             weight_decay=weight_decay,
             projection_decay=projection_decay,
+            memory_decay=memory_decay,
             lightweight_lr_mult=lightweight_lr_mult,
             chaos_core_lr_mult=chaos_core_lr_mult,
             projection_lr_mult=projection_lr_mult,
+            memory_lr_mult=memory_lr_mult,
             plateau_patience=plateau_patience,
             plateau_noise_scale=plateau_noise_scale,
             spectral_clip=spectral_clip,
@@ -97,7 +99,8 @@ class ChaosGrad(torch.optim.Optimizer):
         2. projections: Embedding, Linear projection, Output decoder
         3. lightweight: Bias, Scale, Norm parameters
         """
-        chaos_core = []      # W matrix
+        chaos_core = []      # W matrix (cross connections)
+        memory_feedback = [] # memory_feedback (self connections)
         projections = []     # Embeddings, projections, decoders
         lightweight = []     # Bias, scale, norm
         
@@ -110,6 +113,8 @@ class ChaosGrad(torch.optim.Optimizer):
                 
             if name == 'W':
                 chaos_core.append(param)
+            elif name == 'memory_feedback':
+                memory_feedback.append(param)
             elif any(k in name for k in ['embed', 'proj', 'output_decoder']):
                 projections.append(param)
             else:
@@ -127,6 +132,17 @@ class ChaosGrad(torch.optim.Optimizer):
                 'params': chaos_core,
                 'group_name': 'chaos_core',
                 '_is_chaos_core': True,
+                '_is_memory_feedback': False,
+                '_is_projection': False,
+                '_is_lightweight': False,
+            })
+            
+        if memory_feedback:
+            groups.append({
+                'params': memory_feedback,
+                'group_name': 'memory_feedback',
+                '_is_chaos_core': False,
+                '_is_memory_feedback': True,
                 '_is_projection': False,
                 '_is_lightweight': False,
             })
@@ -136,6 +152,7 @@ class ChaosGrad(torch.optim.Optimizer):
                 'params': projections,
                 'group_name': 'projections',
                 '_is_chaos_core': False,
+                '_is_memory_feedback': False,
                 '_is_projection': True,
                 '_is_lightweight': False,
             })
@@ -145,6 +162,7 @@ class ChaosGrad(torch.optim.Optimizer):
                 'params': lightweight,
                 'group_name': 'lightweight',
                 '_is_chaos_core': False,
+                '_is_memory_feedback': False,
                 '_is_projection': False,
                 '_is_lightweight': True,
             })
@@ -213,6 +231,7 @@ class ChaosGrad(torch.optim.Optimizer):
         
         for group in self.param_groups:
             is_core = group.get('_is_chaos_core', False)
+            is_memory = group.get('_is_memory_feedback', False)
             is_proj = group.get('_is_projection', False)
             is_light = group.get('_is_lightweight', False)
             
@@ -220,6 +239,9 @@ class ChaosGrad(torch.optim.Optimizer):
             if is_core:
                 lr_mult = self.defaults['chaos_core_lr_mult']
                 wd = self.defaults['weight_decay']
+            elif is_memory:
+                lr_mult = self.defaults['memory_lr_mult']
+                wd = self.defaults['memory_decay']
             elif is_proj:
                 lr_mult = self.defaults['projection_lr_mult']
                 wd = self.defaults['projection_decay']
@@ -267,6 +289,10 @@ class ChaosGrad(torch.optim.Optimizer):
                     # Inject targeted noise into gradients for the chaos core
                     noise = torch.randn_like(grad) * plateau_noise * grad.abs().mean()
                     grad = grad + noise
+                    
+                # Ensure diagonal is strictly zero for core matrix (handled by memory_feedback)
+                if is_core and grad.dim() == 2 and grad.shape[0] == grad.shape[1]:
+                    grad.fill_diagonal_(0.0)
                 
                 # --- Decoupled Weight Decay ---
                 if wd > 0:
@@ -343,6 +369,10 @@ class ChaosGrad(torch.optim.Optimizer):
                             p.data.mul_(spectral_clip / (self._spectral_radius + eps))
                     except Exception:
                         pass
+                        
+                # Ensure parameter diagonal stays zero unconditionally
+                if is_core and p.dim() == 2 and p.shape[0] == p.shape[1]:
+                    p.data.fill_diagonal_(0.0)
                 
                 # Track gradient norms for diagnostics
                 g_norm = grad.norm().item()
@@ -384,9 +414,11 @@ class ChaosGradConfig:
             betas=(0.9, 0.999),
             weight_decay=0.01,
             projection_decay=0.01,
+            memory_decay=0.0,
             lightweight_lr_mult=2.0,
             chaos_core_lr_mult=1.0,
             projection_lr_mult=1.0,
+            memory_lr_mult=1.0,
             adaptive_lr=True,
             grad_centralization=True,
         )
@@ -399,9 +431,11 @@ class ChaosGradConfig:
             betas=(0.9, 0.98),
             weight_decay=0.001,
             projection_decay=0.001,
+            memory_decay=0.0,
             lightweight_lr_mult=3.0,
             chaos_core_lr_mult=1.5,
             projection_lr_mult=1.2,
+            memory_lr_mult=1.0,
             plateau_patience=50,
             plateau_noise_scale=0.02,
             adaptive_lr=True,
@@ -417,9 +451,11 @@ class ChaosGradConfig:
             betas=(0.9, 0.999),
             weight_decay=0.01,
             projection_decay=0.005,
+            memory_decay=0.0,
             lightweight_lr_mult=1.0,
             chaos_core_lr_mult=0.5,
             projection_lr_mult=0.8,
+            memory_lr_mult=0.8,
             adaptive_lr=True,
             adaptive_lr_clip=(0.5, 2.0),
             grad_centralization=False,
@@ -436,9 +472,11 @@ class ChaosGradConfig:
             betas=(0.9, 0.98),
             weight_decay=0.01,
             projection_decay=0.01,
+            memory_decay=0.001,
             lightweight_lr_mult=3.0,
             chaos_core_lr_mult=0.8,
             projection_lr_mult=1.5,
+            memory_lr_mult=1.0,
             plateau_patience=100,
             plateau_noise_scale=0.01,
             spectral_clip=3.0,
@@ -456,9 +494,11 @@ class ChaosGradConfig:
             betas=(0.9, 0.999),
             weight_decay=0.0,
             projection_decay=0.0,
+            memory_decay=0.0,
             lightweight_lr_mult=1.0,
             chaos_core_lr_mult=1.0,
             projection_lr_mult=1.0,
+            memory_lr_mult=1.0,
             adaptive_lr=False,
             grad_centralization=False,
         )
