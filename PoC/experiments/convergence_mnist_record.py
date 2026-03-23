@@ -62,7 +62,7 @@ def main():
     print(f"Total Params: {total_params} (Goal: < 1000)")
     
     trainer = RealNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.aggressive(lr=2e-3))
+                             chaos_config=ChaosGradConfig.default(lr=2e-3))
     loss_fn = nn.CrossEntropyLoss()
     trainer.loss_fn = loss_fn
     

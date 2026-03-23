@@ -53,7 +53,7 @@ def main():
     )
     
     trainer = RealNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.aggressive(lr=0.01))
+                             chaos_config=ChaosGradConfig.default(lr=0.01))
     
     print("Training...")
     

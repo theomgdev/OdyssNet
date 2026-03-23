@@ -377,8 +377,8 @@ class ChaosGradConfig:
     """
     
     @staticmethod
-    def default(lr=1e-4):
-        """Default balanced configuration."""
+    def conservative(lr=1e-4):
+        """Conservative balanced configuration."""
         return dict(
             lr=lr,
             betas=(0.9, 0.999),
@@ -392,8 +392,8 @@ class ChaosGradConfig:
         )
     
     @staticmethod
-    def aggressive(lr=3e-4):
-        """Aggressive exploration for fresh/small networks."""
+    def default(lr=3e-4):
+        """Default exploration for fresh/small networks."""
         return dict(
             lr=lr,
             betas=(0.9, 0.98),

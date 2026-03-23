@@ -180,7 +180,7 @@ trainer = RealNetTrainer(
     model, 
     lr=1e-4,
     device='cuda',
-    chaos_config=ChaosGradConfig.default(lr=1e-4),       # ChaosGrad Optimizer
+    chaos_config=ChaosGradConfig.conservative(lr=1e-4),       # ChaosGrad Optimizer
     scheduler_config=TemporalSchedulerConfig.adaptive(),  # Adaptive Scheduler
     gradient_persistence=0.0,   # Ghost Gradients (Persistence)
     synaptic_noise=0.0          # Thermal Noise (Default: 0.0)
@@ -275,8 +275,8 @@ A **RealNet-native optimizer** that understands and exploits the chaos chamber d
 ```python
 from realnet import ChaosGradConfig
 
-ChaosGradConfig.default(lr=1e-4)       # Balanced (Standard training)
-ChaosGradConfig.aggressive(lr=3e-4)    # Explorer (Fresh/small networks)
+ChaosGradConfig.conservative(lr=1e-4)  # Conservative balanced (Standard training)
+ChaosGradConfig.default(lr=3e-4)       # Explorer (Fresh/small networks)
 ChaosGradConfig.finetune(lr=1e-5)      # Conservative (Fine-tuning)
 ChaosGradConfig.large_network(lr=1e-4) # Sentinel (1000+ neuron networks)
 ChaosGradConfig.tiny_network(lr=0.01)  # Minimal (XOR, Identity)

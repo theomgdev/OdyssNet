@@ -54,7 +54,7 @@ class RealNetTrainer:
             gradient_persistence (float): How much gradient to keep from previous step (0.0 - 0.9).
             synaptic_noise (float): Scale of noise added to weights during training (Regularization). Default 0.0.
             chaos_config (dict, optional): Config dict for ChaosGrad. See ChaosGradConfig presets.
-                Use ChaosGradConfig.default(), ChaosGradConfig.aggressive(), etc.
+                Use ChaosGradConfig.conservative(), ChaosGradConfig.default(), etc.
             scheduler_config (dict, optional): Config dict for TemporalScheduler.
                 Use TemporalSchedulerConfig.default(), TemporalSchedulerConfig.llm(), etc.
             use_chaos_grad (bool, optional): Force enable/disable ChaosGrad.

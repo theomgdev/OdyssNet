@@ -313,7 +313,7 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
     trainer = RealNetTrainer(
         model, lr=lr, device=device,
         gradient_persistence=0.0,
-        chaos_config=ChaosGradConfig.aggressive(lr=lr),
+        chaos_config=ChaosGradConfig.default(lr=lr),
         scheduler_config=sched_config,
     )
 
