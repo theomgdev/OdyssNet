@@ -109,6 +109,8 @@ class RealNet(nn.Module):
             self.act = nn.Sigmoid()
         elif activation == 'gelu':
             self.act = nn.GELU()
+        elif activation == 'gelu_tanh':
+            self.act = nn.GELU(approximate='tanh')
         elif activation == 'silu':
              self.act = nn.SiLU()
         else:

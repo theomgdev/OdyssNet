@@ -36,7 +36,7 @@ RESET_DATA_ITER = False
 NUM_NEURONS = 2048
 INPUT_NEURON_COUNT = 128
 OUTPUT_NEURON_COUNT = 128
-ACTIVATION = 'tanh'
+ACTIVATION = 'gelu_tanh'
 THINK_GAP = 5
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
