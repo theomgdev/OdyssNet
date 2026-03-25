@@ -36,7 +36,8 @@ RESET_DATA_ITER = False
 NUM_NEURONS = 2048
 INPUT_NEURON_COUNT = 128
 OUTPUT_NEURON_COUNT = 128
-ACTIVATION = 'gelu_tanh'
+ACTIVATION = ['none', 'gelu_tanh', 'none']
+WEIGHT_INIT = ['quiet', 'resonant', 'quiet']  # [Encoder/Decoder, Core, Memory]
 THINK_GAP = 5
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -269,7 +270,7 @@ def generate(model, tokenizer, start_str="The", length=None, temperature=0.8, to
 
     return tokenizer.decode(input_seq)
 
-def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_count=-1, lr=1e-4, activation='gelu'):
+def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_count=-1, lr=1e-4, activation=None, weight_init=None):
     if input_count == -1:
         input_neuron_count = num_neurons // 2
     else:
@@ -291,7 +292,7 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         output_ids=output_ids,
         device=device,
         activation=activation,
-        weight_init='resonant',
+        weight_init=weight_init,
         gradient_checkpointing=True,
         vocab_size=vocab_size,
         vocab_mode='discrete',
@@ -405,6 +406,7 @@ def main():
     print(f"GENERATION_LENGTH: {GENERATION_LENGTH}")
     print(f"THINK_GAP: {THINK_GAP}")
     print(f"ACTIVATION: {ACTIVATION}")
+    print(f"WEIGHT_INIT: {WEIGHT_INIT}")
     print(f"TIE_EMBEDDINGS: {TIE_EMBEDDINGS}")
     tiktoken_info = f", Encoding: {TIKTOKEN_ENCODING}" if USE_TIKTOKEN else ""
     print(f"VOCAB_SIZE: {VOCAB_SIZE} (Tiktoken: {USE_TIKTOKEN}{tiktoken_info})")
@@ -424,8 +426,10 @@ def main():
     # --- CHECKPOINT PRE-LOAD (For Data Resume) ---
     CKPT_DIR = os.path.join(os.path.dirname(__file__), 'ckpt')
     os.makedirs(CKPT_DIR, exist_ok=True)
-    CKPT_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{ACTIVATION}_latest.pth')
-    CKPT_BEST_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{ACTIVATION}_best.pth')
+    # Use core activation for the filename to prevent long list-based names
+    core_act_name = ACTIVATION[1] if isinstance(ACTIVATION, list) else ACTIVATION
+    CKPT_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{core_act_name}_latest.pth')
+    CKPT_BEST_PATH = os.path.join(CKPT_DIR, f'llm_tinystories_{core_act_name}_best.pth')
 
     resume_doc_index = 0
     start_epoch = 0
@@ -445,7 +449,7 @@ def main():
     dataset = TinyStoriesIterableDataset(SEQ_LEN, TOKENIZER, skip_offset=resume_doc_index, debug=False)
 
     # --- MODEL SETUP ---
-    model, trainer, input_ids, output_ids = initialize_system(VOCAB_SIZE, NUM_NEURONS, DEVICE, input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, lr=LEARNING_RATE, activation=ACTIVATION)
+    model, trainer, input_ids, output_ids = initialize_system(VOCAB_SIZE, NUM_NEURONS, DEVICE, input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, lr=LEARNING_RATE, activation=ACTIVATION, weight_init=WEIGHT_INIT)
     NUM_NEURONS = model.num_neurons
 
     print(f"Input IDs: {input_ids[0]}-{input_ids[-1]}")
@@ -488,7 +492,7 @@ def main():
                     if action == '1':
                         print(f"🔄 Resizing to {saved_dim}...")
                         NUM_NEURONS = saved_dim
-                        model, trainer, _, _ = initialize_system(VOCAB_SIZE, NUM_NEURONS, DEVICE, input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, lr=LEARNING_RATE, activation=ACTIVATION)
+                        model, trainer, _, _ = initialize_system(VOCAB_SIZE, NUM_NEURONS, DEVICE, input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, lr=LEARNING_RATE, activation=ACTIVATION, weight_init=WEIGHT_INIT)
                         restore_checkpoint_runtime()
                         print(f"✅ Resuming from Epoch {start_epoch}")
 

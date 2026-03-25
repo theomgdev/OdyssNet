@@ -6,7 +6,7 @@ import numpy as np
 from typing import cast
 
 class RealNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init='resonant', activation='tanh', gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False):
         super(RealNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -74,19 +74,35 @@ class RealNet(nn.Module):
         self.output_scale = nn.Parameter(torch.full((len(output_ids),), 1.0, device=device))
         
         self.pulse_mode = pulse_mode
-        self.activation_type = activation
         self.gradient_checkpointing = gradient_checkpointing
         self._device = device # Private variable for property
-        self.weight_init_strategy = weight_init
+        
+        # Parse Lists
+        if weight_init is None:
+            weight_init = ['quiet', 'resonant', 'quiet']
+        elif isinstance(weight_init, str):
+            weight_init = ['quiet' if weight_init == 'resonant' else weight_init, weight_init, 'quiet']
+            
+        if activation is None:
+            activation = ['none', 'tanh', 'none']
+        elif isinstance(activation, str):
+            activation = ['none', activation, 'none']
+            
+        self.enc_dec_weight_init, self.core_weight_init, self.mem_weight_init = weight_init
+        self.weight_init_strategy = self.core_weight_init
+
+        self.enc_dec_act = self._build_activation(activation[0])
+        self.act = self._build_activation(activation[1])        
+        self.mem_act = self._build_activation(activation[2])
         
         # Weight Matrix (N x N)
         self.W = nn.Parameter(torch.empty(num_neurons, num_neurons, device=device))
-        self._init_weights(weight_init)
+        self._init_weights()
         
         # Memory Feedback (Neuron self-connections)
         self.memory_feedback = nn.Parameter(torch.empty(num_neurons, device=device))
         with torch.no_grad():
-            self.memory_feedback.copy_(torch.diagonal(self.W))
+            self._apply_init(self.memory_feedback, self.mem_weight_init)
             self.W.fill_diagonal_(0.0)
             
         def _zero_diagonal_grad(grad):
@@ -99,38 +115,40 @@ class RealNet(nn.Module):
         # StepNorm (RMSNorm - faster than LayerNorm, used in modern LLMs)
         self.norm = nn.RMSNorm(num_neurons).to(device)
         
-        if activation == 'tanh':
-            self.act = nn.Tanh()
-        elif activation == 'relu':
-            self.act = nn.ReLU()
-        elif activation == 'leaky_relu':
-            self.act = nn.LeakyReLU()
-        elif activation == 'sigmoid':
-            self.act = nn.Sigmoid()
-        elif activation == 'gelu':
-            self.act = nn.GELU()
-        elif activation == 'gelu_tanh':
-            self.act = nn.GELU(approximate='tanh')
-        elif activation == 'silu':
-             self.act = nn.SiLU()
-        else:
-             raise ValueError(f"Unknown activation function: {activation}")
-
         self.drop = nn.Dropout(p=dropout_rate)
 
         # Internal State (hidden state h_t)
         self.state = torch.zeros(1, num_neurons, device=device)
         
-    def _init_weights(self, strategy):
-        self._apply_init(self.W, strategy)
+    def _build_activation(self, name):
+        if name is None or (isinstance(name, str) and name.lower() == 'none'):
+            return nn.Identity()
+        elif name == 'tanh':
+            return nn.Tanh()
+        elif name == 'relu':
+            return nn.ReLU()
+        elif name == 'leaky_relu':
+            return nn.LeakyReLU()
+        elif name == 'sigmoid':
+            return nn.Sigmoid()
+        elif name == 'gelu':
+            return nn.GELU()
+        elif name == 'gelu_tanh':
+            return nn.GELU(approximate='tanh')
+        elif name == 'silu':
+             return nn.SiLU()
+        else:
+             raise ValueError(f"Unknown activation function: {name}")
+
+    def _init_weights(self):
+        self._apply_init(self.W, self.core_weight_init)
         
-        proj_strategy = 'quiet' if strategy == 'resonant' else strategy
         if self.embed is not None:
-            self._apply_init(self.embed.weight, proj_strategy)
+            self._apply_init(self.embed.weight, self.enc_dec_weight_init)
         if self.proj is not None:
-            self._apply_init(self.proj.weight, proj_strategy)
+            self._apply_init(self.proj.weight, self.enc_dec_weight_init)
         if self.output_decoder is not None:
-            self._apply_init(self.output_decoder.weight, proj_strategy)
+            self._apply_init(self.output_decoder.weight, self.enc_dec_weight_init)
         
     def _apply_init(self, tensor, strategy):
         """
@@ -290,7 +308,9 @@ class RealNet(nn.Module):
             signal = F.linear(h_t_in, self.W.t(), self.B)
             
             # Memory Feedback (Attractor State)
-            signal = signal + h_t_in * self.memory_feedback
+            feedback = h_t_in * self.memory_feedback
+            feedback = self.mem_act(feedback)
+            signal = signal + feedback
             
             # Input Injection
             if x_input_info is not None:
@@ -376,6 +396,9 @@ class RealNet(nn.Module):
                          
                          # 3. Map to Network State
                          if vector is not None:
+                              # Apply Encoder Activation
+                              vector = self.enc_dec_act(vector)
+                              
                               # Apply Input Scaling
                               vector = vector * self.input_scale.to(vector.dtype)
                               
@@ -474,6 +497,7 @@ class RealNet(nn.Module):
             # Project to Vocab
             # Shape: (Batch, Steps, OutNeurons) -> (Batch, Steps, Vocab)
             decoded = self.output_decoder(out_activity)
+            decoded = self.enc_dec_act(decoded)
             return decoded, h_t
 
         return stacked_outputs, h_t

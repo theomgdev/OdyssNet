@@ -133,6 +133,8 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     if init_new is not None and hasattr(model, '_apply_init'):
         with torch.no_grad():
             model._apply_init(model.W.data, init_new)
+            if hasattr(model, 'memory_feedback') and model.memory_feedback is not None:
+                model._apply_init(model.memory_feedback.data, init_new)
             if hasattr(model, 'embed') and model.embed is not None:
                 model._apply_init(model.embed.weight.data, init_new)
             if hasattr(model, 'proj') and model.proj is not None:

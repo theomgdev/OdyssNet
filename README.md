@@ -86,11 +86,11 @@ trainer.fit(inputs, inputs, epochs=50)
 
 #### Initialization Protocols
 
-`weight_init='resonant'` is the default and recommended strategy for all network sizes. It places the weight matrix at the Edge of Chaos (ρ(W) = 1.0) from the start, ensuring signal fidelity across temporal steps without requiring manual tuning.
+`weight_init=['quiet', 'resonant', 'quiet']` is the default strategy. It provides optimal initializations for the encoder/decoder, core matrix, and memory feedback respectively. If a single string like `'resonant'` is passed, the network automatically expands it intelligently.
 
-*   **All Networks (Default):**
-    *   Use `weight_init='resonant'` and `activation='tanh'`.
-    *   Bipolar Rademacher skeleton + spectral normalization to ρ = 1.0. Works across tiny logic gates and large temporal networks alike.
+*   **All Networks (Default Core):**
+    *   Use `weight_init='resonant'` and `activation='tanh'`. The core will be placed at the Edge of Chaos (ρ(W) = 1.0) from the start, ensuring signal fidelity across temporal steps.
+    *   Bipolar Rademacher skeleton + spectral normalization to ρ = 1.0. 
 *   **Alternative — Large Networks (>10 Neurons):**
     *   `weight_init='orthogonal'` remains a solid fallback for pure stability.
 *   **Alternative — Tiny Networks (<10 Neurons, Logic Gates):**

@@ -41,8 +41,8 @@ model = RealNet(
     *   `False`: Input is applied continuously at every step (Stream).
 *   `dropout_rate` (float): Probability of synaptic failure during training (Biological simulation).
 *   `device` (str): 'cpu' or 'cuda'.
-*   `weight_init` (str): Initialization strategy. Default is `'resonant'`.
-    *   `'resonant'` **(Default, RealNet-Native)**: Edge-of-Chaos initialization. Builds a bipolar weight skeleton (Rademacher ±1 signs), adds small Gaussian noise (std=0.02) for symmetry breaking, then scales the matrix so its spectral radius ρ(W) = 1.0 exactly. This guarantees that signals neither explode nor vanish across temporal steps while maintaining both excitatory and inhibitory connections for gate emergence. Projection layers (embed/proj/decoder) automatically use `quiet` init instead of spectral scaling.
+*   `weight_init` (str or list[str]): Initialization strategy. Default is `['quiet', 'resonant', 'quiet']` (Encoder/Decoder, Core, Memory). If a single string is provided, it applies to the core and expands sensibly to other components.
+    *   `'resonant'` **(Default Core)**: Edge-of-Chaos initialization. Builds a bipolar weight skeleton (Rademacher ±1 signs), adds small Gaussian noise (std=0.02) for symmetry breaking, then scales the matrix so its spectral radius ρ(W) = 1.0 exactly. This guarantees that signals neither explode nor vanish across temporal steps while maintaining both excitatory and inhibitory connections for gate emergence.
     *   `'orthogonal'`: Orthogonal matrix — great stability for large networks.
     *   `'xavier_uniform'` / `'xavier_normal'`: Xavier-scaled (good for small logic networks).
     *   `'kaiming_uniform'` / `'kaiming_normal'`: Kaiming-scaled (ReLU-oriented).
@@ -50,7 +50,7 @@ model = RealNet(
     *   `'micro_quiet'`: Normal(0, 1e-6) — near-zero start.
     *   `'sparse'`: 90% sparse with std=0.02.
     *   `'zero'`, `'one'`, `'classic'`: Special cases.
-*   `activation` (str): Activation function used in the update step (`'tanh'`, `'relu'`, `'sigmoid'`, `'gelu'`, `'silu'`, etc.). Default is `'tanh'`.
+*   `activation` (str or list[str]): Activation function used in the model (`'tanh'`, `'relu'`, `'sigmoid'`, `'gelu'`, `'gelu_tanh'`, `'silu'`, `'none'`). Can be a single string for all, or a list `[encoder_decoder, core, memory]`. Default is `['none', 'tanh', 'none']`.
 *   `vocab_size` (int or list/tuple, optional): Size of the input/output vocabulary. 
     *   **Symmetric**: `vocab_size=50257` (GPT-2 style).
     *   **Asymmetric**: `vocab_size=[v_in, v_out]` (e.g., `[784, 10]` for MNIST to map 784 pixels to 10 classes).
