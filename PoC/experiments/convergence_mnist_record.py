@@ -163,11 +163,8 @@ def main():
             h, m = divmod(m, 60)
             return f"{h:02d}:{m:02d}:{s:02d}"
             
-        pred_eta = trainer.predict_loss_after(f"{eta_seconds}s")
-        pred_str = f" | Exp. Final: {pred_eta:.4f}" if isinstance(pred_eta, float) else ""
-
         print(f"Epoch {epoch+1:4d}/{NUM_EPOCHS} | Loss {avg_loss:.4f} | Acc {acc:5.2f}% | "
-              f"LR {current_lr:.2e} | Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}{pred_str}")
+              f"LR {current_lr:.2e} | Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
 
 if __name__ == "__main__":
     main()
