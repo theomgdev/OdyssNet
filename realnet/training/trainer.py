@@ -5,7 +5,7 @@ import numpy as np
 import time
 import math
 import re
-from typing import Any, cast
+from typing import Any, Callable, cast
 from ..utils.data import prepare_input, to_tensor
 
 import os
@@ -77,7 +77,7 @@ class RealNetTrainer:
         self._using_chaos_grad = False
         self._chaos_config = chaos_config  # Store for re-use after neurogenesis
         self.scheduler = None
-        self.anomaly_hook = anomaly_hook
+        self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
         self._start_time_pred = None
         self._loss_time_buffer = []
 
@@ -419,11 +419,12 @@ class RealNetTrainer:
                 self._loss_time_buffer.pop(0)
 
         # Anomaly Hook (Spikes, Plateaus, Increases) evaluation
-        if getattr(self, 'anomaly_hook', None) is not None:
+        hook = self.anomaly_hook
+        if hook is not None:
             # 1. Step-to-step absolute increase
             if hasattr(self, '_prev_step_loss'):
                 if loss_val > self._prev_step_loss:
-                    self.anomaly_hook("increase", loss_val)
+                    hook("increase", loss_val)
             self._prev_step_loss = loss_val
 
             # 2. Spike Detection
@@ -438,7 +439,7 @@ class RealNetTrainer:
                 std = math.sqrt(self._anomaly_var) + 1e-8
                 
                 if diff > 3 * std and loss_val > 1.2 * self._anomaly_ewma:
-                    self.anomaly_hook("spike", loss_val)
+                    hook("spike", loss_val)
                     self._anomaly_ewma = loss_val 
                     self._anomaly_var = 0.0
 
@@ -448,7 +449,7 @@ class RealNetTrainer:
                 older = [l for t, l in self._loss_time_buffer[-20:-10]]
                 if sum(recent) / 10 >= (sum(older) / 10) * 0.999: # Stuck or worsening
                     if not getattr(self, '_plateau_hook_triggered', False):
-                        self.anomaly_hook("plateau", loss_val)
+                        hook("plateau", loss_val)
                         self._plateau_hook_triggered = True
                 else:
                     self._plateau_hook_triggered = False
@@ -576,7 +577,8 @@ class RealNetTrainer:
         """Manually triggers plateau escape mechanisms in optimizer and scheduler."""
         triggered = False
         if self._using_chaos_grad:
-            self.optimizer.trigger_plateau_escape()
+            chaos_opt = cast(ChaosGrad, self.optimizer)
+            chaos_opt.trigger_plateau_escape()
             triggered = True
         if self.scheduler:
             self.scheduler.manual_restart()

@@ -147,14 +147,13 @@ class Neurogenesis:
                     cfg.update(chaos_config)
                 cfg['lr'] = get_arg('lr', cfg.get('lr', 0.001))
 
-                param_groups, sentinel_params = ChaosGrad.classify_params(model)
+                param_groups = ChaosGrad.classify_params(model)
                 for group_cfg in param_groups:
                     for key, value in cfg.items():
                         if key not in group_cfg and key != 'params':
                             group_cfg[key] = value
 
                 new_opt = ChaosGrad(param_groups, **cfg)
-                new_opt.set_sentinel_params(sentinel_params)
             else:
                 new_opt = optimizer_cls(
                     model.parameters(),
