@@ -456,28 +456,22 @@ def main():
     hook_state = {'increase_count': 0}
 
     # --- ANOMALY HOOK ---
-    def my_anomaly_hook(anomaly_type, loss_val):
-        if anomaly_type == "plateau":
-            print(f"\n🚨 [ANOMALY HOOK] '{anomaly_type.upper()}' detected! (Loss: {loss_val:.4f})")
-            print("🚨 [ANOMALY HOOK] Activating manual plateau escape to shake things up...")
-            trainer.trigger_plateau_escape()
-            
-        elif anomaly_type == "increase":
-            if NEUROGENESIS_ENABLED:
-                hook_state['increase_count'] += 1
-                if hook_state['increase_count'] >= MAX_LOSS_INCREASE:
-                    print(f"\n🧬 [ANOMALY HOOK] Loss increase limit reached ({MAX_LOSS_INCREASE}). Expanding Network (Neurogenesis)...")
-                    trainer.expand(amount=NEUROGENESIS_AMOUNT)
-                    global NUM_NEURONS
-                    NUM_NEURONS = model.num_neurons
-                    hook_state['increase_count'] = 0
+    def anomaly_event_handler(anomaly_type, loss_val):
+        if anomaly_type == "increase" and NEUROGENESIS_ENABLED:
+            hook_state['increase_count'] += 1
+            if hook_state['increase_count'] >= MAX_LOSS_INCREASE:
+                print(f"\n🧬 [ANOMALY HOOK] Loss increase limit reached ({MAX_LOSS_INCREASE}). Expanding Network (Neurogenesis)...")
+                trainer.expand(amount=NEUROGENESIS_AMOUNT)
+                global NUM_NEURONS
+                NUM_NEURONS = model.num_neurons
+                hook_state['increase_count'] = 0
 
     # --- MODEL SETUP ---
     model, trainer, input_ids, output_ids = initialize_system(
         VOCAB_SIZE, NUM_NEURONS, DEVICE, 
         input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, 
         lr=LEARNING_RATE, activation=ACTIVATION, weight_init=WEIGHT_INIT, gates=GATES,
-        hook=my_anomaly_hook
+        hook=anomaly_event_handler
     )
     NUM_NEURONS = model.num_neurons
 
