@@ -76,6 +76,7 @@ class OdyssNet(nn.Module):
         self.pulse_mode = pulse_mode
         self.gradient_checkpointing = gradient_checkpointing
         self._device = device # Private variable for property
+        self._cached_scaled_input = None  # Initialize cached input attribute
         
         # Parse configurable component settings
         weight_init = self._normalize_weight_init(weight_init)
@@ -292,7 +293,10 @@ class OdyssNet(nn.Module):
                         sigma_max = torch.linalg.matrix_norm(mat, ord=2)
                         if sigma_max > 1e-8:
                             tensor.div_(sigma_max)
-                    except Exception:
+                    except (RuntimeError, ValueError) as e:
+                        # Fallback to Frobenius norm if spectral norm fails
+                        import warnings
+                        warnings.warn(f"Spectral norm computation failed: {e}. Falling back to Frobenius norm.")
                         frob = tensor.norm()
                         if frob > 1e-8:
                             tensor.div_(frob / (tensor.numel() ** 0.5))
