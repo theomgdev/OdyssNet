@@ -1,7 +1,7 @@
 """
-ChaosGrad: A RealNet-Native Optimizer
+ChaosGrad: A OdyssNet-Native Optimizer
 
-Built specifically for RealNet's chaotic recurrent dynamics. Unlike AdamW which 
+Built specifically for OdyssNet's chaotic recurrent dynamics. Unlike AdamW which 
 treats all parameters identically, ChaosGrad understands the different roles of 
 parameters in a chaos chamber:
 
@@ -24,7 +24,7 @@ import math
 
 class ChaosGrad(torch.optim.Optimizer):
     """
-    ChaosGrad: RealNet-native optimizer.
+    ChaosGrad: OdyssNet-native optimizer.
     
     Extends AdamW with chaos-aware features:
     - Separate momentum/LR for chaos core (W) vs projections vs lightweight params
@@ -93,7 +93,7 @@ class ChaosGrad(torch.optim.Optimizer):
     @staticmethod
     def classify_params(model):
         """
-        Classifies RealNet parameters into groups with appropriate settings.
+        Classifies OdyssNet parameters into groups with appropriate settings.
         Returns a list of param groups suitable for the optimizer.
         
         Groups:

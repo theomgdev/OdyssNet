@@ -1,21 +1,29 @@
-# RealNet 2.0: The Temporal Revolution
+# OdyssNet 2.0: The Temporal Revolution
 
-**RealNet is the proof that Time is the ultimate Hidden Layer.**
+**OdyssNet is the proof that Time is the ultimate Hidden Layer.**
 
-Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of each other) to solve complexity. RealNet discards this orthodoxy, proving that **Temporal Depth** (chaos evolving over time) is a vastly more efficient substitute.
+Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of each other) to solve complexity. OdyssNet discards this orthodoxy, proving that **Temporal Depth** (chaos evolving over time) is a vastly more efficient substitute.
 
 > **The Zero-Hidden Breakthrough**
 >
 > In 1969, Minsky & Papert proved that a neural network without hidden layers cannot solve non-linear problems like XOR.
-> **RealNet 2.0 has broken this limit.**
+> **OdyssNet 2.0 has broken this limit.**
 >
-> By treating the network as a **Trainable Dynamic System**, RealNet solves non-linear problems (XOR, MNIST) using **0 Hidden Layers**. It replaces spatial neurons with temporal thinking steps.
+> By treating the network as a **Trainable Dynamic System**, OdyssNet solves non-linear problems (XOR, MNIST) using **0 Hidden Layers**. It replaces spatial neurons with temporal thinking steps.
 
-RealNet achieves its efficiency through **Space-Time Trade-off**. Instead of adding thousands of new neurons (Space) to build depth, it executes existing neurons for more steps (Time). A single physical matrix is reused across temporal steps, folding tens of layers worth of computation into a microscopic parametric footprint. This proves that intelligence is a dynamic process, not a static structure.
+OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of adding thousands of new neurons (Space) to build depth, it executes existing neurons for more steps (Time). A single physical matrix is reused across temporal steps, folding tens of layers worth of computation into a microscopic parametric footprint. This proves that intelligence is a dynamic process, not a static structure.
 
 > 🏆 **WORLD RECORD: Parametric Intelligence Density**
 >
-> RealNet 2.0 achieved **89.5% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> OdyssNet 2.0 achieved **89.5% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+
+## TLDR
+
+- OdyssNet replaces spatial depth with temporal depth: one recurrent chamber "thinks" for multiple steps instead of stacking hidden layers.
+- It solves non-linear tasks (including XOR and MNIST) with **zero hidden layers** via trainable dynamics.
+- Best highlighted result: **89.5% MNIST** at only **480 parameters**.
+- The same core shows memory, rhythm, attractor stability, and transferable skills across tasks.
+- Start from [PoC experiments](PoC) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
 ---
 
@@ -29,10 +37,10 @@ RealNet achieves its efficiency through **Space-Time Trade-off**. Instead of add
 
 ## 📊 The Evidence: Zero-Hidden Benchmarks
 
-We pushed RealNet to the theoretical limit: **Zero Hidden Neurons**.
+We pushed OdyssNet to the theoretical limit: **Zero Hidden Neurons**.
 In these tests, the Input Layer is directly connected to the Output Layer (and itself). There are no buffer layers.
 
-| Task | Traditional Constraint | RealNet Solution | Result | Script |
+| Task | Traditional Constraint | OdyssNet Solution | Result | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
@@ -48,7 +56,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
 
-RealNet solves full-scale MNIST (28x28) with **Zero Hidden Layers** (Direct Input-Output).
+OdyssNet solves full-scale MNIST (28x28) with **Zero Hidden Layers** (Direct Input-Output).
 *   **Inputs:** 784
 *   **Outputs:** 10
 *   **Hidden Layers:** **0**
@@ -60,7 +68,7 @@ The input layer "talks to itself" for 10 steps. The chaotic feedback loops extra
 
 ## 📦 Installation & Usage
 
-RealNet is designed as a modular PyTorch library.
+OdyssNet is designed as a modular PyTorch library.
 
 ### Installation
 
@@ -74,12 +82,12 @@ pip install -r requirements.txt
 ### Quick Start
 
 ```python
-from realnet import RealNet, RealNetTrainer
+from odyssnet import OdyssNet, OdyssNetTrainer
 
 # Initialize a Zero-Hidden Network
 # 1 Input, 1 Output. 
-model = RealNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
-trainer = RealNetTrainer(model, device='cuda')
+model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
+trainer = OdyssNetTrainer(model, device='cuda')
 
 # Train
 inputs = torch.randn(100, 1)
@@ -111,10 +119,10 @@ trainer.fit(inputs, inputs, epochs=50)
 
 ## 🌪️ How It Works: Inside the Storm
 
-RealNet is not a feed-forward mechanism; it is a **Resonant Chamber**.
+OdyssNet is not a feed-forward mechanism; it is a **Resonant Chamber**.
 
 ### 1. The Pulse (Input) & The Sequence
-In traditional AI, input is often a static snapshot. RealNet handles both **Pulses** and **Streams**.
+In traditional AI, input is often a static snapshot. OdyssNet handles both **Pulses** and **Streams**.
 *   **Pulse Mode:** An image hits at $t=0$. The network closes its eyes and processes the ripples (MNIST).
 *   **Stream Mode:** Data applies sequentially. The network can "wait" and "think" between events (The Detective).
 
@@ -130,20 +138,20 @@ Here lies the magic of **Zero-Hidden** performance.
 *   Step 2: Mixed signals mix again. (Equivalent to Layer 2)
 *   Step 15: Highly abstract features emerge. (Equivalent to Layer 15)
 
-By "thinking" for 15 steps, RealNet simulates a 15-layer deep network using **only one physical matrix**. It folds space into time.
+By "thinking" for 15 steps, OdyssNet simulates a 15-layer deep network using **only one physical matrix**. It folds space into time.
 
 ### 4. Controlled Chaos (Attractors)
-Uncontrolled feedback loops lead to explosion. RealNet engineers the chaos to form stable **Attractors**.
+Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to form stable **Attractors**.
 *   **StepNorm** acts as gravity, keeping energy bounded.
 *   **GELU** filters meaningful signals.
 *   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (Neuron self-connections) from the **Chaos Core** (cross-connections), and now handles **Gate Parameters** as a dedicated group with independent `gate_lr_mult` and `gate_decay`.
-*   **The Latch Experiment** proved RealNet can create a "deep well" aka a stable attractor to hold a decision forever against noise.
+*   **The Latch Experiment** proved OdyssNet can create a "deep well" aka a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?
 
-While RealNet looks like a Recurrent Neural Network (RNN) on paper, its philosophy is fundamentally different.
+While OdyssNet looks like a Recurrent Neural Network (RNN) on paper, its philosophy is fundamentally different.
 
-| Feature | Standard RNN / LSTM | RealNet 2.0 |
+| Feature | Standard RNN / LSTM | OdyssNet 2.0 |
 | :--- | :--- | :--- |
 | **Input Flow** | Continuous Stream (e.g., words in a sentence) | **Single Pulse** (Impulse at $t=0$) |
 | **Purpose** | Sequence Processing (Parsing) | **Deep Thinking** (Digestion) |
@@ -151,21 +159,21 @@ While RealNet looks like a Recurrent Neural Network (RNN) on paper, its philosop
 | **Dynamics** | Engineered to avoid fading (LSTM) | **Evolves** to find resonance (Chaos) |
 
 *   **RNNs listen to the outside world.** They process a sequence of external inputs.
-*   **RealNet listens to its inner voice.** It takes **one** look at the problem and then closes its eyes to "think" about it for 15 steps. It creates its own temporal depth.
+*   **OdyssNet listens to its inner voice.** It takes **one** look at the problem and then closes its eyes to "think" about it for 15 steps. It creates its own temporal depth.
 
 ### 6. Biological Realism: Living Intelligence
-RealNet mimics the brain more closely than layered networks, not just in structure, but in **behavior**:
+OdyssNet mimics the brain more closely than layered networks, not just in structure, but in **behavior**:
 
-*   **No Layers:** The brain doesn't have "Layer 1" and "Layer 2". It has regions of interconnected neurons. RealNet is a single region.
-*   **Willpower (The Latch):** Unlike standard RNNs that fade, RealNet can lock onto a decision and hold it against entropy, displaying "Cognitive Persistence."
-*   **Rhythm (The Stopwatch):** Without any external clock, RealNet experiences time subjectively, allowing it to count, wait, and act at precise moments.
-*   **Patience (The Detective):** It benefits from "Thinking Time." Just as humans need a moment to process complex logic, RealNet solves impossible problems when given a few steps of silence to digest potential solutions.
+*   **No Layers:** The brain doesn't have "Layer 1" and "Layer 2". It has regions of interconnected neurons. OdyssNet is a single region.
+*   **Willpower (The Latch):** Unlike standard RNNs that fade, OdyssNet can lock onto a decision and hold it against entropy, displaying "Cognitive Persistence."
+*   **Rhythm (The Stopwatch):** Without any external clock, OdyssNet experiences time subjectively, allowing it to count, wait, and act at precise moments.
+*   **Patience (The Detective):** It benefits from "Thinking Time." Just as humans need a moment to process complex logic, OdyssNet solves impossible problems when given a few steps of silence to digest potential solutions.
 
 ### 7. Implicit Attention (Temporal Resonance)
-Unlike Transformers which use explicit $Q \times K$ matrices to "look back" at the history, RealNet achieves attention through **Temporal Resonance**.
+Unlike Transformers which use explicit $Q \times K$ matrices to "look back" at the history, OdyssNet achieves attention through **Temporal Resonance**.
 
 *   **Mechanism:** Information from the past is maintained as a standing wave or vibration in the hidden state.
-*   **Key-Value Handling:** The **Librarian Experiment** proved that RealNet can act as an addressable database, routing queries to the correct "memory vibration" without any physical storage tables.
+*   **Key-Value Handling:** The **Librarian Experiment** proved that OdyssNet can act as an addressable database, routing queries to the correct "memory vibration" without any physical storage tables.
 *   **Detection:** When a related input arrives (like a READ command for Key 1), it creates a constructive interference (resonance) with the specific wave holding 'Key 1's value', forcing it to surface.
 *   **Result:** The network "attends" to relevant past events without storing the entire history buffer. Time itself acts as the indexing mechanism.
 
@@ -178,7 +186,7 @@ $$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
 
 ## 📝 Experimental Findings
 
-We conducted extensive tests to validate RealNet's core hypothesis: **Temporal Depth > Spatial Depth.**
+We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal Depth > Spatial Depth.**
 
 ### A. The Atomic Identity (Unit Test)
 *   **Target:** $f(x) = x$. The network must act as a perfect wire.
@@ -198,7 +206,7 @@ We conducted extensive tests to validate RealNet's core hypothesis: **Temporal D
 ### B. The Impossible XOR (The Chaos Gate)
 *   **Target:** Solve the classic XOR problem ($[1,1]\to0$, $[1,0]\to1$, etc.) which implies non-linearity.
 *   **Challenge:** Impossible for standard linear networks without hidden layers.
-*   **Result:** **Solved (Loss 0.000000)**. RealNet bends space-time to separate the classes.
+*   **Result:** **Solved (Loss 0.000000)**. OdyssNet bends space-time to separate the classes.
     <details>
     <summary>See Truth Table Verification</summary>
 
@@ -214,10 +222,10 @@ We conducted extensive tests to validate RealNet's core hypothesis: **Temporal D
 *   **Architecture:** **3 Neurons** (2 Input, 1 Output). **0 Hidden Neurons**. Total **9 Parameters**.
 *   **Thinking Time:** **5 Steps**.
 *   **Script:** `PoC/convergence_gates.py`
-*   **Insight:** RealNet uses **Time as a Hidden Layer**. By folding the input over just 5 time steps, it creates a non-linear decision boundary in a single physical layer, proving that 3 chaos-coupled neurons can solve XOR.
+*   **Insight:** OdyssNet uses **Time as a Hidden Layer**. By folding the input over just 5 time steps, it creates a non-linear decision boundary in a single physical layer, proving that 3 chaos-coupled neurons can solve XOR.
 
 ### C. The MNIST Marathon (Visual Intelligence)
-RealNet's vision capabilities were tested under four distinct conditions to prove robustness, scalability, and efficiency.
+OdyssNet's vision capabilities were tested under four distinct conditions to prove robustness, scalability, and efficiency.
 
 #### 1. The Main Benchmark (Pure Zero-Hidden)
 *   **Target:** Full 28x28 MNIST (784 Pixels).
@@ -232,7 +240,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Insight:** Standard linear models cap at 92%. RealNet achieves Deep Learning performance (96%) without Deep Learning layers, purely through **Temporal Depth**.
+*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (96%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
 *   **Hypothesis:** Can we reach 100% parameter efficiency by **reviving** dead synapses (random re-initialization) instead of just killing them?
@@ -251,7 +259,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **Insight:** Unlike standard pruning which shrinks capacity, RealNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation. "Bug became a Feature."
+*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation. "Bug became a Feature."
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).
@@ -302,7 +310,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
 ### E. The 480-Parameter World Record (Elite Intelligence Density)
 *   **Target:** Solve MNIST and achieve high accuracy with **less than 500 parameters**.
 *   **The Setup:**
-    *   **Architecture:** RealNet with 10 core neurons.
+    *   **Architecture:** OdyssNet with 10 core neurons.
     *   **Strategy:** 10 Sequential Chunks (79 pixels each).
     *   **Secret Sauce:** A tiny 3-neuron input projection and a 10-class output decoder.
     *   **Total Parameters:** **480**.
@@ -311,7 +319,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     <summary>See the "Parametric Efficiency" Log</summary>
 
     ```text
-    RealNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch      1/1000 | Acc 44.24% | LR 2.00e-03 (Hyperspace start)
     ...
     Epoch    100/1000 | Acc 85.81% | LR 1.95e-03
@@ -333,38 +341,38 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
 
     ```text
     Frequency 0.15 (Slow Wave):
-      t=1:  Target 0.1494 | RealNet 0.2871
-      t=11: Target 0.9969 | RealNet 0.9985 (Peak Sync)
-      t=26: Target -0.6878 | RealNet -0.6711
+      t=1:  Target 0.1494 | OdyssNet 0.2871
+      t=11: Target 0.9969 | OdyssNet 0.9985 (Peak Sync)
+      t=26: Target -0.6878 | OdyssNet -0.6711
     
     Frequency 0.45 (Fast Wave):
-      t=1:  Target 0.4350 | RealNet 0.1783
-      t=26: Target -0.7620 | RealNet -0.7826
+      t=1:  Target 0.4350 | OdyssNet 0.1783
+      t=26: Target -0.7620 | OdyssNet -0.7826
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_sine_wave.py`
-*   **Insight:** RealNet is a **Programmable Oscillator**. This confirms it can generate infinite unique temporal trajectories from a single seed.
+*   **Insight:** OdyssNet is a **Programmable Oscillator**. This confirms it can generate infinite unique temporal trajectories from a single seed.
 
 ### G. The Delayed Adder (Memory & Logic)
 *   **Target:** Input A ($t=2$), Input B ($t=8$). Output A+B ($t=14$).
-*   **Challenge:** RealNet must "remember" A for 6 steps, ignore the silence, receive B, and compute the sum.
+*   **Challenge:** OdyssNet must "remember" A for 6 steps, ignore the silence, receive B, and compute the sum.
 *   **Result:** **MSE Loss: ~0.01**.
     <details>
     <summary>See "Mental Math" Results</summary>
 
     ```text
-    -0.3 + 0.1 = -0.20 | RealNet: -0.2271 (Diff: 0.02)
-     0.5 + 0.2 =  0.70 | RealNet:  0.4761 (Diff: 0.22 - Struggle with high amp)
-     0.1 + -0.1 = 0.00 | RealNet: -0.0733 (Diff: 0.07)
-    -0.4 + -0.4 = -0.80 | RealNet: -0.7397 (Diff: 0.06)
+    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2271 (Diff: 0.02)
+     0.5 + 0.2 =  0.70 | OdyssNet:  0.4761 (Diff: 0.22 - Struggle with high amp)
+     0.1 + -0.1 = 0.00 | OdyssNet: -0.0733 (Diff: 0.07)
+    -0.4 + -0.4 = -0.80 | OdyssNet: -0.7397 (Diff: 0.06)
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_adder.py`
-*   **Insight:** Validates **Short-Term Memory**. The network holds variable $A$ in its chaotic state, waits for $B$, and performs non-linear integration (approximate arithmetic) to output the sum. This demonstrates RealNet's ability to process **Video-like** data streams. Similar to "Mental Math".
+*   **Insight:** Validates **Short-Term Memory**. The network holds variable $A$ in its chaotic state, waits for $B$, and performs non-linear integration (approximate arithmetic) to output the sum. This demonstrates OdyssNet's ability to process **Video-like** data streams. Similar to "Mental Math".
 
 ### H. The Latch (Willpower)
 *   **Target:** Wait for a trigger pulse. Once received, switch output to ON and **hold it forever**.
-*   **Challenge:** Standard RNNs fade to zero. RealNet must trap the energy in a stable attractor.
+*   **Challenge:** Standard RNNs fade to zero. OdyssNet must trap the energy in a stable attractor.
 *   **Result:** **Perfect Stability**. Once triggered, the decision is maintained indefinitely.
     <details>
     <summary>See the "Willpower" Log</summary>
@@ -379,7 +387,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_latch.py`
-*   **Insight:** Demonstrates **Decision Maintaining**. RealNet can make a choice and stick to it, resisting decay.
+*   **Insight:** Demonstrates **Decision Maintaining**. OdyssNet can make a choice and stick to it, resisting decay.
 
 ### I. The Stopwatch (Internal Clock)
 *   **Target:** "Wait for X steps, then fire." (No input during waiting).
@@ -402,7 +410,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_stopwatch.py`
-*   **Insight:** Demonstrates **Rhythm & Time Perception**. RealNet doesn't just process data; it *experiences* time.
+*   **Insight:** Demonstrates **Rhythm & Time Perception**. OdyssNet doesn't just process data; it *experiences* time.
 
 
 ### J. The Thinking Detective (Context & Reasoning)
@@ -425,7 +433,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_detective_thinking.py`
-*   **Insight:** Proves that **Intelligence requires Time**. When allowed to "digest" information during silent steps, RealNet solves complex temporal logic (XOR over Time) that purely reactive networks cannot. This is the foundation for our LLM approach.
+*   **Insight:** Proves that **Intelligence requires Time**. When allowed to "digest" information during silent steps, OdyssNet solves complex temporal logic (XOR over Time) that purely reactive networks cannot. This is the foundation for our LLM approach.
 
 ### K. The Librarian (Neural Database)
 *   **Target:** Act as a Read-Write Memory. `WRITE K1=0.5`. Wait... `READ K1`. Output: `0.5`.
@@ -435,7 +443,7 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     <summary>See Memory Retrieval Log</summary>
 
     ```text
-    Step  | Command  | Key   | Val_In   | Target   | RealNet  | Status
+    Step  | Command  | Key   | Val_In   | Target   | OdyssNet  | Status
     -------------------------------------------------------------------
     0     | WRITE    | K0    | 0.4426   | 0.4426   | 0.0208   | ⚙️
     ...   | (Memory Consolidating...)
@@ -445,11 +453,11 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     48    | DELETE   | K0    | 0.0000   | 0.0000   | 0.0117   | ✅ DELETED
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_realnet_as_database.py`
-*   **Insight:** Proves that RealNet can simulate **Key-Value Attention** mechanisms purely through dynamics, creating stable "memory wells" that can be addressed by a query signal and effectively performing the job of a Transformer's KV Cache without explicit storage matrices.
+*   **Script:** `PoC/experiments/convergence_odyssnet_as_database.py`
+*   **Insight:** Proves that OdyssNet can simulate **Key-Value Attention** mechanisms purely through dynamics, creating stable "memory wells" that can be addressed by a query signal and effectively performing the job of a Transformer's KV Cache without explicit storage matrices.
 
 ### L. Skill Transfer (Add -> Multiply Transplant)
-*   **Target:** Teach a small RealNet to add two delayed pulses, transplant learned weights into a larger RealNet, then train both transplanted and scratch models on multiplication.
+*   **Target:** Teach a small OdyssNet to add two delayed pulses, transplant learned weights into a larger OdyssNet, then train both transplanted and scratch models on multiplication.
 *   **Challenge:** Verify whether learned temporal arithmetic priors can accelerate learning of a structurally related but harder task.
 *   **Result:** **Clear transfer win** in a controlled head-to-head run.
     <details>
@@ -464,14 +472,14 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_skill_transfer.py`
-*   **Insight:** RealNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
+*   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
 
-## 🔮 Vision: The Soul of Silicon (RealNet-1B)
-RealNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.
+## 🔮 Vision: The Soul of Silicon (OdyssNet-1B)
+OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.
 
 If we can solve vision with Zero Hidden Layers by trading Space for Time, this approach could scale to language models.
 
-*   **Hypothesis:** A 1B parameter model (RealNet-1B) could theoretically match the reasoning depth of much larger models (e.g., Llama-70B) by "thinking" for more steps.
+*   **Hypothesis:** A 1B parameter model (OdyssNet-1B) could theoretically match the reasoning depth of much larger models (e.g., Llama-70B) by "thinking" for more steps.
 *   **Goal:** Efficient, high-reasoning AI on consumer hardware (e.g., RTX 3060).
 *   **New Evidence:** The Add -> Multiply transplant experiment shows reusable skills can survive scale changes and speed up new task acquisition, opening a realistic AGI pathway.
 

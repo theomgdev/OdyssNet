@@ -3,15 +3,15 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def main():
-    print("RealNet 2.0: The Atomic Identity...")
+    print("OdyssNet 2.0: The Atomic Identity...")
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # ATOMIC UNIT OF CHAOS
     # 1 Input, 1 Output. 
-    # Minimum possible configuration for RealNet.
+    # Minimum possible configuration for OdyssNet.
     
     NUM_NEURONS = 2
     INPUT_ID = 0
@@ -19,14 +19,14 @@ def main():
     
     # CRITICAL CONFIG FOR TINY NETWORKS:
     # (Every neuron is vital)
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=[INPUT_ID], 
         output_ids=[OUTPUT_ID], 
         pulse_mode=True, 
         device=DEVICE
     )
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
     
     # Data

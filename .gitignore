@@ -17,7 +17,7 @@ data/
 # VS Code
 .vscode/
 
-# RealNet artifacts
+# OdyssNet artifacts
 *.pth
 *.pt
 *.checkpoints

@@ -6,13 +6,13 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def main():
-    print("RealNet 2.0: TINY EXPERIMENT (7x7 Input)...")
+    print("OdyssNet 2.0: TINY EXPERIMENT (7x7 Input)...")
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # EXPERIMENTAL CONFIG: "Tiny RealNet"
+    # EXPERIMENTAL CONFIG: "Tiny OdyssNet"
     # 28x28 resized to 7x7 = 49 Pixels (Input)
     # 10 Classes (Output)
     # 0 Hidden Neurons.
@@ -31,7 +31,7 @@ def main():
     input_ids = list(range(49))
     output_ids = list(range(49, 59))
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=input_ids, 
         output_ids=output_ids, 
@@ -62,7 +62,7 @@ def main():
     test_subset = Subset(test_dataset, range(1000))
     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
@@ -70,7 +70,7 @@ def main():
     NUM_EPOCHS = 100 
     THINKING_STEPS = 15
     
-    print("Training Tiny RealNet...")
+    print("Training Tiny OdyssNet...")
     
     for epoch in range(NUM_EPOCHS):
         model.train()

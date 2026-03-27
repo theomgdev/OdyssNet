@@ -4,9 +4,9 @@ import torch.nn as nn
 import sys
 import os
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_stopwatch_data(batch_size, seq_len, device):
     """
@@ -36,7 +36,7 @@ def generate_stopwatch_data(batch_size, seq_len, device):
     return inputs, targets
 
 def main():
-    print("RealNet Experiment: The Stopwatch (Internal Clock)")
+    print("OdyssNet Experiment: The Stopwatch (Internal Clock)")
     print("Objective: Input tells 'Wait X steps'. Network must wait in silence and fire at exactly t=X.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -51,14 +51,14 @@ def main():
     BATCH_SIZE = 64
     EPOCHS = 3000
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=[INPUT_ID],
         output_ids=[OUTPUT_ID],
         device=DEVICE
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
     
     print("Training...")

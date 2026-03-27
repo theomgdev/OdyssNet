@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -16,7 +16,7 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
 
 def main():
-    print("RealNet 2.0: The Impossible XOR (Zero-Hidden)...")
+    print("OdyssNet 2.0: The Impossible XOR (Zero-Hidden)...")
     set_seed(42) # Reproducibility
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -30,7 +30,7 @@ def main():
     
     # TINY NETWORK CONFIG:
     # (Every neuron is vital)
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=INPUT_IDS, 
         output_ids=OUTPUT_ID, 
@@ -38,7 +38,7 @@ def main():
         device=DEVICE
     )
 
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
     
     # XOR Data

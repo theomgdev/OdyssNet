@@ -6,10 +6,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
 def main():
-    print("RealNet 2.0: SCALED EXPERIMENT (14x14 Input)...")
+    print("OdyssNet 2.0: SCALED EXPERIMENT (14x14 Input)...")
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # SCALED ZERO-HIDDEN CONFIG
@@ -31,7 +31,7 @@ def main():
     input_ids = list(range(196))
     output_ids = list(range(196, 206))
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=input_ids, 
         output_ids=output_ids, 
@@ -62,7 +62,7 @@ def main():
     train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=2e-4))
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
@@ -70,7 +70,7 @@ def main():
     NUM_EPOCHS = 100
     THINKING_STEPS = 15
     
-    print("Training Scaled RealNet...")
+    print("Training Scaled OdyssNet...")
     
     for epoch in range(NUM_EPOCHS):
         model.train()

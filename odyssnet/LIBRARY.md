@@ -1,26 +1,26 @@
-# 📘 RealNet Library Documentation
+# 📘 OdyssNet Library Documentation
 
-RealNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural networks using **Temporal Depth**. By treating the neural network as a dynamic system that evolves over time, RealNet achieves deep learning capabilities without stacking spatial layers.
+OdyssNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural networks using **Temporal Depth**. By treating the neural network as a dynamic system that evolves over time, OdyssNet achieves deep learning capabilities without stacking spatial layers.
 
 ## Core Modules
 
 The library is organized into three primary modules:
-1.  **`realnet.core.network`**: The recurrent core architecture and update dynamics.
-2.  **`realnet.training.trainer`**: Optimization engine with 8-bit support and bio-inspired regularization.
-3.  **`realnet.utils`**: Data utilities, model persistence (`realstore`), and dynamic expansion (`neurogenesis`).
+1.  **`odyssnet.core.network`**: The recurrent core architecture and update dynamics.
+2.  **`odyssnet.training.trainer`**: Optimization engine with 8-bit support and bio-inspired regularization.
+3.  **`odyssnet.utils`**: Data utilities, model persistence (`odyssstore`), and dynamic expansion (`neurogenesis`).
 
 ---
 
-## RealNet Model (`realnet.core.network`)
+## OdyssNet Model (`odyssnet.core.network`)
 
-The `RealNet` class defines the structure and dynamics of the network. It is a single layer where every neuron is connected to every other neuron (including itself).
+The `OdyssNet` class defines the structure and dynamics of the network. It is a single layer where every neuron is connected to every other neuron (including itself).
 
 ### Initialization
 
 ```python
-from realnet import RealNet
+from odyssnet import OdyssNet
 
-model = RealNet(
+model = OdyssNet(
     num_neurons=10, 
     input_ids=[0, 1], 
     output_ids=[9], 
@@ -74,7 +74,7 @@ model = RealNet(
 
 ### Vocabulary Decoupling
 
-When `vocab_size` is typically much larger than `num_neurons` (e.g., 50k vocab vs 1024 neurons), RealNet uses decoupled layers. This can be configured as symmetric (same size for in/out) or asymmetric.
+When `vocab_size` is typically much larger than `num_neurons` (e.g., 50k vocab vs 1024 neurons), OdyssNet uses decoupled layers. This can be configured as symmetric (same size for in/out) or asymmetric.
 
 1.  **Encoder (Input)**: Maps `v_in` -> `len(input_ids)` (Neurons).
     *   Integers (Tokens) use `nn.Embedding`.
@@ -88,7 +88,7 @@ When `vocab_size` is typically much larger than `num_neurons` (e.g., 50k vocab v
 
 ```python
 # Asymmetric Example: MNIST (784 pixels -> 10 classes)
-model = RealNet(
+model = OdyssNet(
     num_neurons=10,
     input_ids=range(10),
     output_ids=range(10),
@@ -102,7 +102,7 @@ model = RealNet(
 
 ## Input Modalities and Data Handling
 
-RealNet processes data through three distinct modalities. Choosing the right one is critical for performance and VRAM efficiency.
+OdyssNet processes data through three distinct modalities. Choosing the right one is critical for performance and VRAM efficiency.
 
 ### 1. Pulse Mode (Impulse Computing)
 **Use case**: Static data like images (MNIST) or single-shot logic (XOR).
@@ -112,7 +112,7 @@ RealNet processes data through three distinct modalities. Choosing the right one
 
 ```python
 # Image Classification (784 pixels -> 100 steps thinking)
-model = RealNet(..., pulse_mode=True)
+model = OdyssNet(..., pulse_mode=True)
 output = model(image_tensor, steps=100)
 ```
 
@@ -124,13 +124,13 @@ output = model(image_tensor, steps=100)
 
 ```python
 # Frequency Control for Oscillator
-model = RealNet(..., pulse_mode=False)
+model = OdyssNet(..., pulse_mode=False)
 output = model(freq_input, steps=30)
 ```
 
 ### 3. Sequential Mode (Temporal Stretching)
 **Use case**: Large Language Models (LLM), Time-Series, and reasoning agents.
-*   **Behavior**: Provide a sequence `(Batch, Tokens)`. If `steps` > `tokens`, RealNet automatically scales the temporal resolution.
+*   **Behavior**: Provide a sequence `(Batch, Tokens)`. If `steps` > `tokens`, OdyssNet automatically scales the temporal resolution.
 *   **Mechanism**: If 100 tokens are provided with 500 `steps`, the model intersperses 4 "silent" thinking steps between each token.
 *   **VRAM Efficiency**: High. Eliminates the need for manually dilated/padded input tensors.
 
@@ -169,27 +169,27 @@ Runs the dynamic system.
 
 ---
 
-## RealNet Trainer (`realnet.training.trainer`)
+## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `RealNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. It now supports the **ChaosGrad** optimizer and **TemporalScheduler** for RealNet-native training.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. It now supports the **ChaosGrad** optimizer and **TemporalScheduler** for OdyssNet-native training.
 
 ### Initialization
 
 ```python
-from realnet import RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
 # Standard (Legacy Compatible — uses AdamW8bit or AdamW)
-trainer = RealNetTrainer(model, device='cuda')
+trainer = OdyssNetTrainer(model, device='cuda')
 
 # ChaosGrad Only — Fixed LR, No Scheduler (Observe with your own LR)
-trainer = RealNetTrainer(model, lr=1e-3, device='cuda',
+trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda',
                          use_chaos_grad=True)
 # Or with a specific config:
-trainer = RealNetTrainer(model, lr=1e-3, device='cuda',
+trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda',
                          chaos_config=ChaosGradConfig.default(lr=1e-3))
 
 # Full Featured — ChaosGrad + TemporalScheduler
-trainer = RealNetTrainer(
+trainer = OdyssNetTrainer(
     model, 
     lr=1e-4,
     device='cuda',
@@ -268,9 +268,9 @@ Returns training diagnostics including optimizer and scheduler state.
 
 ---
 
-## ChaosGrad Optimizer (`realnet.training.chaos_optimizer`)
+## ChaosGrad Optimizer (`odyssnet.training.chaos_optimizer`)
 
-A **RealNet-native optimizer** that understands and exploits the chaos chamber dynamics. Unlike generic AdamW which treats all parameters identically, ChaosGrad classifies parameters into groups and applies different strategies.
+A **OdyssNet-native optimizer** that understands and exploits the chaos chamber dynamics. Unlike generic AdamW which treats all parameters identically, ChaosGrad classifies parameters into groups and applies different strategies.
 
 ### Parameter Groups
 | Group | Parameters | Strategy |
@@ -291,7 +291,7 @@ A **RealNet-native optimizer** that understands and exploits the chaos chamber d
 ### Pre-built Configurations
 
 ```python
-from realnet import ChaosGradConfig
+from odyssnet import ChaosGradConfig
 
 ChaosGradConfig.conservative(lr=1e-4)  # Conservative balanced (Standard training)
 ChaosGradConfig.default(lr=3e-4)       # Explorer (Fresh/small networks)
@@ -308,7 +308,7 @@ cfg['gate_decay'] = 0.0
 ### Direct Usage
 
 ```python
-from realnet import ChaosGrad
+from odyssnet import ChaosGrad
 
 # Classify parameters and create optimizer manually
 param_groups = ChaosGrad.classify_params(model)
@@ -323,7 +323,7 @@ diag = optimizer.get_diagnostics()
 
 ---
 
-## TemporalScheduler (`realnet.training.chaos_scheduler`)
+## TemporalScheduler (`odyssnet.training.chaos_scheduler`)
 
 An **adaptive LR scheduler** that monitors the training process and adjusts in real-time.
 
@@ -335,7 +335,7 @@ An **adaptive LR scheduler** that monitors the training process and adjusts in r
 ### Pre-built Configurations
 
 ```python
-from realnet import TemporalSchedulerConfig
+from odyssnet import TemporalSchedulerConfig
 
 TemporalSchedulerConfig.default()          # Standard cosine decay
 TemporalSchedulerConfig.llm()              # LLM-style long training
@@ -352,7 +352,7 @@ TemporalSchedulerConfig.adaptive()         # Full auto-restart mode
 
 ```python
 # Direct usage (standalone)
-from realnet import TemporalScheduler
+from odyssnet import TemporalScheduler
 
 scheduler = TemporalScheduler(
     optimizer,
@@ -365,7 +365,7 @@ scheduler = TemporalScheduler(
 scheduler.step(loss=current_loss)  # Pass loss for adaptive behavior
 
 # Or integrated via Trainer:
-trainer = RealNetTrainer(model, scheduler_config=TemporalSchedulerConfig.adaptive())
+trainer = OdyssNetTrainer(model, scheduler_config=TemporalSchedulerConfig.adaptive())
 # Scheduler steps automatically inside train_batch()
 ```
 
@@ -374,12 +374,12 @@ trainer = RealNetTrainer(model, scheduler_config=TemporalSchedulerConfig.adaptiv
 ## Advanced Capabilities
 
 ### 1. Temporal Depth (Space-Time Tradeoff)
-RealNet replaces spatial layers with temporal steps. 
-*   **Vertical vs Horizontal**: A standard 10-layer network has fixed depth. RealNet can be run for 10 or 100 steps on-the-fly.
+OdyssNet replaces spatial layers with temporal steps. 
+*   **Vertical vs Horizontal**: A standard 10-layer network has fixed depth. OdyssNet can be run for 10 or 100 steps on-the-fly.
 *   **Dynamic Complexity**: Higher `steps` allow the network more time to reverberate signals through its recurrent core, enabling deeper reasoning without increasing parameter count.
 
 ### 2. Gradient Accumulation (Virtual Batch Size)
-RealNet allows you to simulate massive batch sizes on limited hardware (e.g., consumer GPUs).
+OdyssNet allows you to simulate massive batch sizes on limited hardware (e.g., consumer GPUs).
 *   **How it works:** Instead of updating weights after every batch, it accumulates gradients for `N` steps and then performs a single update.
 *   **Usage:**
     ```python
@@ -394,7 +394,7 @@ By setting `gradient_persistence > 0`, the network retains a fraction of the pre
 *   **Use Case**: Smoothing optimization in non-convex landscapes or simulated long-context training.
 
 ### 4. Synaptic Regeneration (Darwinian Revive)
-RealNet can re-initialize synapses that are no longer contributing to the loss signal (stagnant weights).
+OdyssNet can re-initialize synapses that are no longer contributing to the loss signal (stagnant weights).
 *   **Concept**: Instead of pruning, near-zero weights are re-initialized using the original weight strategy.
 *   **Benefit**: Maximizes network plasticity and parameter efficiency by converting dead capacity into fresh exploration.
 *   **Usage**: 
@@ -403,9 +403,9 @@ RealNet can re-initialize synapses that are no longer contributing to the loss s
 
 ---
 
-## Model Persistence (`realnet.utils.realstore`)
+## Model Persistence (`odyssnet.utils.odyssstore`)
 
-The `realstore` module provides checkpoint management utilities, including a unique **Weight Transplantation** feature for transferring learned knowledge between models of different sizes.
+The `odyssstore` module provides checkpoint management utilities, including a unique **Weight Transplantation** feature for transferring learned knowledge between models of different sizes.
 
 ### Functions
 
@@ -423,10 +423,10 @@ Loads a checkpoint. Set `strict=False` to ignore size mismatches (will partially
 *   **Warm Starts**: Any learned weights are better than random. Gradients will find their way faster.
 
 ```python
-from realnet import RealNet, transplant_weights
+from odyssnet import OdyssNet, transplant_weights
 
 # Create a NEW, larger model
-big_model = RealNet(num_neurons=512, ...)
+big_model = OdyssNet(num_neurons=512, ...)
 
 # Transplant weights from a smaller, trained checkpoint
 transplant_weights(big_model, 'small_model_checkpoint.pth')
@@ -441,7 +441,7 @@ Reads checkpoint metadata (epoch, loss, num_neurons) without loading into a mode
 
 ## Neurogenesis (Network Expansion)
 
-RealNet supports dynamic growth, allowing you to add neurons to a live network during training. This mimics biological neurogenesis.
+OdyssNet supports dynamic growth, allowing you to add neurons to a live network during training. This mimics biological neurogenesis.
 
 ### `trainer.expand(amount=1, verbose=True)`
 Dynamically adds `amount` empty neurons to the model.
@@ -459,9 +459,9 @@ if loss > prev_loss:
 
 ---
 
-## Utilities (`realnet.utils`)
+## Utilities (`odyssnet.utils`)
 
-### 1. Data Utilities (`realnet.utils.data`)
+### 1. Data Utilities (`odyssnet.utils.data`)
 
 #### `prepare_input(input_features, model_input_ids, num_neurons, device)`
 Maps raw input features (numpy or tensor) to the full network state tensor.
@@ -476,10 +476,10 @@ x_in, batch_size = prepare_input(X_train, model.input_ids, model.num_neurons, 'c
 #### `to_tensor(data, device)`
 Safely converts any list/array/int/float into a PyTorch tensor on the target device.
 
-### 2. Neurogenesis (`realnet.utils.neurogenesis`)
+### 2. Neurogenesis (`odyssnet.utils.neurogenesis`)
 See **Neurogenesis** section above.
 
-### 3. RealStore (`realnet.utils.realstore`)
+### 3. OdyssStore (`odyssnet.utils.odyssstore`)
 This module manages model serialization and the transdimensional weight transplantation feature described in the **Advanced Capabilities** section.
 
 ---
@@ -489,8 +489,8 @@ This module manages model serialization and the transdimensional weight transpla
 ### Example 1: XOR Logic
 ```python
 # 2 Inputs, 1 Output. 0 Hidden Layers.
-model = RealNet(num_neurons=3, input_ids=[0, 1], output_ids=[2], device='cuda')
-trainer = RealNetTrainer(model, gradient_persistence=0.1)
+model = OdyssNet(num_neurons=3, input_ids=[0, 1], output_ids=[2], device='cuda')
+trainer = OdyssNetTrainer(model, gradient_persistence=0.1)
 
 # Training logic...
 trainer.fit(X, Y, epochs=100, thinking_steps=5)
@@ -499,6 +499,6 @@ trainer.fit(X, Y, epochs=100, thinking_steps=5)
 ### Example 2: MNIST Asymmetric Vocab
 ```python
 # 784 pixels -> 10 neurons -> 10 logits
-model = RealNet(num_neurons=10, input_ids=range(10), output_ids=range(10), vocab_size=[784, 10])
+model = OdyssNet(num_neurons=10, input_ids=range(10), output_ids=range(10), vocab_size=[784, 10])
 # Model handles projection and decoding automatically.
 ```

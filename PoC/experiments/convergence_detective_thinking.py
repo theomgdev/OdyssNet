@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_dilated_data(batch_size, logic_len, gap, device):
     """
@@ -55,7 +55,7 @@ def generate_dilated_data(batch_size, logic_len, gap, device):
     return inputs, targets
 
 def main():
-    print("RealNet Experiment: The Thinking Detective 🕵️‍♂️")
+    print("OdyssNet Experiment: The Thinking Detective 🕵️‍♂️")
     print("Objective: Watch a stream of bits. BUT... you have time to think between bits.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -73,14 +73,14 @@ def main():
     INPUT_ID = 0
     OUTPUT_ID = 1
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=[INPUT_ID],
         output_ids=[OUTPUT_ID],
         device=DEVICE
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
     
     print(f"Logic Steps: {LOGIC_LEN} | Thinking Gap: {GAP} | Total Physical Steps: {SEQ_LEN}")

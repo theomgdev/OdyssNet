@@ -1,8 +1,8 @@
 # 🧪 PoC & Experiments Standards
 
-This document outlines the standards and best practices for contributing Proof-of-Concept (PoC) scripts and innovative experiments to the RealNet project.
+This document outlines the standards and best practices for contributing Proof-of-Concept (PoC) scripts and innovative experiments to the OdyssNet project.
 
-RealNet 2.0 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
+OdyssNet 2.0 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
 
 ---
 
@@ -11,7 +11,7 @@ RealNet 2.0 relies on a highly modular library structure. To ensure long-term ma
 We distinguish between **Core Validations** and **Feature Experiments**.
 
 ### 1. `PoC/` (Root)
-*   **Purpose:** Contains minimal, "hello world" style scripts that validate the core laws of RealNet physics.
+*   **Purpose:** Contains minimal, "hello world" style scripts that validate the core laws of OdyssNet physics.
 *   **Examples:** `convergence_identity.py` (Can signals pass?), `convergence_gates.py` (Can it solve XOR?).
 *   **Rule:** Scripts here should be extremely simple, fast, and prove a fundamental property of the architecture.
 
@@ -27,10 +27,10 @@ We distinguish between **Core Validations** and **Feature Experiments**.
 **⛔ DO NOT** re-invent the wheel.
 **✅ DO** use the Library.
 
-### 1. Always Use `RealNetTrainer`
+### 1. Always Use `OdyssNetTrainer`
 Never write your own manual PyTorch training loop (`optimizer.step()`, `loss.backward()`, etc.) unless absolutely necessary for low-level research.
 
-*   **Why?** The `RealNetTrainer` handles:
+*   **Why?** The `OdyssNetTrainer` handles:
     *   **Automatic Mixed Precision (AMP):** Faster training on Tensor Cores.
     *   **Gradient Accumulation:** Simulating large batches.
     *   **Ghost Gradients (Persistence):** Advanced stabilization.
@@ -44,18 +44,18 @@ loss.backward()
 optimizer.step()
 
 # ✅ GOOD: Trainer
-trainer = RealNetTrainer(model, device='cuda')
+trainer = OdyssNetTrainer(model, device='cuda')
 trainer.train_batch(input, target, thinking_steps=10)
 ```
 
 ### 2. Extend, Don't Hack
-If you need a new feature (e.g., a new loss function or a custom metric), extend `RealNetTrainer` or pass arguments to it. If the library is missing a critical feature, **implement it in the library first**, then use it in your PoC.
+If you need a new feature (e.g., a new loss function or a custom metric), extend `OdyssNetTrainer` or pass arguments to it. If the library is missing a critical feature, **implement it in the library first**, then use it in your PoC.
 
 ---
 
 ## ⚙️ Initialization Protocols (Critical)
 
-RealNet is sensitive to initialization. The default `weight_init='resonant'` is the recommended starting point for all tasks — it places the weight matrix at the Edge of Chaos (ρ(W) = 1.0) from the start and works across all network sizes.
+OdyssNet is sensitive to initialization. The default `weight_init='resonant'` is the recommended starting point for all tasks — it places the weight matrix at the Edge of Chaos (ρ(W) = 1.0) from the start and works across all network sizes.
 
 ### A. Universal Default (All Sizes)
 For any task without a specific constraint, use the native resonant init.
@@ -65,7 +65,7 @@ For any task without a specific constraint, use the native resonant init.
 *   **Dropout:** `0.0` *(Default)* — Enable explicitly (e.g. `0.1`) only when overfitting is observed.
 
 ```python
-model = RealNet(..., activation='tanh')  # weight_init='resonant' is already the default
+model = OdyssNet(..., activation='tanh')  # weight_init='resonant' is already the default
 ```
 
 ### B. Tiny Networks & Logic Gates (< 10 Neurons) — Alternative
@@ -76,8 +76,8 @@ If `resonant` convergence is too slow on very small circuits:
 *   **Dropout:** `0.0` (Every neuron is vital).
 
 ```python
-model = RealNet(..., activation='gelu', weight_init='xavier_uniform', dropout_rate=0.0)
-trainer = RealNetTrainer(model, ..., synaptic_noise=0.0)  # Disable noise for pure logic
+model = OdyssNet(..., activation='gelu', weight_init='xavier_uniform', dropout_rate=0.0)
+trainer = OdyssNetTrainer(model, ..., synaptic_noise=0.0)  # Disable noise for pure logic
 ```
 
 ### C. Large Networks & Memory Tasks — Alternative
@@ -88,7 +88,7 @@ If long-horizon temporal stability is the priority:
 *   **Dropout:** `0.0` *(Default)* — Enable explicitly when overfitting is a concern.
 
 ```python
-model = RealNet(..., activation='tanh', weight_init='orthogonal')
+model = OdyssNet(..., activation='tanh', weight_init='orthogonal')
 ```
 
 ### Gate Contract (Init API)
@@ -114,7 +114,7 @@ For tasks requiring precise storage and retrieval of values over time (e.g. Neur
 *   **Structure:** High neuron count (256+) to provide "space" for memories.
 
 ```python
-model = RealNet(...) # resonant default is appropriate here
+model = OdyssNet(...) # resonant default is appropriate here
 ```
 
 ### E. Decoupled Projection (Asymmetric Vocabulary)
@@ -125,8 +125,8 @@ For tasks requiring high input/output dimensionality (like vision or LLMs) witho
 *   **Note:** When `weight_init='resonant'`, projection layers (embed/proj/decoder) automatically use `quiet` init (Normal(0, 0.02)) — no manual override needed.
 
 ```python
-# RealNet core has N=10 neurons, but processes 784 input channels and 10 output classes.
-model = RealNet(num_neurons=10, ..., vocab_size=(784, 10))
+# OdyssNet core has N=10 neurons, but processes 784 input channels and 10 output classes.
+model = OdyssNet(num_neurons=10, ..., vocab_size=(784, 10))
 ```
 
 ---
@@ -134,9 +134,9 @@ model = RealNet(num_neurons=10, ..., vocab_size=(784, 10))
 ## ⚡ Hardware Optimization
 
 ### 1. 8-Bit Optimizers (bitsandbytes)
-RealNet V2.0 automatically uses `bitsandbytes` 8-bit AdamW if a CUDA GPU is detected. This reduces VRAM usage by ~75% for optimizer states.
+OdyssNet V2.0 automatically uses `bitsandbytes` 8-bit AdamW if a CUDA GPU is detected. This reduces VRAM usage by ~75% for optimizer states.
 *   **Default:** Enabled.
-*   **Disable:** Set `os.environ["NO_BNB"] = "1"` before importing `realnet`.
+*   **Disable:** Set `os.environ["NO_BNB"] = "1"` before importing `odyssnet`.
 *   **Debug:** Set `os.environ["VERBOSE_BNB"] = "1"` to see loading logs.
 
 ### 2. TensorFloat-32 (TF32)
@@ -173,7 +173,7 @@ if loss > prev_loss:
 ## 🩺 Diagnostics and Anomaly Interventions
 
 Experiments that run for a long time should handle training stagnation or spikes intelligently without manual restarts.
-You can pass an `anomaly_hook` to the `RealNetTrainer` to automate recovery (e.g., triggering plateau escapes).
+You can pass an `anomaly_hook` to the `OdyssNetTrainer` to automate recovery (e.g., triggering plateau escapes).
 
 ```python
 def my_hook(anomaly_type, loss_val):
@@ -181,7 +181,7 @@ def my_hook(anomaly_type, loss_val):
         print("Triggering plateau escape!")
         trainer.trigger_plateau_escape()
 
-trainer = RealNetTrainer(model, anomaly_hook=my_hook)
+trainer = OdyssNetTrainer(model, anomaly_hook=my_hook)
 ```
 
 ---
@@ -212,8 +212,8 @@ Use the `prepare_input` utility implicitly via the Trainer.
     *   *Example:* `# GAP=3 allows the model time to digest the previous bit.`
 4.  **File Paths:** Never use hardcoded absolute paths or assume the CWD. Always construct paths relative to the script file.
     *   *Example:* `DATA_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'file.txt')`
-5.  **Checkpointing:** Always use the library's `save_checkpoint`, `load_checkpoint`, and `transplant_weights` functions from `realnet.utils.realstore`. Do NOT write custom checkpoint code. If the library is missing a feature, extend the library instead.
-    *   *Example:* `from realnet import save_checkpoint, load_checkpoint, transplant_weights`
+5.  **Checkpointing:** Always use the library's `save_checkpoint`, `load_checkpoint`, and `transplant_weights` functions from `odyssnet.utils.odyssstore`. Do NOT write custom checkpoint code. If the library is missing a feature, extend the library instead.
+    *   *Example:* `from odyssnet import save_checkpoint, load_checkpoint, transplant_weights`
 
 ---
 
@@ -221,7 +221,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
 
 Before submitting a new PoC:
 1.  [ ] Did you place it in the correct folder (`PoC/` vs `PoC/experiments/`)?
-2.  [ ] Are you using `RealNetTrainer`?
+2.  [ ] Are you using `OdyssNetTrainer`?
 3.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
 4.  [ ] Does it converge reliably?
 5.  [ ] Does the terminal output clearly explain what is happening?

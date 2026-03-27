@@ -4,9 +4,9 @@ import torch.nn as nn
 import sys
 import os
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_adder_data(batch_size, seq_len, delay_1, delay_2, device):
     """
@@ -36,7 +36,7 @@ def generate_adder_data(batch_size, seq_len, delay_1, delay_2, device):
     return inputs, target_sum
 
 def main():
-    print("RealNet Experiment: The Delayed Adder (Algorithmic Logic)")
+    print("OdyssNet Experiment: The Delayed Adder (Algorithmic Logic)")
     print("Objective: Remember Number A. Wait. Receive Number B. Output A+B.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -55,14 +55,14 @@ def main():
     EPOCHS = 10000
     
     # Initialize Model
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=[INPUT_ID],
         output_ids=[OUTPUT_ID],
         device=DEVICE
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
     
     print(f"Structure: Pulse A at t={DELAY_1}. Pulse B at t={DELAY_2}. Target at t={SEQ_LEN-1}.")
@@ -99,7 +99,7 @@ def main():
     for i in range(batch_size):
         tgt = test_a[i] + test_b[i]
         p = preds[i, 0].item()
-        print(f" {test_a[i]} + {test_b[i]} = {tgt:.2f} | RealNet: {p:.4f} (Diff: {abs(tgt-p):.4f})")
+        print(f" {test_a[i]} + {test_b[i]} = {tgt:.2f} | OdyssNet: {p:.4f} (Diff: {abs(tgt-p):.4f})")
     
 if __name__ == "__main__":
     main()

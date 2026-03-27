@@ -1,5 +1,5 @@
 """
-TemporalScheduler: Adaptive Learning Rate Schedule for RealNet.
+TemporalScheduler: Adaptive Learning Rate Schedule for OdyssNet.
 
 Unlike static schedulers (CosineAnnealing, StepLR), TemporalScheduler is
 process-aware: it monitors training dynamics and adapts the schedule in real-time.
@@ -18,7 +18,7 @@ import torch
 
 class TemporalScheduler:
     """
-    Adaptive LR scheduler designed for RealNet's training dynamics.
+    Adaptive LR scheduler designed for OdyssNet's training dynamics.
     
     Supports three phases:
     1. WARMUP: Linear ramp from 0 to max_lr (prevents chaos explosion)

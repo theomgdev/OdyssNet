@@ -8,10 +8,10 @@ import time
 
 # Ensure library path is correct
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def main():
-    print("RealNet 2.0: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
+    print("OdyssNet 2.0: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
     print("Hypothesis: Reviving weak synapses with random initialization improves learning capacity.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -29,7 +29,7 @@ def main():
     output_ids = list(range(784, 794))
     
     # Match EXACTLY with convergence_mnist.py (Default: Tanh, Orthogonal)
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=input_ids, 
         output_ids=output_ids, 
@@ -41,7 +41,7 @@ def main():
     # Compile model
     model = model.compile()
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-4))
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn

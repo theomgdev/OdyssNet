@@ -4,9 +4,9 @@ import torch.nn as nn
 import sys
 import os
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_latch_data(batch_size, seq_len, device):
     """
@@ -30,7 +30,7 @@ def generate_latch_data(batch_size, seq_len, device):
     return inputs, targets
 
 def main():
-    print("RealNet Experiment: Catch & Hold (The Latch)")
+    print("OdyssNet Experiment: Catch & Hold (The Latch)")
     print("Objective: Wait for a pulse using chaos. Once received, hold the state output at 1.0 forever.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -45,14 +45,14 @@ def main():
     BATCH_SIZE = 64
     EPOCHS = 2000
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=[INPUT_ID],
         output_ids=[OUTPUT_ID],
         device=DEVICE
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=0.01))
     
     print("Training...")
@@ -61,7 +61,7 @@ def main():
     for epoch in range(EPOCHS):
         inputs, targets = generate_latch_data(BATCH_SIZE, SEQ_LEN, DEVICE)
         
-        # inputs: (Batch, Seq, 1) -> RealNet converts to (Batch, Seq, N) via prepare_input
+        # inputs: (Batch, Seq, 1) -> OdyssNet converts to (Batch, Seq, N) via prepare_input
         # targets: (Batch, Seq, 1)
         loss = trainer.train_batch(inputs, targets, thinking_steps=SEQ_LEN, full_sequence=True)
         

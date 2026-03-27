@@ -29,7 +29,7 @@ else:
 
 class Neurogenesis:
     """
-    Handles dynamic network growth (Neurogenesis) for RealNet models.
+    Handles dynamic network growth (Neurogenesis) for OdyssNet models.
     """
 
     @staticmethod
@@ -38,7 +38,7 @@ class Neurogenesis:
         Dynamically adds neurons to the network while preserving state and memory.
         
         Args:
-            model (RealNet): The model to expand.
+            model (OdyssNet): The model to expand.
             optimizer (torch.optim.Optimizer): The current optimizer.
             amount (int): Number of neurons to add.
             verbose (bool): Whether to print status.

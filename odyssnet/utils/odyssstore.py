@@ -1,5 +1,5 @@
 """
-RealStore: Checkpoint Management Utilities for RealNet.
+OdyssStore: Checkpoint Management Utilities for OdyssNet.
 
 Provides standard save/load functionality plus "Weight Transplantation" 
 for transferring knowledge between models of different sizes.
@@ -13,7 +13,7 @@ def save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, traine
     Saves a training checkpoint.
     
     Args:
-        model: The RealNet model instance.
+        model: The OdyssNet model instance.
         optimizer: The optimizer instance.
         epoch (int): Current epoch number.
         loss (float): Current loss value.
@@ -46,7 +46,7 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
     Loads a training checkpoint.
     
     Args:
-        model: The RealNet model instance (must match checkpoint architecture if strict=True).
+        model: The OdyssNet model instance (must match checkpoint architecture if strict=True).
         optimizer: The optimizer instance.
         path (str): File path to the checkpoint.
         device (str): Device to load tensors to.
@@ -112,7 +112,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
       not re-initialized with `init_new`.
     
     Args:
-        model: The target RealNet model instance (already initialized).
+        model: The target OdyssNet model instance (already initialized).
         checkpoint_path (str): Path to the source checkpoint.
         device (str): Device to load tensors to.
         verbose (bool): If True, prints transplant statistics.

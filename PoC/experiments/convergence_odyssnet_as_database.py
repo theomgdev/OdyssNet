@@ -5,13 +5,13 @@ import sys
 import os
 import random
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_db_data(batch_size, num_keys, seq_per_op, num_ops, device, think_steps=5):
     """
-    Generates a complex CRUD sequence for RealNet Database.
+    Generates a complex CRUD sequence for OdyssNet Database.
     Returns: inputs, targets, mask
     Mask is 1.0 only for READ operations after think_steps.
     """
@@ -65,8 +65,8 @@ def generate_db_data(batch_size, num_keys, seq_per_op, num_ops, device, think_st
     return inputs, targets, mask
 
 def main():
-    print("🚀 RealNet Experiment: NEURAL DATABASE (Implicit CRUD)")
-    print("Objective: Prove that RealNet hidden state can act as an Adressable, Updatable Memory Table.")
+    print("🚀 OdyssNet Experiment: NEURAL DATABASE (Implicit CRUD)")
+    print("Objective: Prove that OdyssNet hidden state can act as an Adressable, Updatable Memory Table.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Running on {DEVICE}")
@@ -87,7 +87,7 @@ def main():
     output_start = PROJ_INPUT_NEURONS
     output_ids = list(range(output_start, output_start + DECODER_OUTPUT_NEURONS))
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=input_ids,
         output_ids=output_ids,
@@ -96,7 +96,7 @@ def main():
         vocab_mode='continuous'
     )
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
 
     print(
@@ -146,7 +146,7 @@ def main():
     with torch.no_grad():
         preds = trainer.predict(inputs, thinking_steps=(test_ops * SEQ_PER_OP), full_sequence=True)
         
-    print(f"{'Step':<5} | {'Command':<8} | {'Key':<5} | {'Val_In':<8} | {'Target':<8} | {'RealNet':<8} | {'Status'}")
+    print(f"{'Step':<5} | {'Command':<8} | {'Key':<5} | {'Val_In':<8} | {'Target':<8} | {'OdyssNet':<8} | {'Status'}")
     print("-" * 80)
     
     for op in range(test_ops):

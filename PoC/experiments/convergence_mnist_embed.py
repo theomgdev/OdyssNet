@@ -8,10 +8,10 @@ import os
 import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def main():
-    print("RealNet 2.0: EMBEDDED MNIST CHALLENGE (8k Params)")
+    print("OdyssNet 2.0: EMBEDDED MNIST CHALLENGE (8k Params)")
     print("Strategy: 784 Pixels -> Proj(10) -> RNN(10) -> Decode(10)")
     
     
@@ -33,7 +33,7 @@ def main():
     input_ids = list(range(NUM_NEURONS))
     output_ids = list(range(NUM_NEURONS))
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=input_ids,
         output_ids=output_ids,
@@ -46,7 +46,7 @@ def main():
     total_params = model.get_num_params()
     print(f"Total Params: {total_params}")
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-3))
     loss_fn = nn.CrossEntropyLoss()
     trainer.loss_fn = loss_fn

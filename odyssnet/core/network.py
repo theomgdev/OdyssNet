@@ -5,9 +5,9 @@ import torch.nn.functional as F
 import numpy as np
 from typing import cast
 
-class RealNet(nn.Module):
+class OdyssNet(nn.Module):
     def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None):
-        super(RealNet, self).__init__()
+        super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
         if num_neurons == -1:
@@ -18,7 +18,7 @@ class RealNet(nn.Module):
                  
                  difference = num_neurons - len(unique_ids)
                  if difference > 0:
-                      print(f"ℹ️ RealNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
+                      print(f"ℹ️ OdyssNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
              else:
                  num_neurons = 0
         
@@ -337,7 +337,7 @@ class RealNet(nn.Module):
                 compiled_model = torch.compile(self)
                 
                 # FORCE DRY RUN to catch lazy errors now
-                print("RealNet: Performing dry run to verify compilation...")
+                print("OdyssNet: Performing dry run to verify compilation...")
                 if self.vocab_size is not None:
                     if self.embed is not None:
                         dummy_input = torch.zeros(1, 1, dtype=torch.long, device=self.device)
@@ -349,13 +349,13 @@ class RealNet(nn.Module):
                     dummy_input = torch.zeros(1, self.num_neurons, device=self.device)
                 with torch.no_grad():
                     compiled_model(dummy_input, steps=1)
-                print("RealNet: Compilation successful!")
+                print("OdyssNet: Compilation successful!")
                 return compiled_model
             except Exception as e:
-                print(f"RealNet: Compilation failed ({e}). Fallback to eager execution.")
+                print(f"OdyssNet: Compilation failed ({e}). Fallback to eager execution.")
                 return self
         else:
-            print("RealNet: torch.compile not found. Skipping compilation.")
+            print("OdyssNet: torch.compile not found. Skipping compilation.")
             return self
 
     def forward(self, x_input, steps=1, current_state=None):

@@ -38,7 +38,7 @@ from .chaos_optimizer import ChaosGrad, ChaosGradConfig
 from .chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 from ..utils.neurogenesis import Neurogenesis
 
-class RealNetTrainer:
+class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu',
                  gradient_persistence=0.0, synaptic_noise=0.0,
                  chaos_config=None, scheduler_config=None,
@@ -48,7 +48,7 @@ class RealNetTrainer:
         Initializes the trainer.
 
         Args:
-            model (nn.Module): The RealNet model to train.
+            model (nn.Module): The OdyssNet model to train.
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
                 If None, auto-selects: ChaosGrad (if use_chaos_grad) or AdamW8bit/AdamW.
             loss_fn (callable): Custom loss function (Optional).
@@ -94,15 +94,15 @@ class RealNetTrainer:
             if should_use_chaos:
                 self._init_chaos_grad(model, lr, chaos_config)
             elif HAS_BNB and device == 'cuda':
-                print("RealNetTrainer: Using bitsandbytes 8-bit AdamW for VRAM efficiency.")
+                print("OdyssNetTrainer: Using bitsandbytes 8-bit AdamW for VRAM efficiency.")
                 adamw8bit_cls = getattr(bnb.optim, 'AdamW8bit', None)
                 if adamw8bit_cls is not None:
                     self.optimizer = adamw8bit_cls(model.parameters(), lr=lr, weight_decay=0.01)
                 else:
-                    print("RealNetTrainer: AdamW8bit symbol not found. Falling back to standard AdamW.")
+                    print("OdyssNetTrainer: AdamW8bit symbol not found. Falling back to standard AdamW.")
                     self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
             else:
-                print("RealNetTrainer: bitsandbytes not found or CPU mode. Using standard AdamW.")
+                print("OdyssNetTrainer: bitsandbytes not found or CPU mode. Using standard AdamW.")
                 self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
         # --- Scheduler Setup ---
@@ -145,7 +145,7 @@ class RealNetTrainer:
         self._using_chaos_grad = True
 
         group_info = {g.get('group_name', '?'): len(g['params']) for g in param_groups}
-        print(f"RealNetTrainer: Using ChaosGrad optimizer. Groups: {group_info}")
+        print(f"OdyssNetTrainer: Using ChaosGrad optimizer. Groups: {group_info}")
 
     def _ensure_scaler(self):
         """Lazily initialize AMP scaler in a version-compatible way."""

@@ -1,21 +1,29 @@
-# RealNet 2.0: Zamansal Devrim
+# OdyssNet 2.0: Zamansal Devrim
 
-**RealNet, Zaman'ın nihai Gizli Katman olduğunun kanıtıdır.**
+**OdyssNet, Zaman'ın nihai Gizli Katman olduğunun kanıtıdır.**
 
-Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğe** (üst üste yığılan katmanlar) dayanır. RealNet bu ortodoksiyi reddederek **Zamansal Derinliğin** (zaman içinde evrimleşen kaos) çok daha verimli bir alternatif olduğunu kanıtlar.
+Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğe** (üst üste yığılan katmanlar) dayanır. OdyssNet bu ortodoksiyi reddederek **Zamansal Derinliğin** (zaman içinde evrimleşen kaos) çok daha verimli bir alternatif olduğunu kanıtlar.
 
 > **Sıfır-Gizli Atılım**
 >
 > 1969'da Minsky & Papert, gizli katmanı olmayan bir sinir ağının XOR gibi doğrusal olmayan problemleri çözemeyeceğini kanıtladı.
-> **RealNet 2.0 bu sınırı aştı.**
+> **OdyssNet 2.0 bu sınırı aştı.**
 >
-> Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak RealNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
+> Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak OdyssNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
 
-RealNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
+OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
 
 > 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> RealNet 2.0, MNIST üzerinde yalnızca **480 parametre** ile **%89.5 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+> OdyssNet 2.0, MNIST üzerinde yalnızca **480 parametre** ile **%89.5 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+
+## TLDR
+
+- OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
+- **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
+- Öne çıkan sonuç: yalnızca **480 parametre** ile **%89.5 MNIST doğruluğu**.
+- Aynı çekirdek; bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
+- Kanıtlar için [PoC deneyleri](PoC), kendi kullanımın için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
 ---
 
@@ -29,10 +37,10 @@ RealNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar
 
 ## 📊 Kanıt: Sıfır-Gizli Kıyaslamalar
 
-RealNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
+OdyssNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
 Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağlıdır. Ara katman yoktur.
 
-| Görev | Geleneksel Kısıt | RealNet Çözümü | Sonuç | Script |
+| Görev | Geleneksel Kısıt | OdyssNet Çözümü | Sonuç | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |
 | **XOR** | Gizli Katman Gerekir | **Kaos Kapısı** (Zamana Katlanmış) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
@@ -48,7 +56,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
 
-RealNet, tam ölçekli MNIST'i (28x28) **Sıfır Gizli Katman** ile çözüyor (Doğrudan Giriş-Çıkış).
+OdyssNet, tam ölçekli MNIST'i (28x28) **Sıfır Gizli Katman** ile çözüyor (Doğrudan Giriş-Çıkış).
 *   **Girişler:** 784
 *   **Çıkışlar:** 10
 *   **Gizli Katmanlar:** **0**
@@ -60,7 +68,7 @@ Giriş katmanı 10 adım boyunca "kendisiyle konuşur". Kaotik geri besleme dön
 
 ## 📦 Kurulum & Kullanım
 
-RealNet, modüler bir PyTorch kütüphanesi olarak tasarlanmıştır.
+OdyssNet, modüler bir PyTorch kütüphanesi olarak tasarlanmıştır.
 
 ### Kurulum
 
@@ -74,12 +82,12 @@ pip install -r requirements.txt
 ### Hızlı Başlangıç
 
 ```python
-from realnet import RealNet, RealNetTrainer
+from odyssnet import OdyssNet, OdyssNetTrainer
 
 # Sıfır-Gizli Ağ başlat
 # 1 Giriş, 1 Çıkış.
-model = RealNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
-trainer = RealNetTrainer(model, device='cuda')
+model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
+trainer = OdyssNetTrainer(model, device='cuda')
 
 # Eğit
 inputs = torch.randn(100, 1)
@@ -111,10 +119,10 @@ trainer.fit(inputs, inputs, epochs=50)
 
 ## 🌪️ Nasıl Çalışır: Fırtınanın İçinde
 
-RealNet bir ileri-besleme mekanizması değil; bir **Rezonans Odasıdır**.
+OdyssNet bir ileri-besleme mekanizması değil; bir **Rezonans Odasıdır**.
 
 ### 1. Nabız (Giriş) & Dizi
-Geleneksel YZ'da giriş genellikle statik bir anlık görüntüdür. RealNet hem **Nabızları** hem de **Akışları** işler.
+Geleneksel YZ'da giriş genellikle statik bir anlık görüntüdür. OdyssNet hem **Nabızları** hem de **Akışları** işler.
 *   **Nabız Modu:** Bir görüntü $t=0$'da çarpar. Ağ gözlerini kapatır ve dalgalanmaları işler (MNIST).
 *   **Akış Modu:** Veriler sıralı olarak uygulanır. Ağ olaylar arasında "bekleyebilir" ve "düşünebilir" (Dedektif).
 
@@ -130,20 +138,20 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 *   Adım 2: Karışık sinyaller yeniden karışır. (2. Katmana eşdeğer)
 *   Adım 15: Son derece soyut özellikler ortaya çıkar. (15. Katmana eşdeğer)
 
-15 adım "düşünerek" RealNet, **yalnızca bir fiziksel matris** kullanarak 15 katmanlı derin bir ağı simüle eder. Uzayı zamana katlar.
+15 adım "düşünerek" OdyssNet, **yalnızca bir fiziksel matris** kullanarak 15 katmanlı derin bir ağı simüle eder. Uzayı zamana katlar.
 
 ### 4. Kontrollü Kaos (Çekiciler)
-Kontrolsüz geri besleme döngüleri patlamaya yol açar. RealNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
+Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **GELU** anlamlı sinyalleri filtreler.
 *   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (Nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder ve **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayri optimize eder.
-*   **Mandal Deneyi** RealNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için "derin bir kuyu" yani kararlı bir çekici oluşturabileceğini kanıtladı.
+*   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için "derin bir kuyu" yani kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?
 
-RealNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi temelden farklıdır.
+OdyssNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi temelden farklıdır.
 
-| Özellik | Standart RNN / LSTM | RealNet 2.0 |
+| Özellik | Standart RNN / LSTM | OdyssNet 2.0 |
 | :--- | :--- | :--- |
 | **Giriş Akışı** | Sürekli Akış (örn. cümledeki kelimeler) | **Tek Nabız** ($t=0$'da İmpuls) |
 | **Amaç** | Dizi İşleme (Ayrıştırma) | **Derin Düşünme** (Sindirme) |
@@ -151,21 +159,21 @@ RealNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi 
 | **Dinamikler** | Soluklaşmayı önlemek için mühendislik yapılmış (LSTM) | Rezonansı bulmak için **Evrimleşir** (Kaos) |
 
 *   **RNN'ler dış dünyayı dinler.** Dış girdilerin bir dizisini işlerler.
-*   **RealNet iç sesini dinler.** Probleme **bir** bakış atar ve sonra gözlerini kapatır, 15 adım boyunca üzerine "düşünür". Kendi zamansal derinliğini yaratır.
+*   **OdyssNet iç sesini dinler.** Probleme **bir** bakış atar ve sonra gözlerini kapatır, 15 adım boyunca üzerine "düşünür". Kendi zamansal derinliğini yaratır.
 
 ### 6. Biyolojik Gerçeklik: Canlı Zeka
-RealNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağlardan çok daha fazla beyne benzer:
+OdyssNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağlardan çok daha fazla beyne benzer:
 
-*   **Katman Yok:** Beynin "1. Katmanı" ve "2. Katmanı" yoktur. Birbirine bağlı nöronların bölgeleri vardır. RealNet tek bir bölgedir.
-*   **İrade (Mandal):** Sönümlenen (fading) standart RNN'lerin aksine RealNet bir karara kilitlenebilir ve onu entropiye karşı tutabilir, "Bilişsel Kalıcılık" sergiler.
-*   **Ritim (Kronometre):** Herhangi bir dış saat olmadan RealNet zamanı öznel olarak deneyimler ve tam anlarda saymasına, beklemesine ve hareket etmesine izin verir.
-*   **Sabır (Dedektif):** "Düşünme Süresinden" yararlanır. Tıpkı insanların karmaşık mantığı işlemek için bir ana ihtiyaç duyması gibi, RealNet olası çözümleri sindirmek için birkaç sessizlik adımı verildiğinde imkânsız problemleri çözer.
+*   **Katman Yok:** Beynin "1. Katmanı" ve "2. Katmanı" yoktur. Birbirine bağlı nöronların bölgeleri vardır. OdyssNet tek bir bölgedir.
+*   **İrade (Mandal):** Sönümlenen (fading) standart RNN'lerin aksine OdyssNet bir karara kilitlenebilir ve onu entropiye karşı tutabilir, "Bilişsel Kalıcılık" sergiler.
+*   **Ritim (Kronometre):** Herhangi bir dış saat olmadan OdyssNet zamanı öznel olarak deneyimler ve tam anlarda saymasına, beklemesine ve hareket etmesine izin verir.
+*   **Sabır (Dedektif):** "Düşünme Süresinden" yararlanır. Tıpkı insanların karmaşık mantığı işlemek için bir ana ihtiyaç duyması gibi, OdyssNet olası çözümleri sindirmek için birkaç sessizlik adımı verildiğinde imkânsız problemleri çözer.
 
 ### 7. Örtülü Dikkat (Zamansal Rezonans)
-Geçmişe "geriye bakmak" için açık $Q \times K$ matrislerini kullanan Transformer'ların aksine, RealNet **Zamansal Rezonans** aracılığıyla dikkati sağlar.
+Geçmişe "geriye bakmak" için açık $Q \times K$ matrislerini kullanan Transformer'ların aksine, OdyssNet **Zamansal Rezonans** aracılığıyla dikkati sağlar.
 
 *   **Mekanizma:** Geçmişten gelen bilgi, gizli durumda ayakta duran bir dalga veya titreşim olarak korunur.
-*   **Anahtar-Değer İşleme:** **Kütüphaneci Deneyi**, RealNet'in fiziksel depolama tabloları olmadan sorguları doğru "bellek titreşimine" yönlendirerek adreslenebilir bir veritabanı olarak hareket edebildiğini kanıtladı.
+*   **Anahtar-Değer İşleme:** **Kütüphaneci Deneyi**, OdyssNet'in fiziksel depolama tabloları olmadan sorguları doğru "bellek titreşimine" yönlendirerek adreslenebilir bir veritabanı olarak hareket edebildiğini kanıtladı.
 *   **Tespit:** İlgili bir giriş geldiğinde (K1 için OKUMA komutu gibi), 'K1'in değerini' tutan belirli dalgayla yapıcı girişim (rezonans) oluşturur ve onu yüzeye çıkmaya zorlar.
 *   **Sonuç:** Ağ, tüm geçmiş tamponunu saklamadan ilgili geçmiş olaylara "dikkat eder". Zaman'ın kendisi indeksleme mekanizması olarak hareket eder.
 
@@ -178,7 +186,7 @@ $$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
 
 ## 📝 Deneysel Bulgular
 
-RealNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **Zamansal Derinlik > Uzamsal Derinlik.**
+OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **Zamansal Derinlik > Uzamsal Derinlik.**
 
 ### A. Atomik Kimlik (Birim Testi)
 *   **Hedef:** $f(x) = x$. Ağ mükemmel bir tel olarak hareket etmelidir.
@@ -198,7 +206,7 @@ RealNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **Z
 ### B. İmkânsız XOR (Kaos Kapısı)
 *   **Hedef:** Doğrusal olmayı ima eden klasik XOR problemini ($[1,1]\to0$, $[1,0]\to1$ vb.) çözmek.
 *   **Meydan Okuma:** Gizli katman olmadan standart doğrusal ağlar için imkânsız.
-*   **Sonuç:** **Çözüldü (Kayıp 0.000000)**. RealNet sınıfları ayırmak için uzay-zamanı büküyor.
+*   **Sonuç:** **Çözüldü (Kayıp 0.000000)**. OdyssNet sınıfları ayırmak için uzay-zamanı büküyor.
     <details>
     <summary>Doğruluk Tablosu Doğrulamasını Gör</summary>
 
@@ -214,10 +222,10 @@ RealNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **Z
 *   **Mimari:** **3 Nöron** (2 Giriş, 1 Çıkış). **0 Gizli Nöron**. Toplam **9 Parametre**.
 *   **Düşünme Süresi:** **5 Adım**.
 *   **Script:** `PoC/convergence_gates.py`
-*   **Çıkarım:** RealNet **Zamanı Gizli Katman Olarak** kullanır. Girişi yalnızca 5 zaman adımına katlayarak tek bir fiziksel katmanda doğrusal olmayan bir karar sınırı oluşturur; 3 kaos-bağlantılı nöronun XOR'u çözebileceğini kanıtlar.
+*   **Çıkarım:** OdyssNet **Zamanı Gizli Katman Olarak** kullanır. Girişi yalnızca 5 zaman adımına katlayarak tek bir fiziksel katmanda doğrusal olmayan bir karar sınırı oluşturur; 3 kaos-bağlantılı nöronun XOR'u çözebileceğini kanıtlar.
 
 ### C. MNIST Maratonu (Görsel Zeka)
-RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği kanıtlamak için dört farklı koşulda test edildi.
+OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği kanıtlamak için dört farklı koşulda test edildi.
 
 #### 1. Ana Kıyaslama (Saf Sıfır-Gizli)
 *   **Hedef:** Tam 28x28 MNIST (784 Piksel).
@@ -232,7 +240,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. RealNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%96) elde eder.
+*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%96) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
 *   **Hipotez:** Ölü sinapsları öldürmek yerine **canlandırarak** (rastgele yeniden başlatma) %100 parametre verimliliğine ulaşabilir miyiz?
@@ -251,7 +259,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine RealNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır. "Hata, Özelliğe Dönüştü."
+*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır. "Hata, Özelliğe Dönüştü."
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
 *   **Hedef:** 7x7'ye Küçültülmüş MNIST. (Bir simgeden daha az.)
@@ -302,7 +310,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
 ### E. 480 Parametrelik Dünya Rekoru (Elit Zeka Yoğunluğu)
 *   **Hedef:** MNIST'i çözmek ve **500'den az parametre** ile yüksek doğruluk elde etmek.
 *   **Kurulum:**
-    *   **Mimari:** 10 çekirdek nöronlu RealNet.
+    *   **Mimari:** 10 çekirdek nöronlu OdyssNet.
     *   **Strateji:** 10 Sıralı Parça (her biri 79 piksel).
     *   **Gizli Sos:** Küçük 3 nöronlu giriş projeksiyonu ve 10 sınıflı çıkış çözümleyici.
     *   **Toplam Parametre:** **480**.
@@ -311,7 +319,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
 
     ```text
-    RealNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch      1/1000 | Acc 44.24% | LR 2.00e-03 (Hyperspace start)
     ...
     Epoch    100/1000 | Acc 85.81% | LR 1.95e-03
@@ -333,38 +341,38 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
 
     ```text
     Frekans 0.15 (Yavaş Dalga):
-      t=1:  Hedef 0.1494 | RealNet 0.2871
-      t=11: Hedef 0.9969 | RealNet 0.9985 (Zirve Senkronu)
-      t=26: Hedef -0.6878 | RealNet -0.6711
+      t=1:  Hedef 0.1494 | OdyssNet 0.2871
+      t=11: Hedef 0.9969 | OdyssNet 0.9985 (Zirve Senkronu)
+      t=26: Hedef -0.6878 | OdyssNet -0.6711
 
     Frekans 0.45 (Hızlı Dalga):
-      t=1:  Hedef 0.4350 | RealNet 0.1783
-      t=26: Hedef -0.7620 | RealNet -0.7826
+      t=1:  Hedef 0.4350 | OdyssNet 0.1783
+      t=26: Hedef -0.7620 | OdyssNet -0.7826
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_sine_wave.py`
-*   **Çıkarım:** RealNet bir **Programlanabilir Osilatördür**. Bu, tek bir tohumdan sonsuz benzersiz zamansal yörüngeler üretebileceğini doğrular.
+*   **Çıkarım:** OdyssNet bir **Programlanabilir Osilatördür**. Bu, tek bir tohumdan sonsuz benzersiz zamansal yörüngeler üretebileceğini doğrular.
 
 ### G. Gecikmeli Toplayıcı (Bellek & Mantık)
 *   **Hedef:** A Girişi ($t=2$), B Girişi ($t=8$). A+B Çıkışı ($t=14$).
-*   **Meydan Okuma:** RealNet, A'yı 6 adım "hatırlamalı", sessizliği görmezden gelmeli, B'yi almalı ve toplamı hesaplamalıdır.
+*   **Meydan Okuma:** OdyssNet, A'yı 6 adım "hatırlamalı", sessizliği görmezden gelmeli, B'yi almalı ve toplamı hesaplamalıdır.
 *   **Sonuç:** **MSE Kaybı: ~0.01**.
     <details>
     <summary>"Zihinsel Matematik" Sonuçlarını Gör</summary>
 
     ```text
-    -0.3 + 0.1 = -0.20 | RealNet: -0.2271 (Fark: 0.02)
-     0.5 + 0.2 =  0.70 | RealNet:  0.4761 (Fark: 0.22 - Yüksek genlikte zorluk)
-     0.1 + -0.1 = 0.00 | RealNet: -0.0733 (Fark: 0.07)
-    -0.4 + -0.4 = -0.80 | RealNet: -0.7397 (Fark: 0.06)
+    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2271 (Fark: 0.02)
+     0.5 + 0.2 =  0.70 | OdyssNet:  0.4761 (Fark: 0.22 - Yüksek genlikte zorluk)
+     0.1 + -0.1 = 0.00 | OdyssNet: -0.0733 (Fark: 0.07)
+    -0.4 + -0.4 = -0.80 | OdyssNet: -0.7397 (Fark: 0.06)
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_adder.py`
-*   **Çıkarım:** **Kısa Süreli Belleği** doğrular. Ağ, kaotik durumunda $A$ değişkenini tutar, $B$'yi bekler ve toplamı çıkarmak için doğrusal olmayan entegrasyon (yaklaşık aritmetik) gerçekleştirir. Bu, RealNet'in **Video benzeri** veri akışlarını işleme yeteneğini gösteriyor. "Zihinsel Matematiğe" benzer.
+*   **Çıkarım:** **Kısa Süreli Belleği** doğrular. Ağ, kaotik durumunda $A$ değişkenini tutar, $B$'yi bekler ve toplamı çıkarmak için doğrusal olmayan entegrasyon (yaklaşık aritmetik) gerçekleştirir. Bu, OdyssNet'in **Video benzeri** veri akışlarını işleme yeteneğini gösteriyor. "Zihinsel Matematiğe" benzer.
 
 ### H. Mandal (İrade)
 *   **Hedef:** Tetikleyici nabzı beklemek. Alındıktan sonra çıkışı AÇIK konuma geçirmek ve **sonsuza kadar tutmak**.
-*   **Meydan Okuma:** Standart RNN'ler sıfıra söner. RealNet enerjiyi kararlı bir çekicide hapsetmelidir.
+*   **Meydan Okuma:** Standart RNN'ler sıfıra söner. OdyssNet enerjiyi kararlı bir çekicide hapsetmelidir.
 *   **Sonuç:** **Mükemmel Kararlılık**. Tetiklendikten sonra karar süresiz olarak korunuyor.
     <details>
     <summary>"İrade" Günlüğünü Gör</summary>
@@ -379,7 +387,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_latch.py`
-*   **Çıkarım:** **Karar Sürdürmeyi** gösteriyor. RealNet bir seçim yapabilir ve buna bağlı kalabilir, çürümeye direnir.
+*   **Çıkarım:** **Karar Sürdürmeyi** gösteriyor. OdyssNet bir seçim yapabilir ve buna bağlı kalabilir, çürümeye direnir.
 
 ### I. Kronometre (İç Saat)
 *   **Hedef:** "X adım bekle, sonra ateş et." (Bekleme sırasında giriş yok.)
@@ -402,7 +410,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_stopwatch.py`
-*   **Çıkarım:** **Ritim & Zaman Algısını** gösteriyor. RealNet yalnızca veri işlemiyor; zamanı *deneyimliyor*.
+*   **Çıkarım:** **Ritim & Zaman Algısını** gösteriyor. OdyssNet yalnızca veri işlemiyor; zamanı *deneyimliyor*.
 
 ### J. Düşünen Dedektif (Bağlam & Akıl Yürütme)
 *   **Hedef:** İkili veri akışını izlemek. **YALNIZCA** `1-1` deseni oluştuğunda alarm vermek.
@@ -424,7 +432,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_detective_thinking.py`
-*   **Çıkarım:** **Zekanın Zamana İhtiyaç Duyduğunu** kanıtlıyor. Sessiz adımlar sırasında bilgiyi "sindirmesine" izin verildiğinde, RealNet salt reaktif ağların çözemeyeceği karmaşık zamansal mantığı (Zaman Boyunca XOR) çözüyor. Bu, LLM yaklaşımımızın temelidir.
+*   **Çıkarım:** **Zekanın Zamana İhtiyaç Duyduğunu** kanıtlıyor. Sessiz adımlar sırasında bilgiyi "sindirmesine" izin verildiğinde, OdyssNet salt reaktif ağların çözemeyeceği karmaşık zamansal mantığı (Zaman Boyunca XOR) çözüyor. Bu, LLM yaklaşımımızın temelidir.
 
 ### K. Kütüphaneci (Nöral Veritabanı)
 *   **Hedef:** Okuma-Yazma Belleği olarak hareket etmek. `YAZ K1=0.5`. Bekle... `OKU K1`. Çıkış: `0.5`.
@@ -434,7 +442,7 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     <summary>Bellek Geri Alma Günlüğünü Gör</summary>
 
     ```text
-    Adım  | Komut    | Anahtar | Val_In   | Hedef    | RealNet  | Durum
+    Adım  | Komut    | Anahtar | Val_In   | Hedef    | OdyssNet  | Durum
     -------------------------------------------------------------------
     0     | YAZ      | K0      | 0.4426   | 0.4426   | 0.0208   | ⚙️
     ...   | (Bellek Pekişiyor...)
@@ -444,11 +452,11 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     48    | SİL      | K0      | 0.0000   | 0.0000   | 0.0117   | ✅ SİLİNDİ
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_realnet_as_database.py`
-*   **Çıkarım:** RealNet'in, açık depolama matrisleri olmadan Transformer'ın KV Önbelleğinin işini yaparak bir sorgu sinyali tarafından adreslenebilen kararlı "bellek kuyuları" oluşturarak **Anahtar-Değer Dikkat** mekanizmalarını yalnızca dinamikler aracılığıyla simüle edebildiğini kanıtlar.
+*   **Script:** `PoC/experiments/convergence_odyssnet_as_database.py`
+*   **Çıkarım:** OdyssNet'in, açık depolama matrisleri olmadan Transformer'ın KV Önbelleğinin işini yaparak bir sorgu sinyali tarafından adreslenebilen kararlı "bellek kuyuları" oluşturarak **Anahtar-Değer Dikkat** mekanizmalarını yalnızca dinamikler aracılığıyla simüle edebildiğini kanıtlar.
 
 ### L. Beceri Transferi (Toplama -> Çarpma Transplantı)
-*   **Hedef:** Küçük bir RealNet'e gecikmeli iki darbenin toplamını öğretmek, öğrenilen ağırlıkları daha büyük bir RealNet'e transplant etmek ve çarpma görevinde transplanted ağ ile scratch ağı karşılaştırmak.
+*   **Hedef:** Küçük bir OdyssNet'e gecikmeli iki darbenin toplamını öğretmek, öğrenilen ağırlıkları daha büyük bir OdyssNet'e transplant etmek ve çarpma görevinde transplanted ağ ile scratch ağı karşılaştırmak.
 *   **Meydan Okuma:** Zamansal aritmetik bilgisinin daha zor ama ilişkili bir göreve öğrenme hızlandırıcı olarak taşınıp taşınmadığını test etmek.
 *   **Sonuç:** Kontrollü başa baş koşuda **net transfer üstünlüğü**.
     <details>
@@ -463,14 +471,14 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_skill_transfer.py`
-*   **Çıkarım:** RealNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
+*   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
 
-## 🔮 Vizyon: Silikonun Ruhu (RealNet-1B)
-RealNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.
+## 🔮 Vizyon: Silikonun Ruhu (OdyssNet-1B)
+OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.
 
 Uzayı Zamanla takas ederek sıfır gizli katmanla görmeyi çözebilirsek, bu yaklaşım dil modellerine ölçeklenebilir.
 
-*   **Hipotez:** 1 milyar parametreli bir model (RealNet-1B), daha fazla adım "düşünerek" teorik olarak çok daha büyük modellerin (örn. Llama-70B) akıl yürütme derinliğiyle eşleşebilir.
+*   **Hipotez:** 1 milyar parametreli bir model (OdyssNet-1B), daha fazla adım "düşünerek" teorik olarak çok daha büyük modellerin (örn. Llama-70B) akıl yürütme derinliğiyle eşleşebilir.
 *   **Hedef:** Tüketici donanımında (örn. RTX 3060) verimli, yüksek-akıl yürütmeli yapay zeka.
 *   **Yeni Kanıt:** Toplama -> Çarpma transplant deneyinde becerinin ölçek değişimine rağmen korunması ve yeni görevi hızlandırması, AGI yolunun gerçekçi olduğuna dair güçlü bir sinyal veriyor.
 

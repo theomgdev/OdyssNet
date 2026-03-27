@@ -17,7 +17,7 @@ except ImportError:
 
 # --- ENVIRONMENT & IMPORTS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, ChaosGradConfig, TemporalSchedulerConfig
 from datasets import load_dataset
 
 # TF32 Optimization (Consistent with Notebook)
@@ -287,7 +287,7 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
     
     # If num_neurons is -1, auto-size will handle it based on max(output_ids)
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=num_neurons,
         input_ids=input_ids,
         output_ids=output_ids,
@@ -313,7 +313,7 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
             auto_extend=True,
         )
 
-    trainer = RealNetTrainer(
+    trainer = OdyssNetTrainer(
         model, lr=lr, device=device,
         gradient_persistence=0.0,
         chaos_config=ChaosGradConfig.default(lr=lr),
@@ -394,7 +394,7 @@ def calculate_optimal_batch_size(model, device, seq_len, think_gap, truncated_bp
 def main():
     global NUM_NEURONS, BATCH_SIZE # Allow updating global config if needed
 
-    print(f"🚀 RealNet-LLM (TinyStories Streaming) - NATIVE THINKING MODE")
+    print(f"🚀 OdyssNet-LLM (TinyStories Streaming) - NATIVE THINKING MODE")
     print(f"--- Configuration ---")
     print(f"SEQ_LEN: {SEQ_LEN}")
     print(f"BATCH_SIZE: {BATCH_SIZE} (Will Auto-Tune if -1)")

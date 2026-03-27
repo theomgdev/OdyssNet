@@ -5,9 +5,9 @@ import sys
 import numpy as np
 import torch
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from realnet import ChaosGradConfig, RealNet, RealNetTrainer, save_checkpoint, transplant_weights
+from odyssnet import ChaosGradConfig, OdyssNet, OdyssNetTrainer, save_checkpoint, transplant_weights
 
 
 def set_seed(seed=42):
@@ -99,7 +99,7 @@ def evaluate_examples(trainer, seq_len, delay_a, delay_b, pairs):
 
 
 def main():
-    print("RealNet Experiment: Skill Transfer (Add -> Multiply)")
+    print("OdyssNet Experiment: Skill Transfer (Add -> Multiply)")
     print("Objective: Learn addition in small net, transplant to larger net, compare multiplication convergence vs scratch.")
 
     set_seed(42)
@@ -119,13 +119,13 @@ def main():
     lr = 1e-3
 
     print("\nStep 1/3: Train SMALL model on ADD")
-    small_model = RealNet(
+    small_model = OdyssNet(
         num_neurons=small_neurons,
         input_ids=[0],
         output_ids=[1],
         device=device,
     )
-    small_trainer = RealNetTrainer(
+    small_trainer = OdyssNetTrainer(
         small_model,
         device=device,
         chaos_config=ChaosGradConfig.default(lr=lr),
@@ -156,7 +156,7 @@ def main():
 
     print("\nStep 2/3: Build LARGE models (transplanted vs scratch)")
     set_seed(777)
-    scratch_model = RealNet(
+    scratch_model = OdyssNet(
         num_neurons=large_neurons,
         input_ids=[0],
         output_ids=[1],
@@ -164,7 +164,7 @@ def main():
     )
 
     set_seed(777)
-    transfer_model = RealNet(
+    transfer_model = OdyssNet(
         num_neurons=large_neurons,
         input_ids=[0],
         output_ids=[1],
@@ -173,12 +173,12 @@ def main():
 
     transplant_stats = transplant_weights(transfer_model, ckpt_path, device=device, verbose=True)
 
-    scratch_trainer = RealNetTrainer(
+    scratch_trainer = OdyssNetTrainer(
         scratch_model,
         device=device,
         chaos_config=ChaosGradConfig.default(lr=lr),
     )
-    transfer_trainer = RealNetTrainer(
+    transfer_trainer = OdyssNetTrainer(
         transfer_model,
         device=device,
         chaos_config=ChaosGradConfig.default(lr=lr),

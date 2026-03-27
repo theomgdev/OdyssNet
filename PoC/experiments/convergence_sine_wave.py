@@ -5,9 +5,9 @@ import sys
 import os
 import math
 
-# Adjust path to import realnet
+# Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def generate_sine_data(batch_size, steps, device):
     """
@@ -33,7 +33,7 @@ def generate_sine_data(batch_size, steps, device):
     return frequencies, targets
 
 def main():
-    print("RealNet Experiment: The Harmonic Oscillator (Sine Wave Generator)")
+    print("OdyssNet Experiment: The Harmonic Oscillator (Sine Wave Generator)")
     print("Objective: One continuous input sets the frequency. The network must oscillate at that frequency for N steps.")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -48,7 +48,7 @@ def main():
     EPOCHS = 10000
     
     # Initialize Model
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=INPUT_IDS,
         output_ids=OUTPUT_IDS,
@@ -57,7 +57,7 @@ def main():
     )
     
     # Initialize Trainer
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=5e-5))
     
     print(f"Model: {NUM_NEURONS} Neurons. Thinking for {STEPS} steps.")
@@ -67,7 +67,7 @@ def main():
         inputs, targets = generate_sine_data(BATCH_SIZE, STEPS, DEVICE)
         
         # Train on specific batch
-        # Inputs: (Batch, 1) -> RealNet converts to (Batch, N)
+        # Inputs: (Batch, 1) -> OdyssNet converts to (Batch, N)
         # Targets: (Batch, Steps, 1) -> Trainer compares with Permuted Sequence output
         loss = trainer.train_batch(inputs, targets, thinking_steps=STEPS, full_sequence=True)
         
@@ -90,13 +90,13 @@ def main():
     for t in range(0, STEPS, 5):
         target = math.sin((t+1) * 0.15)
         pred = predictions[0, t, 0].item()
-        print(f"  t={t+1}: Target {target:.4f} | RealNet {pred:.4f}")
+        print(f"  t={t+1}: Target {target:.4f} | OdyssNet {pred:.4f}")
 
     print("\nFrequency 0.45 (Fast Wave):")
     for t in range(0, STEPS, 5):
         target = math.sin((t+1) * 0.45)
         pred = predictions[1, t, 0].item()
-        print(f"  t={t+1}: Target {target:.4f} | RealNet {pred:.4f}")
+        print(f"  t={t+1}: Target {target:.4f} | OdyssNet {pred:.4f}")
 
 if __name__ == "__main__":
     main()

@@ -16,10 +16,10 @@ warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()
 os.environ["NO_BNB"] = "1"
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig
 
 def main():
-    print("RealNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
+    print("OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
     print("Strategy: 10 Sequential Chunks (79 pixels) -> Embed(3 Neurons) -> Core(10) -> Decoder(10 Classes)")
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -31,7 +31,7 @@ def main():
         if hasattr(torch, 'compile'):
             try:
                 model_compile = True
-                print("RealNet: torch.compile enabled for speed.")
+                print("OdyssNet: torch.compile enabled for speed.")
             except:
                 model_compile = False
         else:
@@ -45,7 +45,7 @@ def main():
     # vocab_size = [v_in, v_out]
     # v_in = 79 pixels (from each chunk)
     # v_out = 10 classes
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=input_ids,
         output_ids=output_ids,
@@ -92,7 +92,7 @@ def main():
         patience=0
     )
     
-    trainer = RealNetTrainer(
+    trainer = OdyssNetTrainer(
         model, 
         device=DEVICE,
         chaos_config=ChaosGradConfig.tiny_network(lr=1e-2),

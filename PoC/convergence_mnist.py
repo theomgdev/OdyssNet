@@ -6,10 +6,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from realnet import RealNet, RealNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
 def main():
-    print("RealNet 2.0: PURE MNIST CHALLENGE (28x28 Raw Input)...")
+    print("OdyssNet 2.0: PURE MNIST CHALLENGE (28x28 Raw Input)...")
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # Performance Tuning
@@ -37,7 +37,7 @@ def main():
     input_ids = list(range(784))
     output_ids = list(range(784, 794))
     
-    model = RealNet(
+    model = OdyssNet(
         num_neurons=NUM_NEURONS, 
         input_ids=input_ids, 
         output_ids=output_ids, 
@@ -48,7 +48,7 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
     
-    trainer = RealNetTrainer(model, device=DEVICE,
+    trainer = OdyssNetTrainer(model, device=DEVICE,
                              chaos_config=ChaosGradConfig.default(lr=1e-4))
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
