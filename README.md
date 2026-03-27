@@ -173,8 +173,7 @@ OdyssNet mimics the brain more closely than layered networks, not just in struct
 Unlike Transformers which use explicit $Q \times K$ matrices to "look back" at the history, OdyssNet achieves attention through **Temporal Resonance**.
 
 *   **Mechanism:** Information from the past is maintained as a standing wave or vibration in the hidden state.
-*   **Key-Value Handling:** The **Librarian Experiment** proved that OdyssNet can act as an addressable database, routing queries to the correct "memory vibration" without any physical storage tables.
-*   **Detection:** When a related input arrives (like a READ command for Key 1), it creates a constructive interference (resonance) with the specific wave holding 'Key 1's value', forcing it to surface.
+*   **Detection:** When a related input arrives, it creates a constructive interference (resonance) with the specific wave holding relevant past information, forcing it to surface.
 *   **Result:** The network "attends" to relevant past events without storing the entire history buffer. Time itself acts as the indexing mechanism.
 
 ### Mathematical Model
@@ -432,28 +431,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_detective_thinking.py`
 *   **Insight:** Proves that **Intelligence requires Time**. When allowed to "digest" information during silent steps, OdyssNet solves complex temporal logic (XOR over Time) that purely reactive networks cannot. This is the foundation for our LLM approach.
 
-### K. The Librarian (Neural Database)
-*   **Target:** Act as a Read-Write Memory. `WRITE K1=0.5`. Wait... `READ K1`. Output: `0.5`.
-*   **Challenge:** The network must store multiple key-value pairs in its chaotic hidden state without them interfering, and retrieve them on demand. This requires **Implicit Attention**.
-*   **Result:** **~92% Accuracy** on 4 Keys with **256 Core Neurons** (`Input: 8 -> Proj(128)`, `Output: Decode(128) -> 1`).
-    <details>
-    <summary>See Memory Retrieval Log</summary>
-
-    ```text
-    Step  | Command  | Key   | Val_In   | Target   | OdyssNet  | Status
-    -------------------------------------------------------------------
-    0     | WRITE    | K0    | 0.4426   | 0.4426   | 0.0208   | ⚙️
-    ...   | (Memory Consolidating...)
-    12    | (4)      | ...   |          | 0.4426   | 0.4602   | ✅ SAVED
-    ...   | (Wait 20 steps...)
-    32    | READ     | K0    | 0.0000   | 0.4426   | 0.4506   | ✅ RETRIEVED
-    48    | DELETE   | K0    | 0.0000   | 0.0000   | 0.0117   | ✅ DELETED
-    ```
-    </details>
-*   **Script:** `PoC/experiments/convergence_odyssnet_as_database.py`
-*   **Insight:** Proves that OdyssNet can simulate **Key-Value Attention** mechanisms purely through dynamics, creating stable "memory wells" that can be addressed by a query signal and effectively performing the job of a Transformer's KV Cache without explicit storage matrices.
-
-### L. Skill Transfer (Add -> Multiply Transplant)
+### K. Skill Transfer (Add -> Multiply Transplant)
 *   **Target:** Teach a small OdyssNet to add two delayed pulses, transplant learned weights into a larger OdyssNet, then train both transplanted and scratch models on multiplication.
 *   **Challenge:** Verify whether learned temporal arithmetic priors can accelerate learning of a structurally related but harder task.
 *   **Result:** **Clear transfer win** in a controlled head-to-head run.

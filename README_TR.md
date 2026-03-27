@@ -173,8 +173,7 @@ OdyssNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağla
 Geçmişe "geriye bakmak" için açık $Q \times K$ matrislerini kullanan Transformer'ların aksine, OdyssNet **Zamansal Rezonans** aracılığıyla dikkati sağlar.
 
 *   **Mekanizma:** Geçmişten gelen bilgi, gizli durumda ayakta duran bir dalga veya titreşim olarak korunur.
-*   **Anahtar-Değer İşleme:** **Kütüphaneci Deneyi**, OdyssNet'in fiziksel depolama tabloları olmadan sorguları doğru "bellek titreşimine" yönlendirerek adreslenebilir bir veritabanı olarak hareket edebildiğini kanıtladı.
-*   **Tespit:** İlgili bir giriş geldiğinde (K1 için OKUMA komutu gibi), 'K1'in değerini' tutan belirli dalgayla yapıcı girişim (rezonans) oluşturur ve onu yüzeye çıkmaya zorlar.
+*   **Tespit:** İlgili bir giriş geldiğinde, belirli dalgayla yapıcı girişim (rezonans) oluşturur ve onu yüzeye çıkmaya zorlar.
 *   **Sonuç:** Ağ, tüm geçmiş tamponunu saklamadan ilgili geçmiş olaylara "dikkat eder". Zaman'ın kendisi indeksleme mekanizması olarak hareket eder.
 
 ### Matematiksel Model
@@ -431,28 +430,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Script:** `PoC/experiments/convergence_detective_thinking.py`
 *   **Çıkarım:** **Zekanın Zamana İhtiyaç Duyduğunu** kanıtlıyor. Sessiz adımlar sırasında bilgiyi "sindirmesine" izin verildiğinde, OdyssNet salt reaktif ağların çözemeyeceği karmaşık zamansal mantığı (Zaman Boyunca XOR) çözüyor. Bu, LLM yaklaşımımızın temelidir.
 
-### K. Kütüphaneci (Nöral Veritabanı)
-*   **Hedef:** Okuma-Yazma Belleği olarak hareket etmek. `YAZ K1=0.5`. Bekle... `OKU K1`. Çıkış: `0.5`.
-*   **Meydan Okuma:** Ağ, birden fazla anahtar-değer çiftini kaotik gizli durumunda birbirine müdahale etmeden saklamalı ve talep üzerine geri alabilmelidir. Bu, **Örtülü Dikkat** gerektirir.
-*   **Sonuç:** **256 Çekirdek Nöronla** (`Giriş: 8 -> Proje(128)`, `Çıkış: Çözümle(128) -> 1`) 4 Anahtarda **~%92 Doğruluk**.
-    <details>
-    <summary>Bellek Geri Alma Günlüğünü Gör</summary>
-
-    ```text
-    Adım  | Komut    | Anahtar | Val_In   | Hedef    | OdyssNet  | Durum
-    -------------------------------------------------------------------
-    0     | YAZ      | K0      | 0.4426   | 0.4426   | 0.0208   | ⚙️
-    ...   | (Bellek Pekişiyor...)
-    12    | (4)      | ...     |          | 0.4426   | 0.4602   | ✅ KAYDEDİLDİ
-    ...   | (20 adım bekle...)
-    32    | OKU      | K0      | 0.0000   | 0.4426   | 0.4506   | ✅ GERİ ALINDI
-    48    | SİL      | K0      | 0.0000   | 0.0000   | 0.0117   | ✅ SİLİNDİ
-    ```
-    </details>
-*   **Script:** `PoC/experiments/convergence_odyssnet_as_database.py`
-*   **Çıkarım:** OdyssNet'in, açık depolama matrisleri olmadan Transformer'ın KV Önbelleğinin işini yaparak bir sorgu sinyali tarafından adreslenebilen kararlı "bellek kuyuları" oluşturarak **Anahtar-Değer Dikkat** mekanizmalarını yalnızca dinamikler aracılığıyla simüle edebildiğini kanıtlar.
-
-### L. Beceri Transferi (Toplama -> Çarpma Transplantı)
+### K. Beceri Transferi (Toplama -> Çarpma Transplantı)
 *   **Hedef:** Küçük bir OdyssNet'e gecikmeli iki darbenin toplamını öğretmek, öğrenilen ağırlıkları daha büyük bir OdyssNet'e transplant etmek ve çarpma görevinde transplanted ağ ile scratch ağı karşılaştırmak.
 *   **Meydan Okuma:** Zamansal aritmetik bilgisinin daha zor ama ilişkili bir göreve öğrenme hızlandırıcı olarak taşınıp taşınmadığını test etmek.
 *   **Sonuç:** Kontrollü başa baş koşuda **net transfer üstünlüğü**.
