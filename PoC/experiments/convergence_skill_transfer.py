@@ -172,6 +172,11 @@ def main():
     )
 
     transplant_stats = transplant_weights(transfer_model, ckpt_path, device=device, verbose=True)
+    
+    # Clean up checkpoint after transplantation
+    if os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
+        print(f"Cleaned up: {ckpt_path}")
 
     scratch_trainer = OdyssNetTrainer(
         scratch_model,
