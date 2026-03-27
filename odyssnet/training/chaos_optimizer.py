@@ -368,9 +368,11 @@ class ChaosGrad(torch.optim.Optimizer):
                             u = u / (u.norm() + 1e-12)
                         sigma_max = (u.t() @ p @ v).item()
                         self._spectral_radius = abs(sigma_max)
-                        
-                        if self._spectral_radius > spectral_clip:
-                            p.data.mul_(spectral_clip / (self._spectral_radius + eps))
+
+                        # Use larger epsilon for numerical stability
+                        spectral_eps = 1e-8
+                        if self._spectral_radius > spectral_eps and self._spectral_radius > spectral_clip:
+                            p.data.mul_(spectral_clip / self._spectral_radius)
                     except Exception:
                         pass
                         

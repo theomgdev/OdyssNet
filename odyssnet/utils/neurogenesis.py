@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import gc
 import os
 if os.environ.get('NO_BNB'):
     HAS_BNB = False
@@ -15,15 +14,13 @@ else:
             # Suppress bitsandbytes logs during import
             import sys
             _old_out, _old_err = sys.stdout, sys.stderr
-            _null_out, _null_err = open(os.devnull, 'w'), open(os.devnull, 'w')
             try:
-                sys.stdout, sys.stderr = _null_out, _null_err
-                import bitsandbytes as bnb
-                HAS_BNB = True
+                with open(os.devnull, 'w') as _null_out, open(os.devnull, 'w') as _null_err:
+                    sys.stdout, sys.stderr = _null_out, _null_err
+                    import bitsandbytes as bnb
+                    HAS_BNB = True
             finally:
                 sys.stdout, sys.stderr = _old_out, _old_err
-                _null_out.close()
-                _null_err.close()
     except ImportError:
         HAS_BNB = False
 
@@ -71,7 +68,12 @@ class Neurogenesis:
         old_core_gate_param = getattr(model, 'core_gate', None)
         old_memory_gate_param = getattr(model, 'memory_gate', None)
         gate_init_strategy = getattr(model, 'gate_weight_init', 'zero')
-        
+
+        # Preserve vocab layer parameters (for optimizer state transfer)
+        old_embed_param = model.embed.weight if model.embed is not None else None
+        old_proj_param = model.proj.weight if model.proj is not None else None
+        old_decoder_param = model.output_decoder.weight if model.output_decoder is not None else None
+
         # Explicitly preserve ID lists (vital for offsets)
         old_input_ids = list(model.input_ids)
         old_output_ids = list(model.output_ids)
@@ -244,7 +246,7 @@ class Neurogenesis:
                          
                     try:
                         tensor = val
-                        if tensor.shape == old_p.shape:
+                        if tensor.shape != old_p.shape:
                             # Needs resizing
                             new_tensor = torch.zeros(new_p.shape, dtype=tensor.dtype, device=device)
                             
@@ -304,40 +306,26 @@ class Neurogenesis:
                     transfer_state(old_core_gate_param, model.core_gate, is_matrix=False)
                 if isinstance(old_memory_gate_param, nn.Parameter) and isinstance(getattr(model, 'memory_gate', None), nn.Parameter):
                     transfer_state(old_memory_gate_param, model.memory_gate, is_matrix=False)
-                
+
                 # Transfer Vocab Layers State (Shapes are constant during Neurogenesis)
-                if hasattr(model, 'embed') and model.embed is not None:
-                     transfer_state(model.embed.weight, model.embed.weight, is_matrix=True)
-                
-                if hasattr(model, 'proj') and model.proj is not None:
-                     transfer_state(model.proj.weight, model.proj.weight, is_matrix=True)
-                     
-                if hasattr(model, 'output_decoder') and model.output_decoder is not None:
-                     transfer_state(model.output_decoder.weight, model.output_decoder.weight, is_matrix=True)
+                if old_embed_param is not None and hasattr(model, 'embed') and model.embed is not None:
+                     transfer_state(old_embed_param, model.embed.weight, is_matrix=True)
+
+                if old_proj_param is not None and hasattr(model, 'proj') and model.proj is not None:
+                     transfer_state(old_proj_param, model.proj.weight, is_matrix=True)
+
+                if old_decoder_param is not None and hasattr(model, 'output_decoder') and model.output_decoder is not None:
+                     transfer_state(old_decoder_param, model.output_decoder.weight, is_matrix=True)
                 
                 print("   OK: Optimizer state transferred (momentum preserved)")
             except Exception as e:
                 print(f"   WARNING: Optimizer state transfer failed ({e}). Performing cold restart.")
 
-        # Cleanup
-        del old_W_param
-        del old_B_param
-        del old_memory_param
-        del old_norm_w_param
-        del old_norm_b_param
-        del old_opt
-        del old_input_scale
-        del old_output_scale
-        del old_input_gate_param
-        del old_output_gate_param
-        del old_core_gate_param
-        del old_memory_gate_param
-        
-        gc.collect()
+        # CUDA cache cleanup
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            
+
         if verbose:
             print(f"Neurogenesis complete. Optimizer migrated. New size: {new_n}. VRAM cleared.")
-            
+
         return new_opt

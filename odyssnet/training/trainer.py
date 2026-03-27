@@ -21,15 +21,13 @@ else:
             # Suppress bitsandbytes logs during import
             import sys
             _old_out, _old_err = sys.stdout, sys.stderr
-            _null_out, _null_err = open(os.devnull, 'w'), open(os.devnull, 'w')
             try:
-                sys.stdout, sys.stderr = _null_out, _null_err
-                import bitsandbytes as bnb
-                HAS_BNB = True
+                with open(os.devnull, 'w') as _null_out, open(os.devnull, 'w') as _null_err:
+                    sys.stdout, sys.stderr = _null_out, _null_err
+                    import bitsandbytes as bnb
+                    HAS_BNB = True
             finally:
                 sys.stdout, sys.stderr = _old_out, _old_err
-                _null_out.close()
-                _null_err.close()
     except ImportError:
         HAS_BNB = False
 
