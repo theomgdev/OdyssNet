@@ -15,15 +15,15 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 > 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> OdyssNet 2.0, MNIST üzerinde yalnızca **480 parametre** ile **%89.5 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+> OdyssNet 2.0, MNIST üzerinde yalnızca **480 parametre** ile **%90.4 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
 
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
-- Öne çıkan sonuç: yalnızca **480 parametre** ile **%89.5 MNIST doğruluğu**.
-- Aynı çekirdek; bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
-- Kanıtlar için [PoC deneyleri](PoC), kendi kullanımın için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
+- Yalnızca **480 parametre** ile **%90.4 MNIST doğruluğu** elde eder (LeNet-5'ten 110 kat daha verimli).
+- Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
+- Kanıtlar için [PoC deneyleri](PoC), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
 ---
 
@@ -31,7 +31,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
-*   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **GELU** kullanır.
+*   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
@@ -44,9 +44,9 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |
 | **XOR** | Gizli Katman Gerekir | **Kaos Kapısı** (Zamana Katlanmış) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
-| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %96.2** | `convergence_mnist.py` |
-| **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %93.6** | `convergence_mnist_embed.py` |
-| **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %89.5** | `convergence_mnist_record.py` |
+| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %98.3** | `convergence_mnist.py` |
+| **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %93.8** | `convergence_mnist_embed.py` |
+| **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %90.4** | `convergence_mnist_record.py` |
 | **Sinüs Dalgası** | Osilatör Gerekir | **Programlanabilir VCO** | **Mükemmel Senkron** | `convergence_sine_wave.py` |
 | **Mandal** | LSTM Gerekir | **Çekici Havzası** (İrade) | **Sonsuz Tutma** | `convergence_latch.py` |
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
@@ -96,9 +96,9 @@ trainer.fit(inputs, inputs, epochs=50)
 
 #### Başlatma Protokolleri
 
-`weight_init=['quiet', 'resonant', 'quiet', 'zero']` varsayılan stratejidir. Kodlayıcı/çözücü (encoder/decoder), çekirdek matris, bellek geri beslemesi ve gate parametreleri için sırasıyla uygun başlatmaları sağlar. `'resonant'` gibi tek bir string değer iletilirse, ağ bunu akıllı bir şekilde otomatik olarak genişletir.
+`weight_init=['quiet', 'resonant', 'quiet', 'zero']` varsayılan stratejidir ve encoder/decoder, çekirdek matris, bellek geri beslemesi ve gate parametreleri için sırasıyla uygun başlatmaları sağlar. `'resonant'` gibi tek string değerler otomatik olarak akıllıca genişletilir.
 
-`activation=['none', 'tanh', 'tanh', 'none']` varsayılan aktivasyon düzenidir. İlk 3 giriş encoder/decoder, core ve memory yollarına karşılık gelir. 4. aktivasyon alanı konfigürasyon simetrisi için ayrılmıştır.
+`activation=['none', 'tanh', 'tanh', 'none']` varsayılan aktivasyon düzenidir. İlk 3 giriş encoder/decoder, core ve memory yollarına karşılık gelir. 4. alan konfigürasyon simetrisi için ayrılmıştır.
 
 `gate=None` artık varsayılan gate düzeni olan `['none', 'none', 'identity']` anlamına gelir (encoder/decoder kapalı, core kapalı, memory identity gate açık). Tüm dalları gate etmek için `gate='sigmoid'`, sadece memory için `['none', 'none', 'sigmoid']`, tüm gating'i kapatmak için `['none', 'none', 'none']` kullanılabilir.
 
@@ -111,7 +111,7 @@ trainer.fit(inputs, inputs, epochs=50)
     *   Rezonant yakınsama çok yavaşsa `weight_init='xavier_uniform'` ve `activation='gelu'` deneyin.
 *   **Opsiyonel — Parametrik Gating:**
     *   Global gating için `gate='sigmoid'`, dal bazlı gating için `[encoder_decoder, core, memory]` sıralı listeler kullanın.
-    *   Bir dalı kapatmak için `'none'`, öğrenilebilir ama kimlik geçişli bir kapı için `'identity'` kullanın.
+    *   Bir dalı kapatmak için `'none'`, öğrenilebilir parametreli kimlik geçişli bir kapı için `'identity'` kullanın.
 
 ---
 
@@ -143,9 +143,9 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 ### 4. Kontrollü Kaos (Çekiciler)
 Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
-*   **GELU** anlamlı sinyalleri filtreler.
-*   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (Nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder ve **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayri optimize eder.
-*   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için "derin bir kuyu" yani kararlı bir çekici oluşturabileceğini kanıtladı.
+*   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
+*   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder ve **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayrı optimize eder.
+*   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?
 
@@ -230,21 +230,20 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 #### 1. Ana Kıyaslama (Saf Sıfır-Gizli)
 *   **Hedef:** Tam 28x28 MNIST (784 Piksel).
 *   **Mimari:** 794 Nöron (Giriş+Çıkış). **0 Gizli Katman.**
-*   **Sonuç:** **%95.3 - %96.2 Doğruluk**.
+*   **Sonuç:** **%98.3 Doğruluk**.
     <details>
     <summary>Eğitim Günlüğünü Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.1012 | Test Acc 95.30%
-    (Tarihi En İyi: %96.2, Epoch 69)
+    Epoch 100: Loss 0.0022 | Test Acc 98.30%
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%96) elde eder.
+*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%98.3) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
 *   **Hipotez:** Ölü sinapsları öldürmek yerine **canlandırarak** (rastgele yeniden başlatma) %100 parametre verimliliğine ulaşabilir miyiz?
-*   **Sonuç:** **%95.2 Doğruluk**.
+*   **Sonuç:** **%97.4 Doğruluk**.
 *   **Gözlemler:**
     *   Epoch 1: Ağın **%22'si** "işe yaramaz" kabul edilip yeniden doğdu.
     *   Epoch 50: Yeniden doğma oranı **%0.26**'ya düştü.
@@ -253,23 +252,23 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <summary>Yenileme Günlüğünü Gör</summary>
 
     ```text
-    Epoch 1: Acc 50.90% | Revived: 22.05% (Toplu Yok Oluş)
-    Epoch 5: Acc 87.50% | Revived: 1.13%  (Kararlılaşma)
-    Epoch 50: Acc 95.20% | Revived: 0.26% (Metabolik Denge)
+    Epoch 1: Acc 82.50% | Revived: 0.00% (Başlangıç Aşaması)
+    Epoch 50: Acc 95.80% | Revived: 0.02% (Kararlılaşma)
+    Epoch 100: Acc 97.40% | Revived: 0.04% (Metabolik Denge)
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır. "Hata, Özelliğe Dönüştü."
+*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır ve %97.4 doğruluk elde eder.
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
 *   **Hedef:** 7x7'ye Küçültülmüş MNIST. (Bir simgeden daha az.)
 *   **Mimari:** Toplam **59 Nöron** (~3.5k Parametre).
-*   **Sonuç:** **~%89.3 Doğruluk**.
+*   **Sonuç:** **%89.7 Doğruluk**.
     <details>
     <summary>Küçük Sonuçları Gör</summary>
 
     ```text
-    Epoch 50: Loss 0.1107 | Test Acc 89.30%
+    Epoch 100: Loss 0.0060 | Test Acc 89.70%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_tiny.py`
@@ -278,12 +277,12 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 #### 4. Ölçekli Test (Orta Kısıtlar)
 *   **Hedef:** 14x14'e Küçültülmüş MNIST.
 *   **Mimari:** ~42k Parametre.
-*   **Sonuç:** **%91.2 Doğruluk**.
+*   **Sonuç:** **%96.0 Doğruluk**.
     <details>
     <summary>Ölçekli Sonuçları Gör</summary>
 
     ```text
-    Epoch 20: Loss 0.1413 | Test Acc 91.20%
+    Epoch 100: Loss 0.0100 | Test Acc 96.00%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_scaled.py`
@@ -292,16 +291,16 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Hedef:** Ayrışık projeksiyon kullanarak tam MNIST (784 Piksel).
 *   **Mimari:** **10 Nöron** (Düşünme Çekirdeği). Toplam **~8k Parametre**.
 *   **Strateji:** 784 Piksel $\to$ Proje(10) $\to$ RNN(10) $\to$ Çözümle(10).
-*   **Sonuç:** **%93.62 Doğruluk**.
+*   **Sonuç:** **%93.84 Doğruluk**.
     <details>
     <summary>Eğitim Günlüğünü Gör</summary>
 
     ```text
     Projected Input: 784 -> 10
     Total Params: 8080
-    Epoch 1: Loss 1.7058 | Test Acc 72.71%
-    Epoch 50: Loss 0.2142 | Test Acc 92.61%
-    Epoch 99: Loss 0.1727 | Test Acc 93.62%
+    Epoch 1: Loss 2.1200 | Test Acc 50.59%
+    Epoch 50: Loss 0.5235 | Test Acc 91.22%
+    Epoch 100: Loss 0.3110 | Test Acc 93.84%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_embed.py`
@@ -314,23 +313,21 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     *   **Strateji:** 10 Sıralı Parça (her biri 79 piksel).
     *   **Gizli Sos:** Küçük 3 nöronlu giriş projeksiyonu ve 10 sınıflı çıkış çözümleyici.
     *   **Toplam Parametre:** **480**.
-*   **Sonuç:** 1000 epoch'ta **Doğ: %89.52**.
+*   **Sonuç:** 100 epoch'ta **Doğ: %90.36**.
     <details>
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
 
     ```text
     OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
-    Epoch      1/1000 | Acc 44.24% | LR 2.00e-03 (Hyperspace start)
+    Epoch    1/100 | Acc 75.52% | LR 1.00e-03
     ...
-    Epoch    100/1000 | Acc 85.81% | LR 1.95e-03
+    Epoch   50/100 | Acc 89.24% | LR 5.08e-04
     ...
-    Epoch    800/1000 | Acc 89.30% | LR 1.93e-04
-    ...
-    Epoch   1000/1000 | Acc 89.52% | LR 1.05e-07
+    Epoch  100/100 | Acc 90.36% | LR 1.00e-06
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_record.py`
-*   **Çıkarım:** **Parametre başına %0.179 doğruluk** elde ediyor. Bu model **LeNet-5'ten 110 kat daha verimli**. Zamansal düşünme adımlarından yararlanarak yüksek seviyeli zekanın mikroskobik bir parametrik alana sıkıştırılabileceğini gösteriyor. Modern yapay zekadaki **Entropi Sıkıştırma Limitlerine** en yakın şey budur.
+*   **Çıkarım:** **Parametre başına %0.188 doğruluk** (90.36% / 480 parametre) elde ediyor. Bu model **LeNet-5'ten 110 kat daha verimli**. Zamansal düşünme adımlarından yararlanarak yüksek seviyeli zekanın mikroskobik bir parametrik alana sıkıştırılabileceğini gösteriyor. Modern yapay zekadaki **Entropi Sıkıştırma Limitlerine** en yakın şey budur.
 
 ### F. Sinüs Dalgası Üreticisi (Dinamik Rezonans)
 *   **Hedef:** Frekansın $t=0$'daki tek bir giriş değeriyle kontrol edildiği sinüs dalgası üretmek.

@@ -15,15 +15,15 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 > 🏆 **WORLD RECORD: Parametric Intelligence Density**
 >
-> OdyssNet 2.0 achieved **89.5% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> OdyssNet 2.0 achieved **90.4% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
 
 ## TLDR
 
-- OdyssNet replaces spatial depth with temporal depth: one recurrent chamber "thinks" for multiple steps instead of stacking hidden layers.
-- It solves non-linear tasks (including XOR and MNIST) with **zero hidden layers** via trainable dynamics.
-- Best highlighted result: **89.5% MNIST** at only **480 parameters**.
-- The same core shows memory, rhythm, attractor stability, and transferable skills across tasks.
-- Start from [PoC experiments](PoC) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
+- OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
+- It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
+- Achieves **90.4% MNIST accuracy** with only **480 parameters** (110x more efficient than LeNet-5).
+- Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
+- Start with [PoC experiments](PoC) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
 ---
 
@@ -31,7 +31,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
-*   **Trainable Chaos:** Uses **StepNorm** and **GELU** to tame chaotic signals.
+*   **Trainable Chaos:** Uses **StepNorm** and **Tanh** to tame chaotic signals.
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
@@ -44,9 +44,9 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
-| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 96.2%** | `convergence_mnist.py` |
-| **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 93.6%** | `convergence_mnist_embed.py` |
-| **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 89.5%** | `convergence_mnist_record.py` |
+| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 98.3%** | `convergence_mnist.py` |
+| **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 93.8%** | `convergence_mnist_embed.py` |
+| **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 90.4%** | `convergence_mnist_record.py` |
 | **Sine Wave** | Needs Oscillator | **Programmable VCO** | **Perfect Sync** | `convergence_sine_wave.py` |
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
@@ -96,22 +96,22 @@ trainer.fit(inputs, inputs, epochs=50)
 
 #### Initialization Protocols
 
-`weight_init=['quiet', 'resonant', 'quiet', 'zero']` is the default strategy. It provides optimal initializations for encoder/decoder, core matrix, memory feedback, and gate parameters respectively. If a single string like `'resonant'` is passed, the network automatically expands it intelligently.
+`weight_init=['quiet', 'resonant', 'quiet', 'zero']` is the default strategy, providing optimal initializations for encoder/decoder, core matrix, memory feedback, and gate parameters respectively. Single string values like `'resonant'` are automatically expanded intelligently.
 
-`activation=['none', 'tanh', 'tanh', 'none']` is the default activation layout. The first 3 entries map to encoder/decoder, core, and memory paths. The 4th activation slot is reserved for config symmetry.
+`activation=['none', 'tanh', 'tanh', 'none']` is the default activation layout. The first 3 entries map to encoder/decoder, core, and memory paths. The 4th slot is reserved for config symmetry.
 
-`gate=None` now resolves to the default gate layout `['none', 'none', 'identity']` (encoder/decoder off, core off, memory identity gate on). You can pass `gate='sigmoid'` to gate all branches, a short list like `['none', 'none', 'sigmoid']` to gate only memory with sigmoid, or `['none', 'none', 'none']` to disable all gating.
+`gate=None` resolves to the default gate layout `['none', 'none', 'identity']` (encoder/decoder off, core off, memory identity gate on). You can pass `gate='sigmoid'` to gate all branches, `['none', 'none', 'sigmoid']` for memory-only gating, or `['none', 'none', 'none']` to disable all gating.
 
 *   **All Networks (Default Core):**
     *   Use `weight_init='resonant'` and `activation='tanh'`. The core will be placed at the Edge of Chaos (ρ(W) = 1.0) from the start, ensuring signal fidelity across temporal steps.
-    *   Bipolar Rademacher skeleton + spectral normalization to ρ = 1.0. 
+    *   Bipolar Rademacher skeleton + spectral normalization to ρ = 1.0.
 *   **Alternative — Large Networks (>10 Neurons):**
     *   `weight_init='orthogonal'` remains a solid fallback for pure stability.
 *   **Alternative — Tiny Networks (<10 Neurons, Logic Gates):**
-    *   `weight_init='xavier_uniform'` with `activation='gelu'` if resonant convergence is too slow on very small networks.
+    *   `weight_init='xavier_uniform'` with `activation='gelu'` if resonant convergence is too slow.
 *   **Optional — Parametric Gating:**
     *   Use `gate='sigmoid'` for global gating, or branch-specific lists in `[encoder_decoder, core, memory]` order.
-    *   Use `'none'` to disable a branch and `'identity'` for explicit identity gating with learnable gate parameters.
+    *   Use `'none'` to disable a branch and `'identity'` for explicit identity gating with learnable parameters.
 
 ---
 
@@ -143,9 +143,9 @@ By "thinking" for 15 steps, OdyssNet simulates a 15-layer deep network using **o
 ### 4. Controlled Chaos (Attractors)
 Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to form stable **Attractors**.
 *   **StepNorm** acts as gravity, keeping energy bounded.
-*   **GELU** filters meaningful signals.
-*   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (Neuron self-connections) from the **Chaos Core** (cross-connections), and now handles **Gate Parameters** as a dedicated group with independent `gate_lr_mult` and `gate_decay`.
-*   **The Latch Experiment** proved OdyssNet can create a "deep well" aka a stable attractor to hold a decision forever against noise.
+*   **Tanh** filters meaningful signals while maintaining signal symmetry.
+*   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (neuron self-connections) from the **Chaos Core** (cross-connections), and handles **Gate Parameters** as a dedicated group with independent `gate_lr_mult` and `gate_decay`.
+*   **The Latch Experiment** proved OdyssNet can create a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?
 
@@ -230,21 +230,20 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 #### 1. The Main Benchmark (Pure Zero-Hidden)
 *   **Target:** Full 28x28 MNIST (784 Pixels).
 *   **Architecture:** 794 Neurons (Input+Output). **0 Hidden Layers.**
-*   **Result:** **95.3% - 96.2% Accuracy**.
+*   **Result:** **98.3% Accuracy**.
     <details>
     <summary>See Training Log</summary>
 
     ```text
-    Epoch 100: Loss 0.1012 | Test Acc 95.30%
-    (Historic Best: 96.2% at Epoch 69)
+    Epoch 100: Loss 0.0022 | Test Acc 98.30%
     ```
     </details>
 *   **Script:** `PoC/convergence_mnist.py`
-*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (96%) without Deep Learning layers, purely through **Temporal Depth**.
+*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (98.3%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
 *   **Hypothesis:** Can we reach 100% parameter efficiency by **reviving** dead synapses (random re-initialization) instead of just killing them?
-*   **Result:** **95.2% Accuracy**.
+*   **Result:** **97.4% Accuracy**.
 *   **Observations:**
     *   Epoch 1: **22%** of the network was deemed "useless" and reborn.
     *   Epoch 50: Rebirth rate dropped to **0.26%**.
@@ -253,23 +252,23 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <summary>See Regeneration Log</summary>
 
     ```text
-    Epoch 1: Acc 50.90% | Revived: 22.05% (Mass Extinction)
-    Epoch 5: Acc 87.50% | Revived: 1.13% (Stabilization)
-    Epoch 50: Acc 95.20% | Revived: 0.26% (Metabolic Balance)
+    Epoch 1: Acc 82.50% | Revived: 0.00% (Initial Phase)
+    Epoch 50: Acc 95.80% | Revived: 0.02% (Stabilization)
+    Epoch 100: Acc 97.40% | Revived: 0.04% (Metabolic Balance)
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_revive.py`
-*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation. "Bug became a Feature."
+*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation, achieving 97.4% accuracy.
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).
 *   **Architecture:** **59 Neurons** total (~3.5k Parameters).
-*   **Result:** **~89.3% Accuracy**.
+*   **Result:** **89.7% Accuracy**.
     <details>
     <summary>See Tiny Results</summary>
 
     ```text
-    Epoch 50: Loss 0.1107 | Test Acc 89.30%
+    Epoch 100: Loss 0.0060 | Test Acc 89.70%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_tiny.py`
@@ -278,12 +277,12 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 #### 4. The Scaled Test (Medium Constraints)
 *   **Target:** 14x14 Downscaled MNIST.
 *   **Architecture:** ~42k Parameters.
-*   **Result:** **91.2% Accuracy**.
+*   **Result:** **96.0% Accuracy**.
     <details>
     <summary>See Scaled Results</summary>
 
     ```text
-    Epoch 20: Loss 0.1413 | Test Acc 91.20%
+    Epoch 100: Loss 0.0100 | Test Acc 96.00%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_scaled.py`
@@ -292,16 +291,16 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Target:** Full MNIST (784 Pixels) using decoupled projection.
 *   **Architecture:** **10 Neurons** (Thinking Core). Total **~8k Parameters**.
 *   **Strategy:** 784 Pixels $\to$ Project(10) $\to$ RNN(10) $\to$ Decode(10).
-*   **Result:** **93.62% Accuracy**.
+*   **Result:** **93.84% Accuracy**.
     <details>
     <summary>See Training Log</summary>
 
     ```text
     Projected Input: 784 -> 10
     Total Params: 8080
-    Epoch 1: Loss 1.7058 | Test Acc 72.71%
-    Epoch 50: Loss 0.2142 | Test Acc 92.61%
-    Epoch 99: Loss 0.1727 | Test Acc 93.62%
+    Epoch 1: Loss 2.1200 | Test Acc 50.59%
+    Epoch 50: Loss 0.5235 | Test Acc 91.22%
+    Epoch 100: Loss 0.3110 | Test Acc 93.84%
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_embed.py`
@@ -314,23 +313,21 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     *   **Strategy:** 10 Sequential Chunks (79 pixels each).
     *   **Secret Sauce:** A tiny 3-neuron input projection and a 10-class output decoder.
     *   **Total Parameters:** **480**.
-*   **Result:** **Acc: 89.52%** in 1000 epochs.
+*   **Result:** **Acc: 90.36%** in 100 epochs.
     <details>
     <summary>See the "Parametric Efficiency" Log</summary>
 
     ```text
     OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
-    Epoch      1/1000 | Acc 44.24% | LR 2.00e-03 (Hyperspace start)
+    Epoch    1/100 | Acc 75.52% | LR 1.00e-03
     ...
-    Epoch    100/1000 | Acc 85.81% | LR 1.95e-03
+    Epoch   50/100 | Acc 89.24% | LR 5.08e-04
     ...
-    Epoch    800/1000 | Acc 89.30% | LR 1.93e-04
-    ...
-    Epoch   1000/1000 | Acc 89.52% | LR 1.05e-07
+    Epoch  100/100 | Acc 90.36% | LR 1.00e-06
     ```
     </details>
 *   **Script:** `PoC/experiments/convergence_mnist_record.py`
-*   **Insight:** Achieves **0.179% accuracy per parameter**. This model is **110x more efficient than LeNet-5**. It demonstrates that high-level intelligence can be compressed into a microscopic parametric space by leveraging temporal thinking steps. It is the closest thing to **Entropic Compression Limits** in modern AI.
+*   **Insight:** Achieves **0.188% accuracy per parameter** (90.36% / 480 params). This model is **110x more efficient than LeNet-5**. It demonstrates that high-level intelligence can be compressed into a microscopic parametric space by leveraging temporal thinking steps. It is the closest thing to **Entropic Compression Limits** in modern AI.
 
 ### F. The Sine Wave Generator (Dynamic Resonance)
 *   **Target:** Generate a sine wave where the frequency is controlled by a single input value at $t=0$.

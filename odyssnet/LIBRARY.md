@@ -44,33 +44,33 @@ model = OdyssNet(
     *   `False`: Input is applied continuously at every step (Stream).
 *   `dropout_rate` (float): Probability of synaptic failure during training (Biological simulation).
 *   `device` (str): 'cpu' or 'cuda'.
-*   `weight_init` (str or list[str]): Initialization strategy. Default is `['quiet', 'resonant', 'quiet', 'zero']` (Encoder/Decoder, Core, Memory, Gates). If a list is provided, it can contain 1 to 4 entries and missing entries are filled from defaults. A single string still applies to the core and expands sensibly (`'resonant'` keeps encoder/decoder at `'quiet'`).
-    *   `'resonant'` **(Default Core)**: Edge-of-Chaos initialization. Builds a bipolar weight skeleton (Rademacher ±1 signs), adds small Gaussian noise (std=0.02) for symmetry breaking, then scales the matrix so its spectral radius ρ(W) = 1.0 exactly. This guarantees that signals neither explode nor vanish across temporal steps while maintaining both excitatory and inhibitory connections for gate emergence.
-    *   `'orthogonal'`: Orthogonal matrix — great stability for large networks.
-    *   `'xavier_uniform'` / `'xavier_normal'`: Xavier-scaled (good for small logic networks).
-    *   `'kaiming_uniform'` / `'kaiming_normal'`: Kaiming-scaled (ReLU-oriented).
-    *   `'quiet'`: Normal(0, 0.02) — small random start.
-    *   `'micro_quiet'`: Normal(0, 1e-6) — near-zero start.
+*   `weight_init` (str or list[str]): Weight initialization strategy. Default is `['quiet', 'resonant', 'quiet', 'zero']` for [Encoder/Decoder, Core, Memory, Gates]. Single string values are expanded intelligently.
+    *   `'resonant'` **(Default for Core)**: Edge-of-Chaos initialization with spectral radius ρ(W) = 1.0. Uses bipolar Rademacher (±1) skeleton + small Gaussian noise (std=0.02) + spectral normalization. Ensures signals neither explode nor vanish while maintaining excitatory/inhibitory balance.
+    *   `'orthogonal'`: Orthogonal matrix initialization. Excellent stability for large networks.
+    *   `'xavier_uniform'` / `'xavier_normal'`: Xavier-scaled initialization. Good for small logic networks.
+    *   `'kaiming_uniform'` / `'kaiming_normal'`: Kaiming-scaled initialization. ReLU-oriented.
+    *   `'quiet'`: Normal(0, 0.02). Small random initialization.
+    *   `'micro_quiet'`: Normal(0, 1e-6). Near-zero initialization.
     *   `'sparse'`: 90% sparse with std=0.02.
-    *   `'zero'`, `'one'`, `'classic'`: Special cases.
-*   `activation` (str or list[str]): Activation function used in the model (`'tanh'`, `'relu'`, `'leaky_relu'`, `'sigmoid'`, `'gelu'`, `'gelu_tanh'`, `'silu'`, `'none'`, `'identity'`). Can be a single string for the core path, or a list with 1 to 4 entries. Logical order is `[encoder_decoder, core, memory, gate_hint]`; missing entries are filled from defaults. Default is `['none', 'tanh', 'tanh', 'none']`. The 4th entry is reserved for config symmetry and does not drive gate behavior.
+    *   `'zero'`, `'one'`, `'classic'`: Special initialization cases.
+*   `activation` (str or list[str]): Activation function. Default is `['none', 'tanh', 'tanh', 'none']` for [encoder_decoder, core, memory, gate_hint]. The 4th entry is reserved for config symmetry and doesn't affect gate behavior. Supported activations: `'tanh'`, `'relu'`, `'leaky_relu'`, `'sigmoid'`, `'gelu'`, `'gelu_tanh'`, `'silu'`, `'none'`, `'identity'`. Single string applies to core path; list format allows per-component control with 1-4 entries (missing entries filled from defaults).
 *   `vocab_size` (int or list/tuple, optional): Size of the input/output vocabulary. 
     *   **Symmetric**: `vocab_size=50257` (GPT-2 style).
     *   **Asymmetric**: `vocab_size=[v_in, v_out]` (e.g., `[784, 10]` for MNIST to map 784 pixels to 10 classes).
     *   **Disable**: Use `-1` to disable one side (e.g., `[-1, 1000]` for direct neuron input but decoded output).
-*   `vocab_mode` (str):
-    *   `'hybrid'` (Default): Init both Embedding (for Int inputs) and Linear Projection (for Float inputs).
-    *   `'discrete'`: Init only Embedding (Saves VRAM if only tokens are used).
-    *   `'continuous'`: Init only Projection (Saves VRAM if only float vectors are used).
+*   `vocab_mode` (str): Controls which input encoding layers are initialized (default: `'hybrid'`).
+    *   `'hybrid'`: Initializes both Embedding (for integer/token inputs) and Linear Projection (for float inputs). Use when input type varies.
+    *   `'discrete'`: Initializes only Embedding layer. Use for token-only inputs (e.g., NLP tasks). Saves VRAM.
+    *   `'continuous'`: Initializes only Linear Projection. Use for float-only inputs (e.g., vision, audio). Saves VRAM.
 *   `tie_embeddings` (bool): 
     *   If `True`, ties the input embedding weights to the output decoder weights, saving significant VRAM and parameter count (Symmetric `vocab_size` only). Default is `False`.
-*   `gate` (None, str, or list[str]): Optional parametric gating. Default is `None`, which resolves to `['none', 'none', 'identity']`.
-    *   `None`: Uses default branch layout (encoder/decoder off, core off, memory identity gate on).
-    *   `str` (e.g. `'sigmoid'`): Applies the same gate activation to all gate branches.
-    *   `list[str]`: Up to 3 entries in `[encoder_decoder, core, memory]` order; missing entries are filled from defaults.
-    *   `'none'`: Disables the corresponding gate branch.
-    *   `'identity'`: Explicit identity gate branch (learnable parameter still exists, unlike `'none'`).
-    *   Gate parameters are initialized with the 4th `weight_init` entry.
+*   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
+    *   `None`: Default configuration with memory identity gate enabled, others disabled.
+    *   `str` (e.g., `'sigmoid'`): Applies the same gate activation to all three branches `[encoder_decoder, core, memory]`.
+    *   `list[str]`: Specify individual gate activations for up to 3 branches in `[encoder_decoder, core, memory]` order. Missing entries use defaults.
+    *   `'none'`: Completely disables the gate branch (no learnable parameters).
+    *   `'identity'`: Enables identity gating with learnable parameters (starts at identity function but can adapt).
+    *   Gate parameters are initialized using the 4th entry in `weight_init` (default: `'zero'`).
 
 ### Vocabulary Decoupling
 
@@ -470,11 +470,19 @@ Maps raw input features (numpy or tensor) to the full network state tensor.
 *   **Auto-Device:** Automatically moves data to the model's device.
 
 ```python
+from odyssnet.utils.data import prepare_input
+
 x_in, batch_size = prepare_input(X_train, model.input_ids, model.num_neurons, 'cuda')
 ```
 
 #### `to_tensor(data, device)`
 Safely converts any list/array/int/float into a PyTorch tensor on the target device.
+
+```python
+from odyssnet.utils.data import to_tensor
+
+data_tensor = to_tensor(data, 'cuda')
+```
 
 ### 2. Neurogenesis (`odyssnet.utils.neurogenesis`)
 See **Neurogenesis** section above.
