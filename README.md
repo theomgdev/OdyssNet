@@ -24,6 +24,7 @@ RealNet achieves its efficiency through **Space-Time Trade-off**. Instead of add
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
 *   **Trainable Chaos:** Uses **StepNorm** and **GELU** to tame chaotic signals.
+*   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
 ## 📊 The Evidence: Zero-Hidden Benchmarks
@@ -42,6 +43,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective.py` |
+| **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **3.5x Faster** | `convergence_skill_transfer.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -446,6 +448,24 @@ RealNet's vision capabilities were tested under four distinct conditions to prov
 *   **Script:** `PoC/experiments/convergence_realnet_as_database.py`
 *   **Insight:** Proves that RealNet can simulate **Key-Value Attention** mechanisms purely through dynamics, creating stable "memory wells" that can be addressed by a query signal and effectively performing the job of a Transformer's KV Cache without explicit storage matrices.
 
+### L. Skill Transfer (Add -> Multiply Transplant)
+*   **Target:** Teach a small RealNet to add two delayed pulses, transplant learned weights into a larger RealNet, then train both transplanted and scratch models on multiplication.
+*   **Challenge:** Verify whether learned temporal arithmetic priors can accelerate learning of a structurally related but harder task.
+*   **Result:** **Clear transfer win** in a controlled head-to-head run.
+    <details>
+    <summary>See Transfer vs Scratch Log</summary>
+
+    ```text
+    Transplant copied: 676/9604 (7.0%)
+    First epoch loss <= 0.020: transplanted=38 | scratch=135
+    MULTIPLY avg loss: transplanted=0.021606 | scratch=0.056580
+    MULTIPLY final loss: transplanted=0.000118 | scratch=0.007560
+    Test MAE: transplanted=0.009329 | scratch=0.094381
+    ```
+    </details>
+*   **Script:** `PoC/experiments/convergence_skill_transfer.py`
+*   **Insight:** RealNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
+
 ## 🔮 Vision: The Soul of Silicon (RealNet-1B)
 RealNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.
 
@@ -453,6 +473,7 @@ If we can solve vision with Zero Hidden Layers by trading Space for Time, this a
 
 *   **Hypothesis:** A 1B parameter model (RealNet-1B) could theoretically match the reasoning depth of much larger models (e.g., Llama-70B) by "thinking" for more steps.
 *   **Goal:** Efficient, high-reasoning AI on consumer hardware (e.g., RTX 3060).
+*   **New Evidence:** The Add -> Multiply transplant experiment shows reusable skills can survive scale changes and speed up new task acquisition, opening a realistic AGI pathway.
 
 > "We don't need petabytes of VRAM. We just need Time."
 

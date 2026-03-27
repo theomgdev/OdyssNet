@@ -24,6 +24,7 @@ RealNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **GELU** kullanır.
+*   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
 ## 📊 Kanıt: Sıfır-Gizli Kıyaslamalar
@@ -42,6 +43,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **Mandal** | LSTM Gerekir | **Çekici Havzası** (İrade) | **Sonsuz Tutma** | `convergence_latch.py` |
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
 | **Dedektif**| Bellek Gerekir | **Bilişsel Sessizlik** (Akıl Yürütme) | **Mükemmel Tespit**| `convergence_detective.py` |
+| **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.5x Daha Hızlı** | `convergence_skill_transfer.py` |
 
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
@@ -445,6 +447,24 @@ RealNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği k
 *   **Script:** `PoC/experiments/convergence_realnet_as_database.py`
 *   **Çıkarım:** RealNet'in, açık depolama matrisleri olmadan Transformer'ın KV Önbelleğinin işini yaparak bir sorgu sinyali tarafından adreslenebilen kararlı "bellek kuyuları" oluşturarak **Anahtar-Değer Dikkat** mekanizmalarını yalnızca dinamikler aracılığıyla simüle edebildiğini kanıtlar.
 
+### L. Beceri Transferi (Toplama -> Çarpma Transplantı)
+*   **Hedef:** Küçük bir RealNet'e gecikmeli iki darbenin toplamını öğretmek, öğrenilen ağırlıkları daha büyük bir RealNet'e transplant etmek ve çarpma görevinde transplanted ağ ile scratch ağı karşılaştırmak.
+*   **Meydan Okuma:** Zamansal aritmetik bilgisinin daha zor ama ilişkili bir göreve öğrenme hızlandırıcı olarak taşınıp taşınmadığını test etmek.
+*   **Sonuç:** Kontrollü başa baş koşuda **net transfer üstünlüğü**.
+    <details>
+    <summary>Transfer vs Scratch Günlüğünü Gör</summary>
+
+    ```text
+    Transplant copied: 676/9604 (%7.0)
+    loss <= 0.020 eşiğine iniş: transplanted=38 | scratch=135
+    MULTIPLY ortalama loss: transplanted=0.021606 | scratch=0.056580
+    MULTIPLY final loss: transplanted=0.000118 | scratch=0.007560
+    Test MAE: transplanted=0.009329 | scratch=0.094381
+    ```
+    </details>
+*   **Script:** `PoC/experiments/convergence_skill_transfer.py`
+*   **Çıkarım:** RealNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
+
 ## 🔮 Vizyon: Silikonun Ruhu (RealNet-1B)
 RealNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.
 
@@ -452,6 +472,7 @@ Uzayı Zamanla takas ederek sıfır gizli katmanla görmeyi çözebilirsek, bu y
 
 *   **Hipotez:** 1 milyar parametreli bir model (RealNet-1B), daha fazla adım "düşünerek" teorik olarak çok daha büyük modellerin (örn. Llama-70B) akıl yürütme derinliğiyle eşleşebilir.
 *   **Hedef:** Tüketici donanımında (örn. RTX 3060) verimli, yüksek-akıl yürütmeli yapay zeka.
+*   **Yeni Kanıt:** Toplama -> Çarpma transplant deneyinde becerinin ölçek değişimine rağmen korunması ve yeni görevi hızlandırması, AGI yolunun gerçekçi olduğuna dair güçlü bir sinyal veriyor.
 
 > "Petabaytlarca VRAM'e ihtiyacımız yok. Sadece Zamana ihtiyacımız var."
 
