@@ -30,7 +30,6 @@ def generate_two_pulse_batch(batch_size, seq_len, delay_a, delay_b, task, device
 
     return inputs, target
 
-
 def train_single_task(trainer, task, epochs, batch_size, seq_len, delay_a, delay_b, log_every=100):
     losses = []
     for epoch in range(epochs):
@@ -42,7 +41,6 @@ def train_single_task(trainer, task, epochs, batch_size, seq_len, delay_a, delay
             print(f"[{task}] Epoch {epoch:4d} | loss={loss:.6f}")
 
     return losses
-
 
 def train_dual_multiplication(trainer_a, trainer_b, epochs, batch_size, seq_len, delay_a, delay_b, log_every=50):
     losses_a = []
@@ -64,13 +62,11 @@ def train_dual_multiplication(trainer_a, trainer_b, epochs, batch_size, seq_len,
 
     return losses_a, losses_b
 
-
 def first_epoch_below(losses, threshold):
     for i, value in enumerate(losses):
         if value <= threshold:
             return i
     return -1
-
 
 def evaluate_examples(trainer, seq_len, delay_a, delay_b, pairs):
     x = torch.zeros(len(pairs), seq_len, 1, device=trainer.device)
@@ -86,7 +82,6 @@ def evaluate_examples(trainer, seq_len, delay_a, delay_b, pairs):
 
     mae = torch.mean(torch.abs(pred - y)).item()
     return pred[:, 0].detach().cpu().numpy().tolist(), y[:, 0].detach().cpu().numpy().tolist(), mae
-
 
 def main():
     print("OdyssNet Experiment: Skill Transfer (Add -> Multiply)")
@@ -225,7 +220,6 @@ def main():
         print("Transplanted model converged faster/better than scratch on multiplication.")
     else:
         print("No clear transfer win in this run. Try multi-seed for robust conclusion.")
-
 
 if __name__ == "__main__":
     main()
