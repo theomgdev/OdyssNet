@@ -411,7 +411,6 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_stopwatch.py`
 *   **Insight:** Demonstrates **Rhythm & Time Perception**. OdyssNet doesn't just process data; it *experiences* time.
 
-
 ### J. The Thinking Detective (Context & Reasoning)
 *   **Target:** Watch a stream of binary data. Fire alarm **ONLY** when `1-1` pattern occurs.
 *   **Crucial Twist:** We gave the network 3 steps of "Silence" between bits to **Think**.
@@ -422,8 +421,8 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```text
     Time  | Input | Output   | Status
     ----------------------------------------
-    8     | 0     | 0.0256 🚨 |
-    12    | 1     | -0.9988  |
+    8     | 0     | 0.0256    |
+    12    | 1     | -0.9988   |
     16    | 1     | 0.0307 🚨 | SHOULD FIRE
     17    | .     | 0.9866 🚨 | (Thinking...)
     18    | .     | 0.9892 🚨 | (Thinking...)

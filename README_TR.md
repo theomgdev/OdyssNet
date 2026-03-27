@@ -421,8 +421,8 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```text
     Zaman  | Giriş | Çıkış    | Durum
     ----------------------------------------
-    8      | 0     | 0.0256 🚨 |
-    12     | 1     | -0.9988  |
+    8      | 0     | 0.0256    |
+    12     | 1     | -0.9988   |
     16     | 1     | 0.0307 🚨 | ATEŞLEMELİ
     17     | .     | 0.9866 🚨 | (Düşünüyor...)
     18     | .     | 0.9892 🚨 | (Düşünüyor...)
