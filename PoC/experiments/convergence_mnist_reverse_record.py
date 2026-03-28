@@ -207,9 +207,11 @@ def main():
                 # target: (B,) digit labels (0-9)
                 batch_size = data.size(0)
                 
-                # Reshape image into 16 patches of 49 pixels each (7×7 tiles)
-                # This matches the 16 supervised output-step structure
-                target_images = data.view(batch_size, 16, 49).to(DEVICE, non_blocking=True)
+                # Reshape image into 16 spatial patches of 49 pixels each (non-overlapping 7×7 tiles)
+                # This matches the 16 supervised output-step structure (4×4 grid of 7×7 tiles)
+                patches = data.unfold(2, 7, 7).unfold(3, 7, 7)  # (B, 1, 4, 4, 7, 7)
+                patches = patches.contiguous().view(batch_size, 1, 16, 49)  # (B, 1, 16, 49)
+                target_images = patches.squeeze(1).to(DEVICE, non_blocking=True)  # (B, 16, 49)
                 
                 # Encode digit label as scalar (0.0 to 0.9) for input neurons
                 digit_inputs = target.view(batch_size, 1, 1).float().to(DEVICE, non_blocking=True) / 10.0
