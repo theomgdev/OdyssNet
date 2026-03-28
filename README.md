@@ -47,6 +47,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 97.5%** | `convergence_mnist.py` |
 | **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 94.38%** | `convergence_mnist_embed.py` |
 | **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 90.14%** | `convergence_mnist_record.py` |
+| **MNIST Reverse (Generation)** | Needs Decoder | **The 484-Param Generator** | **93.83% Compression** | `convergence_mnist_reverse_record.py` |
 | **Sine Wave** | Needs Oscillator | **Programmable VCO** | **Perfect Sync** | `convergence_sine_wave.py` |
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
@@ -327,7 +328,27 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_mnist_record.py`
 *   **Insight:** Achieves **0.188% accuracy per parameter** (90.14% / 480 params). This model is **110x more efficient than LeNet-5**. It demonstrates that high-level intelligence can be compressed into a microscopic parametric space by leveraging temporal thinking steps. It is the closest thing to **Entropic Compression Limits** in modern AI.
 
-### F. The Sine Wave Generator (Dynamic Resonance)
+### F. The Inverse Generator (484-Param Image Synthesis)
+*   **Target:** REVERSE the MNIST task—generate 28×28 images from digit labels (0-9).
+*   **Direction:** Digit (Scalar) → Image (784 Pixels).
+*   **The Setup:**
+    *   **Architecture:** OdyssNet with 12 neurons (2 input, 6 output, 4 hidden).
+    *   **Strategy:** 5 warmup steps + 16 output steps = 21 total thinking steps.
+    *   **Patches:** 16 patches (7×7 each) tiled into a 28×28 grid.
+    *   **Total Parameters:** **484**.
+    *   **Compression:** 10×784 = 7,840 values vs. 484 parameters = **≈93.83% Neural Compression** (parameters are ≈6.17% of the baseline).
+*   **Result:** Perfect visual reconstruction of all MNIST digits during training.
+    <details>
+    <summary>See Generated Images (Training Progression)</summary>
+
+    ![MNIST Reverse Generation](PoC/experiments/convergence_mnist_reverse_record_summary.png)
+
+    The network successfully learned to map each scalar input (0.0, 0.1, ..., 0.9) to its corresponding digit's visual pattern. Output shows all 10 digits cleanly reconstructed from the learned dynamics.
+    </details>
+*   **Script:** `PoC/experiments/convergence_mnist_reverse_record.py`
+*   **Insight:** Proves that OdyssNet can solve **bidirectional mappings**. This 484-parameter generator, paired with the separate 480-parameter classifier architecture, shows that OdyssNet can handle both classification and generation—combining pattern storage with sequential synthesis. This demonstrates that temporal dynamics can encode complete visual patterns in microscopic parameter space. Together, the 480-parameter classifier and 484-parameter generator form a **complete bidirectional MNIST model with ~1KB of parameters total**—a gateway to ultra-efficient neural computing.
+
+### G. The Sine Wave Generator (Dynamic Resonance)
 *   **Target:** Generate a sine wave where the frequency is controlled by a single input value at $t=0$.
 *   **Challenge:** The network must act as a **Voltage Controlled Oscillator (VCO)**. It must transform a static magnitude into a dynamic temporal period.
 *   **Result:** **Perfect Oscillation**. The network generates smooth sine waves for 30+ steps.
@@ -351,7 +372,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_sine_wave.py`
 *   **Insight:** OdyssNet is a **Programmable Oscillator**. This confirms it can generate infinite unique temporal trajectories from a single seed.
 
-### G. The Delayed Adder (Memory & Logic)
+### H. The Delayed Adder (Memory & Logic)
 *   **Target:** Input A ($t=2$), Input B ($t=8$). Output A+B ($t=14$).
 *   **Challenge:** OdyssNet must "remember" A for 6 steps, ignore the silence, receive B, and compute the sum.
 *   **Result:** **MSE Loss: ~0.01**.
@@ -368,7 +389,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_adder.py`
 *   **Insight:** Validates **Short-Term Memory**. The network holds variable $A$ in its chaotic state, waits for $B$, and performs non-linear integration (approximate arithmetic) to output the sum. This demonstrates OdyssNet's ability to process **Video-like** data streams. Similar to "Mental Math".
 
-### H. The Latch (Willpower)
+### I. The Latch (Willpower)
 *   **Target:** Wait for a trigger pulse. Once received, switch output to ON and **hold it forever**.
 *   **Challenge:** Standard RNNs fade to zero. OdyssNet must trap the energy in a stable attractor.
 *   **Result:** **Perfect Stability**. Once triggered, the decision is maintained indefinitely.
@@ -387,7 +408,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_latch.py`
 *   **Insight:** Demonstrates **Decision Maintaining**. OdyssNet can make a choice and stick to it, resisting decay.
 
-### I. The Stopwatch (Internal Clock)
+### J. The Stopwatch (Internal Clock)
 *   **Target:** "Wait for X steps, then fire." (No input during waiting).
 *   **Challenge:** The network must count time internally without any external clock.
 *   **Result:** **MSE Loss: ~0.01**. Precision timing achieved.
@@ -411,7 +432,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_stopwatch.py`
 *   **Insight:** Demonstrates **Rhythm & Time Perception**. OdyssNet doesn't just process data; it *experiences* time.
 
-### J. The Thinking Detective (Context & Reasoning)
+### K. The Thinking Detective (Context & Reasoning)
 *   **Target:** Watch a stream of binary data. Fire alarm **ONLY** when `1-1` pattern occurs.
 *   **Crucial Twist:** We gave the network 3 steps of "Silence" between bits to **Think**.
 *   **Result:** **Perfect Detection**.
@@ -432,7 +453,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_detective_thinking.py`
 *   **Insight:** Proves that **Intelligence requires Time**. When allowed to "digest" information during silent steps, OdyssNet solves complex temporal logic (XOR over Time) that purely reactive networks cannot. This is the foundation for our LLM approach.
 
-### K. Skill Transfer (Add -> Multiply Transplant)
+### L. Skill Transfer (Add -> Multiply Transplant)
 *   **Target:** Teach a small OdyssNet to add two delayed pulses, transplant learned weights into a larger OdyssNet, then train both transplanted and scratch models on multiplication.
 *   **Challenge:** Verify whether learned temporal arithmetic priors can accelerate learning of a structurally related but harder task.
 *   **Result:** **Clear transfer win** in a controlled head-to-head run.
