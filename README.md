@@ -341,7 +341,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <details>
     <summary>See Generated Images (Training Progression)</summary>
 
-    ![MNIST Reverse Generation](PoC/experiments/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Reverse Generation](PoC/experiments/img/convergence_mnist_reverse_record_summary.png)
 
     The network successfully learned to map each scalar input (0.0, 0.1, ..., 0.9) to its corresponding digit's visual pattern. Output shows all 10 digits cleanly reconstructed from the learned dynamics.
     </details>
