@@ -47,7 +47,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %97.5** | `convergence_mnist.py` |
 | **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %94.38** | `convergence_mnist_embed.py` |
 | **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %90.14** | `convergence_mnist_record.py` |
-| **MNIST Ters (Üretim)** | Dekoder Gerekir | **484-Param Üreteç** | **%98.83 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
+| **MNIST Ters (Üretim)** | Dekoder Gerekir | **484-Param Üreteç** | **%93.83 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
 | **Sinüs Dalgası** | Osilatör Gerekir | **Programlanabilir VCO** | **Mükemmel Senkron** | `convergence_sine_wave.py` |
 | **Mandal** | LSTM Gerekir | **Çekici Havzası** (İrade) | **Sonsuz Tutma** | `convergence_latch.py` |
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
