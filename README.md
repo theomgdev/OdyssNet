@@ -336,7 +336,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     *   **Strategy:** 5 warmup steps + 16 output steps = 21 total thinking steps.
     *   **Patches:** 16 patches (7×7 each) tiled into a 28×28 grid.
     *   **Total Parameters:** **484**.
-    *   **Compression:** 10×784 = 7,840 values vs. 484 parameters = **98.83% Neural Compression**.
+    *   **Compression:** 10×784 = 7,840 values vs. 484 parameters = **≈93.83% Neural Compression** (parameters are ≈6.17% of the baseline).
 *   **Result:** Perfect visual reconstruction of all MNIST digits during training.
     <details>
     <summary>See Generated Images (Training Progression)</summary>
