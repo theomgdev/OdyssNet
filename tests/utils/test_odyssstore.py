@@ -89,6 +89,30 @@ class TestSaveCheckpoint:
         save_checkpoint(model, opt, epoch=1, loss=0.0, path=deep_path)
         assert os.path.exists(deep_path)
 
+    def test_trainer_state_saved_and_restored(self, tmp_path):
+        # convergence_skill_transfer.py passes trainer_state=trainer.state_dict()
+        # to save_checkpoint, then load_checkpoint restores it via trainer=.
+        os.environ["NO_BNB"] = "1"
+        from odyssnet import OdyssNetTrainer
+
+        model = _model()
+        opt = _optimizer(model)
+        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+
+        # Run a few steps so there is non-trivial trainer state
+        x = torch.randn(4, 4)
+        y = torch.randn(4, 1)
+        for _ in range(3):
+            trainer.train_batch(x, y, thinking_steps=2)
+
+        path = str(tmp_path / "trainer_ckpt.pt")
+        save_checkpoint(model, opt, epoch=3, loss=0.5, path=path,
+                        trainer_state=trainer.state_dict())
+
+        ckpt = torch.load(path, map_location="cpu")
+        assert "trainer_state_dict" in ckpt
+        assert ckpt["trainer_state_dict"]["step_count"] == trainer._step_count
+
 
 # ===========================================================================
 # load_checkpoint
@@ -157,6 +181,33 @@ class TestLoadCheckpoint:
         model_plain = _model(n=4)
         opt2 = _optimizer(model_plain)
         load_checkpoint(model_plain, opt2, path, strict=False)
+
+    def test_load_checkpoint_restores_trainer_state(self, tmp_path):
+        # experiment_llm.py passes trainer= to load_checkpoint so that the
+        # trainer's step_count, scheduler state etc. are fully restored.
+        os.environ["NO_BNB"] = "1"
+        from odyssnet import OdyssNetTrainer
+
+        model = _model()
+        opt = _optimizer(model)
+        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+
+        x = torch.randn(4, 4)
+        y = torch.randn(4, 1)
+        for _ in range(4):
+            trainer.train_batch(x, y, thinking_steps=2)
+
+        path = str(tmp_path / "full_ckpt.pt")
+        save_checkpoint(model, opt, epoch=4, loss=0.1, path=path,
+                        trainer_state=trainer.state_dict())
+
+        # Restore into fresh objects
+        model2 = _model()
+        opt2 = _optimizer(model2)
+        trainer2 = OdyssNetTrainer(model2, device="cpu", lr=1e-3)
+        load_checkpoint(model2, opt2, path, trainer=trainer2)
+
+        assert trainer2._step_count == trainer._step_count
 
 
 # ===========================================================================

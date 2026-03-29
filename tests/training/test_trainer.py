@@ -186,6 +186,67 @@ class TestTrainBatch:
         assert isinstance(loss, float)
         assert state.shape == (4, model.num_neurons)
 
+    def test_tbptt_chained_initial_state(self):
+        # experiment_llm.py: return_state=True feeds the final state back as
+        # initial_state for the next chunk (Truncated BPTT).
+        model = _model()
+        t = _trainer(model)
+        x = _batch()
+        y = _targets()
+
+        loss1, state1 = t.train_batch(x, y, thinking_steps=2, return_state=True)
+        state1 = state1.detach()
+
+        # Second chunk starts from where the first chunk ended
+        loss2, state2 = t.train_batch(
+            x, y, thinking_steps=2, initial_state=state1, return_state=True
+        )
+        assert isinstance(loss2, float)
+        assert state2.shape == (4, model.num_neurons)
+
+    def test_output_transform_applied(self):
+        # convergence_mnist_reverse_record.py uses output_transform to slice warmup
+        # steps out of the full sequence before computing loss.
+        model = _model()
+        t = _trainer(model)
+        x = _batch()
+        # full_sequence target has 5 steps, but we only supervise the last 3
+        y = torch.randn(4, 3, 2)
+
+        transform_called = {"flag": False}
+
+        def transform(pred):
+            transform_called["flag"] = True
+            # pred shape: (batch, steps=5, n_outputs=2) → slice last 3
+            return pred[:, 2:, :]
+
+        loss = t.train_batch(x, y, thinking_steps=5, full_sequence=True,
+                             output_transform=transform)
+        assert isinstance(loss, float)
+        assert transform_called["flag"], "output_transform was not called"
+
+    def test_sequential_3d_input_full_sequence(self):
+        # convergence_adder / detective / latch / stopwatch pattern:
+        # 3D (batch, seq_len, features) input with full_sequence=True.
+        model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7], device="cpu")
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        x = torch.randn(4, 6, 8)      # (batch, 6 steps, 8 neurons)
+        y = torch.randn(4, 6, 1)      # (batch, 6 steps, 1 output)
+        loss = t.train_batch(x, y, thinking_steps=6, full_sequence=True)
+        assert isinstance(loss, float)
+
+    def test_non_pulse_2d_input_full_sequence(self):
+        # convergence_sine_wave.py: pulse_mode=False, 2D input, full_sequence=True.
+        model = OdyssNet(
+            num_neurons=8, input_ids=[0], output_ids=[7],
+            device="cpu", pulse_mode=False,
+        )
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        x = torch.randn(4, 8)          # (batch, neurons) — single scalar per sample
+        y = torch.randn(4, 10, 1)      # (batch, steps, output)
+        loss = t.train_batch(x, y, thinking_steps=10, full_sequence=True)
+        assert isinstance(loss, float)
+
 
 # ===========================================================================
 # predict

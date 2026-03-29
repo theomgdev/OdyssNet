@@ -91,6 +91,7 @@ class TestInitialisation:
 INIT_STRATEGIES = [
     "quiet",
     "micro_quiet",
+    "micro_quiet_8bit",   # used by mnist_record, mnist_reverse_record
     "classic",
     "xavier_uniform",
     "orthogonal",
@@ -152,6 +153,16 @@ class TestActivations:
         model = _make(4, activation=["none", "tanh", "tanh", "none"])
         assert isinstance(model.act, nn.Tanh)
         assert isinstance(model.enc_dec_act, nn.Identity)
+
+    def test_three_element_activation_list(self):
+        # Used by convergence_mnist_reverse_record.py
+        model = _make(4, activation=["tanh", "tanh", "tanh"])
+        assert isinstance(model.enc_dec_act, nn.Tanh)
+        assert isinstance(model.act, nn.Tanh)
+        assert isinstance(model.mem_act, nn.Tanh)
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        assert torch.isfinite(out).all()
 
 
 # ===========================================================================
@@ -257,6 +268,40 @@ class TestForward:
         assert model.W.grad is not None
         assert model.B.grad is not None
 
+    def test_non_pulse_2d_input_vco_pattern(self):
+        # convergence_sine_wave.py: pulse_mode=False with a 2D (batch, neurons) input.
+        # The input is held constant across all steps (continuous VCO mode).
+        model = _make(4, pulse_mode=False)
+        x = torch.randn(2, 4)
+        out, h = model(x, steps=5)
+        assert out.shape == (2, 5, 4)
+        assert h.shape == (2, 4)
+
+    def test_non_pulse_2d_all_steps_see_input(self):
+        # In non-pulse 2D mode the cached input is injected every step,
+        # so the output should differ from a zero-input run.
+        model = _make(4, pulse_mode=False)
+        x_nonzero = torch.ones(1, 4) * 5.0
+        x_zero = torch.zeros(1, 4)
+        model.reset_state(1)
+        out_signal, _ = model(x_nonzero, steps=3)
+        model.reset_state(1)
+        out_zero, _ = model(x_zero, steps=3)
+        assert not torch.allclose(out_signal, out_zero)
+
+    def test_gradient_checkpointing_forward(self):
+        # Used by experiment_llm.py; must produce finite outputs and allow backward.
+        model = OdyssNet(
+            num_neurons=4, input_ids=[0], output_ids=[3],
+            device="cpu", gradient_checkpointing=True,
+        )
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        assert torch.isfinite(out).all()
+        out.sum().backward()
+        assert model.W.grad is not None
+
 
 # ===========================================================================
 # Vocab / Projection Mode
@@ -300,6 +345,65 @@ class TestVocabMode:
         )
         assert model.proj is not None
         assert model.embed is not None
+
+    def test_vocab_continuous_sequential_chunked_input(self):
+        # convergence_mnist_record.py: continuous vocab with sequential 3D input
+        # Input shape (batch, num_chunks, chunk_size) -> projected per chunk.
+        model = OdyssNet(
+            num_neurons=10,
+            input_ids=list(range(3)),
+            output_ids=list(range(3, 10)),
+            device="cpu",
+            vocab_size=[79, 10],
+            vocab_mode="continuous",
+        )
+        x = torch.randn(4, 10, 79)   # (batch, 10 chunks, 79 pixels each)
+        out, h = model(x, steps=10)
+        assert out.shape == (4, 10, 10)
+
+    def test_vocab_continuous_scalar_input_generation(self):
+        # convergence_mnist_reverse_record.py: single scalar input, multi-step output
+        model = OdyssNet(
+            num_neurons=12,
+            input_ids=[0, 1],
+            output_ids=list(range(2, 8)),
+            device="cpu",
+            vocab_size=[1, 49],
+            vocab_mode="continuous",
+            activation=["tanh", "tanh", "tanh"],
+            weight_init="micro_quiet_8bit",
+        )
+        x = torch.randn(4, 1, 1)   # (batch, 1 step, 1 feature)
+        out, h = model(x, steps=21)
+        assert out.shape == (4, 21, 49)
+
+    def test_vocab_discrete_tie_embeddings(self):
+        # experiment_llm.py: tie_embeddings=True shares embed <-> output_decoder weights.
+        model = OdyssNet(
+            num_neurons=8,
+            input_ids=list(range(4)),
+            output_ids=list(range(4, 8)),
+            device="cpu",
+            vocab_size=16,
+            vocab_mode="discrete",
+            tie_embeddings=True,
+        )
+        # Tied: embed.weight and output_decoder.weight are the same tensor
+        assert model.embed.weight is model.output_decoder.weight
+
+    def test_vocab_discrete_sequential_token_input(self):
+        # experiment_llm.py: integer token indices as (batch, seq_len) input.
+        model = OdyssNet(
+            num_neurons=8,
+            input_ids=list(range(4)),
+            output_ids=list(range(4, 8)),
+            device="cpu",
+            vocab_size=32,
+            vocab_mode="discrete",
+        )
+        x = torch.randint(0, 32, (2, 6))   # (batch, seq_len) token ids
+        out, h = model(x, steps=6)
+        assert out.shape == (2, 6, 32)
 
 
 # ===========================================================================
