@@ -13,11 +13,11 @@ Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of 
 
 OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of adding thousands of new neurons (Space) to build depth, it executes existing neurons for more steps (Time). A single physical matrix is reused across temporal steps, folding tens of layers worth of computation into a microscopic parametric footprint. This proves that intelligence is a dynamic process, not a static structure.
 
-> 🏆 **WORLD RECORD: Parametric Intelligence Density**
+> **WORLD RECORD: Parametric Intelligence Density**
 >
 > OdyssNet 2.0 achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
 
-## TLDR
+## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
@@ -27,7 +27,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
@@ -35,7 +35,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
-## 📊 The Evidence: Zero-Hidden Benchmarks
+## The Evidence: Zero-Hidden Benchmarks
 
 We pushed OdyssNet to the theoretical limit: **Zero Hidden Neurons**.
 In these tests, the Input Layer is directly connected to the Output Layer (and itself). There are no buffer layers.
@@ -67,7 +67,7 @@ The input layer "talks to itself" for 10 steps. The chaotic feedback loops extra
 
 ---
 
-## 📦 Installation & Usage
+## Installation & Usage
 
 OdyssNet is designed as a modular PyTorch library.
 
@@ -120,9 +120,9 @@ trainer.fit(inputs, inputs, epochs=50)
 
 ---
 
-## 🧠 Architecture Overview
+## Architecture Overview
 
-## 🌪️ How It Works: Inside the Storm
+### How It Works: Inside the Storm
 
 OdyssNet is not a feed-forward mechanism; it is a **Resonant Chamber**.
 
@@ -188,7 +188,7 @@ $$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
 
 ---
 
-## 📝 Experimental Findings
+## Experimental Findings
 
 We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal Depth > Spatial Depth.**
 
@@ -475,7 +475,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `PoC/experiments/convergence_skill_transfer.py`
 *   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
 
-## 🔮 Vision: The Soul of Silicon (OdyssNet-1B)
+## Vision: The Path to OdyssNet-1B
 OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.
 
 If we can solve vision with Zero Hidden Layers by trading Space for Time, this approach could scale to language models.
@@ -490,7 +490,7 @@ We have proven that a chaotic forest of neurons, given enough time to "think" an
 
 ---
 
-## 👨‍💻 Author
+## Author
 
 **Cahit Karahan**
 *   Born: 12/02/1997, Ankara.

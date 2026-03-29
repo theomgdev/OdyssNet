@@ -80,23 +80,23 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
                     param_group['lr'] = lr
                     if 'initial_lr' in param_group:
                          param_group['initial_lr'] = lr
-                print(f"⚡ Optimizer LR overwritten to: {lr}")
+                print(f"Optimizer LR overwritten to: {lr}")
                 
         except Exception as e:
-            print(f"⚠️ Could not load optimizer state: {e}. Optimizer will start fresh.")
+            print(f"WARNING: Could not load optimizer state: {e}. Optimizer will start fresh.")
 
     if trainer is not None and 'trainer_state_dict' in checkpoint:
         try:
             trainer.load_state_dict(checkpoint['trainer_state_dict'])
         except Exception as e:
-            print(f"⚠️ Could not load trainer state: {e}. Runtime trainer state will start fresh.")
+            print(f"WARNING: Could not load trainer state: {e}. Runtime trainer state will start fresh.")
     
     return checkpoint
 
 
 def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_new='micro_quiet_8bit'):
     """
-    🧬 Weight Transplantation: Transfer learned weights from a checkpoint to a model,
+    Weight Transplantation: Transfer learned weights from a checkpoint to a model,
     even if the architectures (num_neurons) don't match.
     
     This is useful for:
@@ -194,7 +194,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     model.load_state_dict(target_state)
     
     if verbose:
-        print(f"🧬 Weight Transplantation Complete! (New regions: {init_new})")
+        print(f"Weight Transplantation Complete. (New regions initialized with: {init_new})")
         print(f"   Total Parameters: {stats['total_params']:,}")
         print(f"   Transplanted: {stats['transplanted_params']:,} ({100*stats['transplanted_params']/stats['total_params']:.1f}%)")
         print(f"   New (Initialized): {stats['new_params']:,} ({100*stats['new_params']/stats['total_params']:.1f}%)")

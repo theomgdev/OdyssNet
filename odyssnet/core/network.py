@@ -18,7 +18,7 @@ class OdyssNet(nn.Module):
                  
                  difference = num_neurons - len(unique_ids)
                  if difference > 0:
-                      print(f"ℹ️ OdyssNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
+                      print(f"OdyssNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
              else:
                  num_neurons = 0
         
@@ -63,7 +63,7 @@ class OdyssNet(nn.Module):
                 if self.embed is not None and self.output_decoder is not None:
                     self.output_decoder.weight = self.embed.weight
                 elif self.proj is not None and self.embed is None:
-                    print("⚠️ Auto-Tying Warning: Weight tying is not supported for 'continuous' (Linear) vocab_mode due to transposed dimensions.")
+                    print("WARNING: Weight tying is not supported for 'continuous' (Linear) vocab_mode due to transposed dimensions.")
 
         # Buffers for fast indexing
         self.register_buffer('input_pos', torch.tensor(input_ids, dtype=torch.long, device=device))
@@ -75,8 +75,8 @@ class OdyssNet(nn.Module):
         
         self.pulse_mode = pulse_mode
         self.gradient_checkpointing = gradient_checkpointing
-        self._device = device # Private variable for property
-        self._cached_scaled_input = None  # Initialize cached input attribute
+        self._device = device # Retained for legacy access; use the .device property instead
+        self._cached_scaled_input = None
         
         # Parse configurable component settings
         weight_init = self._normalize_weight_init(weight_init)
@@ -492,14 +492,12 @@ class OdyssNet(nn.Module):
                              # Sparse tuple payload: (Flag, Data)
                              x_step_info = (True, vector)
                          
-                         # Caching for Continuous/Pulse persistence if needed
-                         if self.pulse_mode and t==0:
-                             pass # Done
-                         elif not self.pulse_mode:
-                              self._cached_scaled_input = x_step_info
+                         # Cache input for continuous (non-pulse) persistence across steps
+                         if not self.pulse_mode:
+                             self._cached_scaled_input = x_step_info
 
                      # Handle persistence for continuous mode (non-pulse)
-                     if not self.pulse_mode: 
+                     if not self.pulse_mode:
                           # Re-use cached input if available (for static vocab inputs)
                           if x_step_info is None and hasattr(self, '_cached_scaled_input'):
                                x_step_info = self._cached_scaled_input

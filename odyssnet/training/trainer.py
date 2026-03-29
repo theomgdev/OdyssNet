@@ -296,13 +296,13 @@ class OdyssNetTrainer:
         # If model has vocab_size, we assume input is Token IDs or Raw Vects for Projection.
         # We bypass 'prepare_input' which attempts to map features to specific neurons manually.
         if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-             x_input = to_tensor(input_features, self.device)
-             batch_size = x_input.shape[0]
+            x_input = to_tensor(input_features, self.device)
+            batch_size = x_input.shape[0]
         elif isinstance(input_features, torch.Tensor) and input_features.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-             x_input = input_features.to(self.device)
-             batch_size = x_input.shape[0]
+            x_input = input_features.to(self.device)
+            batch_size = x_input.shape[0]
         else:
-             x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
+            x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
 
         target_values = to_tensor(target_values, self.device)
         if mask is not None:
@@ -329,14 +329,14 @@ class OdyssNetTrainer:
 
             # Extract Outputs & Calculate Loss
             if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                 # Vocab Mode: 'all_states' is decoded output (Logits)
-                 raw_output = all_states
+                # Vocab Mode: 'all_states' is decoded output (Logits)
+                raw_output = all_states
 
-                 if full_sequence:
-                     predicted_outputs = raw_output
-                 else:
-                     # Prediction on last step only: (B, T, Vocab) -> (B, Vocab) at T=-1
-                     predicted_outputs = raw_output[:, -1, :]
+                if full_sequence:
+                    predicted_outputs = raw_output
+                else:
+                    # Prediction on last step only: (B, T, Vocab) -> (B, Vocab) at T=-1
+                    predicted_outputs = raw_output[:, -1, :]
             else:
                 # Continuous Activity Mode: Extract from explicit output neurons
                 output_indices = self.model.output_ids
@@ -381,10 +381,9 @@ class OdyssNetTrainer:
 
             if self.gradient_persistence > 0.0:
                 self._capture_persistent_grads()
-                self.optimizer.zero_grad(set_to_none=True)
             else:
                 self._clear_persistent_grads()
-                self.optimizer.zero_grad(set_to_none=True)
+            self.optimizer.zero_grad(set_to_none=True)
 
             self._acc_counter = 0
             self._step_count += 1
@@ -404,7 +403,7 @@ class OdyssNetTrainer:
 
         # Predictive tracking formulation natively without blocking performance
         current_time = time.time()
-        if not hasattr(self, '_start_time_pred') or self._start_time_pred is None:
+        if self._start_time_pred is None:
             self._start_time_pred = current_time
             self._loss_time_buffer = []
 
@@ -471,7 +470,7 @@ class OdyssNetTrainer:
             all_states, final_state = self.model(x_input, steps=thinking_steps)
 
             if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                # In Vocab Mode, 'all_states' is the decoded output (Logits)
+                # Vocab Mode: 'all_states' is the decoded output (Logits)
                 raw_output = all_states
 
                 if full_sequence:

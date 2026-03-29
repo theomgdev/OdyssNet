@@ -283,7 +283,7 @@ class Neurogenesis:
                 is_bnb = True
         
         if is_bnb:
-               print("   INFO: BNB optimizer detected. Skipping state transfer (cold restart) to avoid quantization issues.")
+            print("   INFO: BNB optimizer detected. Skipping state transfer (cold restart) to avoid quantization issues.")
         else:
             try:
                 transfer_state(old_W_param, model.W, is_matrix=True)

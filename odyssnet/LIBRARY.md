@@ -1,4 +1,4 @@
-# 📘 OdyssNet Library Documentation
+# OdyssNet Library Documentation
 
 OdyssNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural networks using **Temporal Depth**. By treating the neural network as a dynamic system that evolves over time, OdyssNet achieves deep learning capabilities without stacking spatial layers.
 

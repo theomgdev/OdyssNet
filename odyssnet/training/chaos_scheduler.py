@@ -196,7 +196,7 @@ class TemporalScheduler:
         self._best_loss_ema = self._loss_ema if self._loss_ema else float('inf')
         
         if self.verbose:
-            print(f"🔄 TemporalScheduler: Warm Restart #{self._restart_count} at step {self._step} "
+            print(f"TemporalScheduler: Warm Restart #{self._restart_count} at step {self._step} "
                   f"(boost factor: {self._current_max_lr_factor:.3f})")
     
     def manual_restart(self, boost_factor=None):

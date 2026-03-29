@@ -78,7 +78,7 @@ def to_tensor(data, device, dtype=None):
     if dtype is None:
         inferred = torch.as_tensor(data)
         dtype = inferred.dtype
-        # Keep default project behavior for float inputs while preserving integer targets/tokens.
+        # Promote float64 to float32 by default; preserve integer dtypes as-is for index/token inputs.
         if dtype == torch.float64:
             dtype = torch.float32
 
