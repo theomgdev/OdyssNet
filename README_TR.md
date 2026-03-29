@@ -341,7 +341,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <details>
     <summary>Üretilmiş Görselleri Gör (Eğitim İlerleme)</summary>
 
-    ![MNIST Ters Üretim](PoC/experiments/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Ters Üretim](PoC/experiments/img/convergence_mnist_reverse_record_summary.png)
 
     Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamının görsel desenine başarıyla eşlemeyi öğrendi. Çıkış, tüm 10 rakamın öğrenilmiş dinamiklerden temiz bir şekilde rekonstruksiyon ettiğini gösteriyor.
     </details>

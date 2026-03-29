@@ -88,8 +88,7 @@ def main():
     scheduler_config = dict(
         warmup_steps=10 * steps_per_epoch,
         max_steps=NUM_EPOCHS * steps_per_epoch,
-        min_lr_ratio=1e-6 / 1e-2,
-        patience=0
+        min_lr_ratio=1e-6 / 1e-2
     )
     
     trainer = OdyssNetTrainer(
