@@ -302,6 +302,30 @@ class TestForward:
         out.sum().backward()
         assert model.W.grad is not None
 
+    def test_return_sequence_false_shape(self):
+        # return_sequence=False returns only the final step, saving VRAM.
+        model = _make(4)
+        x = torch.randn(2, 4)
+        out_full, h_full = model(x, steps=5, return_sequence=True)
+        model.reset_state(2)
+        out_last, h_last = model(x, steps=5, return_sequence=False)
+        # Full sequence: (B, T, N); last-only: (B, 1, N)
+        assert out_full.shape == (2, 5, 4)
+        assert out_last.shape == (2, 1, 4)
+        # Both runs produce the same final hidden state
+        assert torch.allclose(h_full, h_last, atol=1e-5)
+        # The single output step matches the last step of the full run
+        assert torch.allclose(out_last[:, 0, :], out_full[:, -1, :], atol=1e-5)
+
+    def test_return_sequence_false_gradient_flows(self):
+        # Gradients must flow through W when only the final step is collected.
+        model = _make(4)
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3, return_sequence=False)
+        out.sum().backward()
+        assert model.W.grad is not None
+
 
 # ===========================================================================
 # Vocab / Projection Mode

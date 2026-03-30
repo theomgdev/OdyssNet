@@ -362,7 +362,7 @@ class OdyssNet(nn.Module):
             print("OdyssNet: torch.compile not found. Skipping compilation.")
             return self
 
-    def forward(self, x_input, steps=1, current_state=None):
+    def forward(self, x_input, steps=1, current_state=None, return_sequence=True):
         """
         Runs the dynamic system for `steps` timesteps.
         """
@@ -378,7 +378,7 @@ class OdyssNet(nn.Module):
             current_state = current_state.to(self.device)
 
         h_t = current_state
-        outputs = []
+        outputs = [] if return_sequence else None
         input_pos = cast(torch.Tensor, self.input_pos)
         output_pos = cast(torch.Tensor, self.output_pos)
 
@@ -568,11 +568,16 @@ class OdyssNet(nn.Module):
                 h_t = _single_step(h_t, t, x_step_info)
             
             # Smart Output Collection
-            if (t + 1) % ratio == 0 and len(outputs) < max_outputs:
+            if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:
                 outputs.append(h_t)
 
         # Apply Output Scaling
-        stacked_outputs = torch.stack(outputs, dim=1)
+        if return_sequence:
+            stacked_outputs = torch.stack(outputs, dim=1)
+        else:
+            # Avoid allocating (B, T, N) when only the final state is needed.
+            # .clone() ensures the in-place scaling below does not modify h_t.
+            stacked_outputs = h_t.unsqueeze(1).clone()
         stacked_outputs[:, :, output_pos] = stacked_outputs[:, :, output_pos] * self._get_output_scale(stacked_outputs.dtype)
 
         # Vocab Decoding

@@ -325,7 +325,7 @@ class OdyssNetTrainer:
                 self.model.reset_state(batch_size)
                 current_state_in = None
 
-            all_states, final_state = self.model(x_input, steps=thinking_steps, current_state=current_state_in)
+            all_states, final_state = self.model(x_input, steps=thinking_steps, current_state=current_state_in, return_sequence=full_sequence)
 
             # Extract Outputs & Calculate Loss
             if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
@@ -467,7 +467,7 @@ class OdyssNetTrainer:
                 x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
 
             self.model.reset_state(batch_size)
-            all_states, final_state = self.model(x_input, steps=thinking_steps)
+            all_states, final_state = self.model(x_input, steps=thinking_steps, return_sequence=full_sequence)
 
             if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
                 # Vocab Mode: 'all_states' is the decoded output (Logits)

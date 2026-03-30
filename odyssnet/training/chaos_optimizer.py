@@ -294,8 +294,8 @@ class ChaosGrad(torch.optim.Optimizer):
                     state['exp_avg_sq'] = torch.zeros_like(p)
                     # For adaptive LR: track gradient variance
                     if use_adaptive:
-                        state['grad_variance'] = torch.ones(1, device=p.device)
-                        state['prev_grad_norm'] = torch.ones(1, device=p.device)
+                        state['grad_variance'] = 1.0
+                        state['prev_grad_norm'] = 1.0
                 
                 state['step'] += 1
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']

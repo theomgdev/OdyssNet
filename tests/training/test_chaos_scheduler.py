@@ -187,6 +187,14 @@ class TestPlateauAndRestart:
         sched.manual_restart(boost_factor=0.8)
         assert sched._restart_count == count_before + 1
 
+    def test_restart_boost_exceeds_base_lr(self):
+        # After a restart the LR multiplier must briefly exceed 1.0 so that
+        # the boost actually helps escape local minima.
+        sched = _make_scheduler(warmup_steps=0, max_steps=1000, restart_factor=0.5)
+        sched.manual_restart()
+        mult = sched.get_lr_multiplier()
+        assert mult > 1.0, "Restart boost must temporarily push LR above base LR"
+
 
 # ===========================================================================
 # auto_extend

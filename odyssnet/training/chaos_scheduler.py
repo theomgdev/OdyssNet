@@ -97,7 +97,7 @@ class TemporalScheduler:
             boost_progress = 1.0 - (self._restart_boost_remaining / 20.0)
             schedule_lr = self._cosine_lr(step)
             restart_lr = schedule_lr * (1.0 + self._current_max_lr_factor * (1.0 - boost_progress))
-            return min(restart_lr, 1.0)  # Never exceed base LR
+            return restart_lr
         
         # Phase 3: Cosine Decay
         self._phase = 'decay'
