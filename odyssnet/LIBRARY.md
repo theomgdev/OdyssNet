@@ -158,14 +158,19 @@ Returns the **effective** parameter count of the network. It accounts for the `m
 #### `model.compile()`
 Optimizes the model using `torch.compile` (PyTorch 2.0+) for faster execution. Returns the compiled model.
 
-#### `model.forward(x_input, steps=1, current_state=None)`
+#### `model.forward(x_input, steps=1, current_state=None, return_sequence=True)`
 Runs the dynamic system.
 *   `x_input`: Input tensor. Can be a single pulse or a sequence (index-based or dense).
 *   `steps`: **Thinking Time**. How many times the signal reverberates in the echo chamber.
 *   `current_state`: Optional. Pass a previous state to continue from.
+*   `return_sequence` (bool, default `True`): Controls output allocation strategy.
+    *   `True`: Collects the full output sequence and returns `all_states` of shape `(Batch, Steps, Neurons)`. Required when loss is computed over all time steps (`full_sequence=True` in the trainer).
+    *   `False`: Skips building the `(Batch, Steps, Neurons)` tensor entirely and returns only the final step as `(Batch, 1, Neurons)`. Saves VRAM proportional to `thinking_steps` — use this whenever only the last output matters (e.g., classification, pulse-mode inference).
 *   **Returns**: `(all_states, final_state)`
-    *   `all_states`: Tensor of shape `(Batch, Steps, Neurons)` - **Batch-first format**.
-    *   `final_state`: Tensor of shape `(Batch, Neurons)` - The last hidden state.
+    *   `all_states`: Shape `(Batch, Steps, Neurons)` when `return_sequence=True`; shape `(Batch, 1, Neurons)` when `False`.
+    *   `final_state`: Tensor of shape `(Batch, Neurons)` — the last hidden state, regardless of `return_sequence`.
+
+> **Trainer transparency**: `OdyssNetTrainer` automatically passes `return_sequence=full_sequence` in `train_batch()` and `predict()`. You only need to set this manually when calling `model.forward()` directly.
 
 ---
 
@@ -287,6 +292,7 @@ A **OdyssNet-native optimizer** that understands and exploits the chaos chamber 
 *   **Plateau Escape**: Controlled gradient perturbation when training stalls.
 *   **Spectral Clipping**: Keeps chaos core's spectral radius bounded (edge-of-chaos control).
 *   **Gate-Aware Controls**: `gate_lr_mult` and `gate_decay` tune gate dynamics independently from memory/projection groups.
+*   **Zero GPU→CPU sync**: Adaptive LR state (`grad_variance`, `prev_grad_norm`) is stored as Python floats rather than CUDA tensors, eliminating a host synchronization per parameter per step.
 
 ### Pre-built Configurations
 
@@ -330,7 +336,7 @@ An **adaptive LR scheduler** that monitors the training process and adjusts in r
 ### Training Phases
 1.  **Warmup**: Linear ramp from 0 to `max_lr` (prevents chaos explosion at start).
 2.  **Cosine Decay**: Smooth decay to `min_lr_ratio × max_lr`.
-3.  **Warm Restart**: When plateau detected, temporarily boosts LR with decaying restarts.
+3.  **Warm Restart**: When a plateau is detected, temporarily boosts LR above the current base learning rate with a decaying factor, then begins a new cosine cycle.
 
 ### Pre-built Configurations
 
