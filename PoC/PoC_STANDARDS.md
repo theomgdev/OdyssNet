@@ -140,9 +140,10 @@ model = OdyssNet(num_neurons=10, ..., vocab_size=(784, 10))
 For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics:
 *   **Enable:** `use_hebbian=True`.
 *   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and injects them as $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$. The Hebbian learning rate and retention factor are **learnable** — the network discovers how plastic it should be.
-*   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across forward calls and cleared on `reset_state()`.
+*   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across intra-sequence forward calls and are explicitly cleared on `reset_state()` between sequences.
+*   **Best Use Case (Generation / Sequential Building):** Hebbian shines in tasks where step T relies heavily on expanding or completing a pattern from step T-1. It provides a powerful **short-term working memory** between steps, acting as a dynamic shortcut that fast-tracks sequence generation.
+*   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise". When the network tries to interpret a new independent feature at step 2, the Hebbian state inappropriately forces it to view the input through the lens of the feature from step 1, confusing the base neural representation.
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
-*   **When *not* to use it:** If the task is fully stationary and the network converges cleanly without it, skip it — it adds two parameters and slightly increases forward-pass cost.
 *   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
 
 ```python
