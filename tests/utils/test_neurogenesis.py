@@ -297,3 +297,94 @@ class TestSequentialExpansions:
         opt.step()
         opt.zero_grad()
         assert torch.isfinite(model.W.data).all()
+
+
+# ===========================================================================
+# Hebbian Plasticity + Neurogenesis
+# ===========================================================================
+
+class TestHebbianExpansion:
+    def test_hebb_buffers_resized(self):
+        model = _model(n=4, use_hebbian=True)
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=3, verbose=False)
+        assert model.hebb_state_W.shape == (7, 7)
+        assert model.hebb_state_mem.shape == (7,)
+
+    def test_hebb_buffer_old_region_preserved(self):
+        model = _model(n=4, use_hebbian=True)
+        # Populate buffers with a known value before expansion.
+        with torch.no_grad():
+            model.hebb_state_W.fill_(0.5)
+            model.hebb_state_W.fill_diagonal_(0.0)
+            model.hebb_state_mem.fill_(0.3)
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        # Old (4×4) off-diagonal subregion must equal 0.5 after expansion.
+        block = model.hebb_state_W[:4, :4]
+        off_diag_mask = ~torch.eye(4, dtype=torch.bool)
+        assert torch.allclose(block[off_diag_mask], torch.full((12,), 0.5)), \
+            "Old hebb_state_W off-diagonal region lost after expand"
+        assert torch.allclose(model.hebb_state_mem[:4], torch.full((4,), 0.3))
+
+    def test_hebb_buffer_new_region_zero(self):
+        model = _model(n=4, use_hebbian=True)
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=3, verbose=False)
+        # Newly added rows/cols must be zero.
+        assert model.hebb_state_W[4:, :].abs().sum().item() == 0.0
+        assert model.hebb_state_W[:, 4:].abs().sum().item() == 0.0
+        assert model.hebb_state_mem[4:].abs().sum().item() == 0.0
+
+    def test_forward_runs_after_expand(self):
+        model = _model(n=4, use_hebbian=True)
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        x = torch.randn(2, 6)
+        out, _ = model(x, steps=3)
+        assert out.shape == (2, 3, 6)
+        assert torch.isfinite(out).all()
+
+    def test_gradient_flows_after_expand(self):
+        model = _model(n=4, use_hebbian=True)
+        model.train()
+        opt = _adamw(model)
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        x = torch.randn(2, 6)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+        assert torch.isfinite(model.hebb_factor.grad).all()
+        new_opt.step()
+        new_opt.zero_grad()
+
+    def test_hebb_params_still_in_named_parameters(self):
+        model = _model(n=4, use_hebbian=True)
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        names = {n for n, _ in model.named_parameters()}
+        assert 'hebb_factor' in names
+        assert 'hebb_decay' in names
+
+    def test_chaosgrad_expand_with_hebbian(self):
+        model = _model(n=4, use_hebbian=True)
+        opt = _chaosgrad(model)
+        new_opt = Neurogenesis.expand(
+            model, opt, amount=2, verbose=False,
+            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
+        )
+        assert isinstance(new_opt, ChaosGrad)
+        x = torch.randn(2, 6)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        new_opt.step()
+        new_opt.zero_grad()
+
+    def test_sequential_expand_with_hebbian(self):
+        model = _model(n=3, use_hebbian=True)
+        opt = _adamw(model)
+        opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        assert model.num_neurons == 7
+        assert model.hebb_state_W.shape == (7, 7)
+        assert model.hebb_state_mem.shape == (7,)
