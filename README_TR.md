@@ -32,6 +32,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
+*   **Hebbian Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`use_hebbian=True`) — ağ zamansal nöron korelasyonlarını biriktirir ve iki tamamen türevlenebilir logit parametresi (`hebb_factor`, `hebb_decay`) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
@@ -149,7 +150,8 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
-*   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder ve **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayrı optimize eder.
+*   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder, **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayrı optimize eder ve **Hebbian logitlerini** (`hebb_factor`, `hebb_decay`) sıfır ağırlık çürümeli kendi grubuna yerleştirerek plastisit hızının bağımsız ayarlanmasını sağlar.
+*   **Hebbian Plastisitesi:** `use_hebbian=True` olduğunda her adımda zamansal korelasyonlar $h_t \otimes h_{t-1}$ biriktirilir ve $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$ olarak etkin ağırlık matrisine enjekte edilir. Öğrenme hızı ve çürüme oranının kendisi de öğrenilebilir olduğundan ağ, sinaptik ağırlıklarının aktivite desenlerini ne kadar hızlı takip edeceğini adaptif olarak belirler.
 *   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?

@@ -128,6 +128,36 @@ class TestClassifyParams:
         all_params = {id(p) for p in model.parameters()}
         assert covered == all_params
 
+    def test_hebbian_params_in_hebbian_group(self):
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
+                         device="cpu", use_hebbian=True)
+        groups = ChaosGrad.classify_params(model)
+        names = {g["group_name"]: g for g in groups}
+        assert "hebbian" in names
+        hebb_params = names["hebbian"]["params"]
+        assert any(p is model.hebb_factor for p in hebb_params)
+        assert any(p is model.hebb_decay  for p in hebb_params)
+
+    def test_all_params_covered_with_hebbian(self):
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
+                         device="cpu", use_hebbian=True)
+        groups = ChaosGrad.classify_params(model)
+        covered = {id(p) for g in groups for p in g["params"]}
+        all_params = {id(p) for p in model.parameters()}
+        assert covered == all_params
+
+    def test_hebbian_step_updates_params(self):
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
+                         device="cpu", use_hebbian=True)
+        opt = _optimizer(model)
+        factor_before = model.hebb_factor.data.clone()
+        x = torch.randn(2, 5)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        opt.step()
+        opt.zero_grad()
+        assert not torch.allclose(model.hebb_factor.data, factor_before)
+
 
 # ===========================================================================
 # Optimizer Step

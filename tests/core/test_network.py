@@ -514,3 +514,124 @@ class TestUtilityMethods:
     def test_device_property_returns_w_device(self):
         model = _make(4)
         assert model.device == model.W.device
+
+
+# ===========================================================================
+# Hebbian Learning
+# ===========================================================================
+
+class TestHebbian:
+    def test_disabled_by_default(self):
+        model = _make(4)
+        assert model.use_hebbian is False
+        assert model.hebb_factor is None
+        assert model.hebb_decay is None
+        assert not hasattr(model, 'hebb_state_W')
+
+    def test_parameters_created_when_enabled(self):
+        model = _make(4, use_hebbian=True)
+        assert model.use_hebbian is True
+        assert isinstance(model.hebb_factor, nn.Parameter)
+        assert isinstance(model.hebb_decay, nn.Parameter)
+
+    def test_buffer_shapes(self):
+        model = _make(6, use_hebbian=True)
+        assert model.hebb_state_W.shape == (6, 6)
+        assert model.hebb_state_mem.shape == (6,)
+
+    def test_buffers_zero_at_init(self):
+        model = _make(4, use_hebbian=True)
+        assert model.hebb_state_W.abs().sum().item() == 0.0
+        assert model.hebb_state_mem.abs().sum().item() == 0.0
+
+    def test_initial_factor_bounds(self):
+        # sigmoid(-3.0) ≈ 0.047, sigmoid(2.2) ≈ 0.90
+        model = _make(4, use_hebbian=True)
+        lr   = torch.sigmoid(model.hebb_factor).item()
+        ret  = torch.sigmoid(model.hebb_decay).item()
+        assert 0.0 < lr < 0.15
+        assert 0.85 < ret < 1.0
+
+    def test_forward_runs_with_hebbian(self):
+        model = _make(4, use_hebbian=True)
+        x = torch.randn(2, 4)
+        out, h = model(x, steps=3)
+        assert out.shape == (2, 3, 4)
+        assert torch.isfinite(out).all()
+
+    def test_state_updates_after_forward(self):
+        model = _make(4, use_hebbian=True)
+        x = torch.randn(2, 4)
+        model(x, steps=3)
+        # Hebbian state must be non-zero after a non-trivial forward pass.
+        assert model.hebb_state_W.abs().sum().item() > 0.0
+        assert model.hebb_state_mem.abs().sum().item() > 0.0
+
+    def test_diagonal_zero_in_hebb_state_w(self):
+        # hebb_state_W must mirror the W diagonal constraint.
+        model = _make(6, use_hebbian=True)
+        x = torch.randn(2, 6)
+        model(x, steps=10)
+        assert model.hebb_state_W.diagonal().abs().max().item() == 0.0
+
+    def test_gradient_flows_to_hebb_factor(self):
+        model = _make(4, use_hebbian=True)
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+        assert torch.isfinite(model.hebb_factor.grad).all()
+
+    def test_gradient_flows_to_hebb_decay(self):
+        # hebb_decay only participates in the graph from step ≥ 1, so use steps ≥ 2.
+        model = _make(4, use_hebbian=True)
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.hebb_decay.grad is not None
+        assert torch.isfinite(model.hebb_decay.grad).all()
+
+    def test_gradient_flows_through_w_as_well(self):
+        model = _make(4, use_hebbian=True)
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.W.grad is not None
+
+    def test_reset_clears_hebb_state(self):
+        model = _make(4, use_hebbian=True)
+        x = torch.randn(2, 4)
+        model(x, steps=3)
+        assert model.hebb_state_W.abs().sum().item() > 0.0
+        model.reset_state()
+        assert model.hebb_state_W.abs().sum().item() == 0.0
+        assert model.hebb_state_mem.abs().sum().item() == 0.0
+
+    def test_reset_also_resets_hidden_state(self):
+        model = _make(4, use_hebbian=True)
+        x = torch.randn(3, 4)
+        model(x, steps=2)
+        model.reset_state(batch_size=1)
+        assert model.state.shape == (1, 4)
+        assert model.state.abs().sum().item() == 0.0
+
+    def test_gradient_checkpointing_compatible(self):
+        model = OdyssNet(
+            num_neurons=4, input_ids=[0], output_ids=[3],
+            device="cpu", gradient_checkpointing=True, use_hebbian=True,
+        )
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        assert torch.isfinite(out).all()
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+
+    def test_hebb_factor_in_named_parameters(self):
+        model = _make(4, use_hebbian=True)
+        param_names = {n for n, _ in model.named_parameters()}
+        assert 'hebb_factor' in param_names
+        assert 'hebb_decay' in param_names

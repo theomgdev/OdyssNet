@@ -6,7 +6,7 @@ import numpy as np
 from typing import cast
 
 class OdyssNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, use_hebbian=False):
         super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -112,11 +112,27 @@ class OdyssNet(nn.Module):
         with torch.no_grad():
             self._apply_init(self.memory_feedback, self.mem_weight_init)
             self.W.fill_diagonal_(0.0)
-            
+
         def _zero_diagonal_grad(grad):
             return grad.clone().fill_diagonal_(0.0)
         self.W.register_hook(_zero_diagonal_grad)
-        
+
+        # Hebbian Learning (optional)
+        # hebb_factor and hebb_decay are raw logits; sigmoid maps them to (0, 1).
+        # sigmoid(-3.0) ≈ 0.047 — small initial Hebbian influence on W and memory_feedback.
+        # sigmoid( 2.2) ≈ 0.900 — high initial retention of accumulated correlations.
+        self.use_hebbian = use_hebbian
+        if use_hebbian:
+            self.hebb_factor = nn.Parameter(torch.full((), -3.0, device=device))
+            self.hebb_decay  = nn.Parameter(torch.full((),  2.2, device=device))
+            # Accumulated cross-neuron correlations (diagonal kept zero, mirrors W constraint).
+            self.register_buffer('hebb_state_W',   torch.zeros(num_neurons, num_neurons, device=device))
+            # Accumulated self-correlations for memory_feedback (diagonal of the outer product).
+            self.register_buffer('hebb_state_mem', torch.zeros(num_neurons, device=device))
+        else:
+            self.hebb_factor = None
+            self.hebb_decay  = None
+
         # Bias Vector
         self.B = nn.Parameter(torch.zeros(num_neurons, device=device))
 
@@ -382,14 +398,18 @@ class OdyssNet(nn.Module):
         input_pos = cast(torch.Tensor, self.input_pos)
         output_pos = cast(torch.Tensor, self.output_pos)
 
-        def _single_step(h_t_in, t_idx, x_input_info):
-            signal = F.linear(h_t_in, self.W.t(), self.B)
+        def _single_step(h_t_in, t_idx, x_input_info, hebb_W_contrib, hebb_mem_contrib):
+            # hebb_W_contrib:   (N, N) tensor or None — added to W before recurrence.
+            # hebb_mem_contrib: (N,)   tensor or None — added to memory_feedback.
+            W_eff = self.W if hebb_W_contrib is None else self.W + hebb_W_contrib
+            signal = F.linear(h_t_in, W_eff.t(), self.B)
 
             if self.core_gate_act is not None and self.core_gate is not None:
                 core_gate = self.core_gate_act(self.core_gate.to(signal.dtype))
                 signal = signal * core_gate.unsqueeze(0)
-            
-            feedback = h_t_in * self.memory_feedback
+
+            mem_weights = self.memory_feedback if hebb_mem_contrib is None else self.memory_feedback + hebb_mem_contrib
+            feedback = h_t_in * mem_weights
             feedback = self.mem_act(feedback)
 
             if self.mem_gate_act is not None and self.memory_gate is not None:
@@ -430,10 +450,20 @@ class OdyssNet(nn.Module):
         if x_input is not None:
             is_index_seq = x_input.dtype in [torch.long, torch.int64, torch.int32] and x_input.ndim == 2
             is_dense_seq = x_input.ndim == 3 and not self.pulse_mode
-            
+
             if (is_index_seq or is_dense_seq) and x_input.shape[1] > 0:
                 ratio = max(1, steps // x_input.shape[1])
                 max_outputs = x_input.shape[1]
+
+        # Initialise per-forward Hebbian state from the persisted buffer.
+        # hebb_lr and hebb_ret are sigmoid-bounded scalars computed once per forward call.
+        if self.use_hebbian:
+            hebb_lr  = torch.sigmoid(self.hebb_factor)
+            hebb_ret = torch.sigmoid(self.hebb_decay)
+            # Clone so that the end-of-loop copy_() back into the buffers does not
+            # invalidate any saved tensors captured by the autograd graph.
+            local_hebb_W   = self.hebb_state_W.detach().clone()
+            local_hebb_mem = self.hebb_state_mem.detach().clone()
 
         for t in range(steps):
             # Prepare input for this step
@@ -561,15 +591,49 @@ class OdyssNet(nn.Module):
                             self._cached_scaled_input[:, input_pos] = self._cached_scaled_input[:, input_pos] * self._get_input_scale(self._cached_scaled_input.dtype)
                         x_step_info = self._cached_scaled_input
             
+            # Compute per-step Hebbian contributions before advancing the state.
+            # cur_hebb_W and cur_hebb_mem carry gradients through hebb_lr (and hebb_ret
+            # from step ≥ 1) because local_hebb_W accumulates hebb_lr * corr from the
+            # previous step. hebb_W_contrib is passed explicitly to _single_step so that
+            # gradient_checkpointing can correctly save and recompute it per step.
+            if self.use_hebbian:
+                h_prev       = h_t
+                cur_hebb_W   = hebb_lr * local_hebb_W
+                cur_hebb_mem = hebb_lr * local_hebb_mem
+            else:
+                cur_hebb_W   = None
+                cur_hebb_mem = None
+
             # Gradient checkpointing
             if self.gradient_checkpointing and self.training:
-                h_t = checkpoint.checkpoint(_single_step, h_t, torch.tensor(t), x_step_info, use_reentrant=False)
+                h_t = checkpoint.checkpoint(
+                    _single_step, h_t, torch.tensor(t), x_step_info,
+                    cur_hebb_W, cur_hebb_mem,
+                    use_reentrant=False,
+                )
             else:
-                h_t = _single_step(h_t, t, x_step_info)
-            
+                h_t = _single_step(h_t, t, x_step_info, cur_hebb_W, cur_hebb_mem)
+
+            # Update local Hebbian state from temporal correlation h_t ⊗ h_{t-1}.
+            # Old local state is detached to bound the computation graph to one step,
+            # while hebb_lr and hebb_ret remain in the graph for gradient flow.
+            if self.use_hebbian:
+                batch_sz = h_t.size(0)
+                corr_W = torch.einsum('bi,bj->ij', h_t.detach(), h_prev.detach()) / batch_sz
+                corr_W.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
+                corr_mem = (h_t.detach() * h_prev.detach()).mean(dim=0)
+                local_hebb_W   = hebb_ret * local_hebb_W.detach()   + hebb_lr * corr_W
+                local_hebb_mem = hebb_ret * local_hebb_mem.detach() + hebb_lr * corr_mem
+
             # Smart Output Collection
             if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:
                 outputs.append(h_t)
+
+        # Persist accumulated Hebbian state for the next forward call.
+        if self.use_hebbian:
+            with torch.no_grad():
+                self.hebb_state_W.copy_(local_hebb_W.detach())
+                self.hebb_state_mem.copy_(local_hebb_mem.detach())
 
         # Apply Output Scaling
         if return_sequence:
@@ -594,6 +658,9 @@ class OdyssNet(nn.Module):
 
     def reset_state(self, batch_size=1):
         self.state = torch.zeros(batch_size, self.num_neurons, device=self.device)
+        if self.use_hebbian:
+            self.hebb_state_W.zero_()
+            self.hebb_state_mem.zero_()
 
     def detach_state(self):
         """

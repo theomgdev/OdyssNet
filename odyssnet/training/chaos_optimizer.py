@@ -44,6 +44,7 @@ class ChaosGrad(torch.optim.Optimizer):
         chaos_core_lr_mult (float): LR multiplier for core W matrix. Default: 1.0.
         projection_lr_mult (float): LR multiplier for projection layers. Default: 1.0.
         gate_lr_mult (float): LR multiplier for gate parameters. Default: 1.0.
+        hebbian_lr_mult (float): LR multiplier for hebb_factor and hebb_decay. Default: 2.0.
         plateau_patience (int): Steps of no improvement before perturbation. Default: 0 (disabled).
         plateau_noise_scale (float): Scale of perturbation noise on plateau escape. Default: 0.01.
         spectral_clip (float): Max spectral radius for W matrix. Default: 0 (disabled).
@@ -56,11 +57,12 @@ class ChaosGrad(torch.optim.Optimizer):
                  weight_decay=0.01, projection_decay=0.01, memory_decay=0.0, gate_decay=0.0,
                  lightweight_lr_mult=2.0, chaos_core_lr_mult=1.0,
                  projection_lr_mult=1.0, memory_lr_mult=1.0, gate_lr_mult=1.0,
+                 hebbian_lr_mult=2.0,
                  plateau_patience=0, plateau_noise_scale=0.01,
                  spectral_clip=0.0,
                  adaptive_lr=True, adaptive_lr_clip=(0.1, 10.0),
                  grad_centralization=True):
-        
+
         defaults = dict(
             lr=lr, betas=betas, eps=eps,
             weight_decay=weight_decay,
@@ -72,6 +74,7 @@ class ChaosGrad(torch.optim.Optimizer):
             projection_lr_mult=projection_lr_mult,
             memory_lr_mult=memory_lr_mult,
             gate_lr_mult=gate_lr_mult,
+            hebbian_lr_mult=hebbian_lr_mult,
             plateau_patience=plateau_patience,
             plateau_noise_scale=plateau_noise_scale,
             spectral_clip=spectral_clip,
@@ -101,14 +104,16 @@ class ChaosGrad(torch.optim.Optimizer):
         2. memory_feedback: memory_feedback (self-connections)
         3. projections: Embedding, Linear projection, Output decoder
         4. gates: input/output/core/memory gate parameters
-        5. lightweight: Bias, Scale, Norm parameters
+        5. hebbian: hebb_factor, hebb_decay (Hebbian learning control scalars)
+        6. lightweight: Bias, Scale, Norm parameters
         """
-        chaos_core = []      # W matrix (cross connections)
-        memory_feedback = [] # memory_feedback (self connections)
-        projections = []     # Embeddings, projections, decoders
-        gates = []           # Parametric gate vectors
-        lightweight = []     # Bias, scale, norm
-        
+        chaos_core      = []  # W matrix (cross connections)
+        memory_feedback = []  # memory_feedback (self connections)
+        projections     = []  # Embeddings, projections, decoders
+        gates           = []  # Parametric gate vectors
+        hebbian         = []  # Hebbian learning rate and decay scalars
+        lightweight     = []  # Bias, scale, norm
+
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
@@ -116,7 +121,7 @@ class ChaosGrad(torch.optim.Optimizer):
             # Torch wrappers (e.g. torch.compile, DDP) often prefix names
             # like "_orig_mod." or "module.". Use leaf names for exact groups.
             leaf_name = name.split('.')[-1]
-                
+
             if leaf_name == 'W':
                 chaos_core.append(param)
             elif leaf_name == 'memory_feedback':
@@ -125,67 +130,44 @@ class ChaosGrad(torch.optim.Optimizer):
                 projections.append(param)
             elif leaf_name in {'input_gate', 'output_gate', 'core_gate', 'memory_gate'}:
                 gates.append(param)
+            elif leaf_name in {'hebb_factor', 'hebb_decay'}:
+                hebbian.append(param)
             else:
                 # B, input_scale, output_scale, norm.weight, norm.bias
                 lightweight.append(param)
-        
+
+        _flags = {
+            '_is_chaos_core': False, '_is_memory_feedback': False,
+            '_is_projection': False, '_is_gate': False,
+            '_is_hebbian': False, '_is_lightweight': False,
+        }
+
         groups = []
-        
+
         if chaos_core:
-            groups.append({
-                'params': chaos_core,
-                'group_name': 'chaos_core',
-                '_is_chaos_core': True,
-                '_is_memory_feedback': False,
-                '_is_projection': False,
-                '_is_gate': False,
-                '_is_lightweight': False,
-            })
-            
+            groups.append({**_flags, 'params': chaos_core,
+                           'group_name': 'chaos_core', '_is_chaos_core': True})
+
         if memory_feedback:
-            groups.append({
-                'params': memory_feedback,
-                'group_name': 'memory_feedback',
-                '_is_chaos_core': False,
-                '_is_memory_feedback': True,
-                '_is_projection': False,
-                '_is_gate': False,
-                '_is_lightweight': False,
-            })
-            
+            groups.append({**_flags, 'params': memory_feedback,
+                           'group_name': 'memory_feedback', '_is_memory_feedback': True})
+
         if projections:
-            groups.append({
-                'params': projections,
-                'group_name': 'projections',
-                '_is_chaos_core': False,
-                '_is_memory_feedback': False,
-                '_is_projection': True,
-                '_is_gate': False,
-                '_is_lightweight': False,
-            })
+            groups.append({**_flags, 'params': projections,
+                           'group_name': 'projections', '_is_projection': True})
 
         if gates:
-            groups.append({
-                'params': gates,
-                'group_name': 'gates',
-                '_is_chaos_core': False,
-                '_is_memory_feedback': False,
-                '_is_projection': False,
-                '_is_gate': True,
-                '_is_lightweight': False,
-            })
-            
+            groups.append({**_flags, 'params': gates,
+                           'group_name': 'gates', '_is_gate': True})
+
+        if hebbian:
+            groups.append({**_flags, 'params': hebbian,
+                           'group_name': 'hebbian', '_is_hebbian': True})
+
         if lightweight:
-            groups.append({
-                'params': lightweight,
-                'group_name': 'lightweight',
-                '_is_chaos_core': False,
-                '_is_memory_feedback': False,
-                '_is_projection': False,
-                '_is_gate': False,
-                '_is_lightweight': True,
-            })
-        
+            groups.append({**_flags, 'params': lightweight,
+                           'group_name': 'lightweight', '_is_lightweight': True})
+
         return groups
     
     def report_loss(self, loss_value):
@@ -247,13 +229,14 @@ class ChaosGrad(torch.optim.Optimizer):
         spectral_clip = self.defaults.get('spectral_clip', 0.0)
         
         for group in self.param_groups:
-            is_core = group.get('_is_chaos_core', False)
-            is_memory = group.get('_is_memory_feedback', False)
-            is_proj = group.get('_is_projection', False)
-            is_gate = group.get('_is_gate', False)
-            is_light = group.get('_is_lightweight', False)
-            
-            # Select appropriate LR multiplier
+            is_core    = group.get('_is_chaos_core', False)
+            is_memory  = group.get('_is_memory_feedback', False)
+            is_proj    = group.get('_is_projection', False)
+            is_gate    = group.get('_is_gate', False)
+            is_hebbian = group.get('_is_hebbian', False)
+            is_light   = group.get('_is_lightweight', False)
+
+            # Select appropriate LR multiplier and weight decay per group.
             if is_core:
                 lr_mult = self.defaults['chaos_core_lr_mult']
                 wd = self.defaults['weight_decay']
@@ -266,6 +249,10 @@ class ChaosGrad(torch.optim.Optimizer):
             elif is_gate:
                 lr_mult = self.defaults['gate_lr_mult']
                 wd = self.defaults['gate_decay']
+            elif is_hebbian:
+                # Hebbian control scalars — no weight decay (they are unbounded logits).
+                lr_mult = self.defaults.get('hebbian_lr_mult', 2.0)
+                wd = 0.0
             elif is_light:
                 lr_mult = self.defaults['lightweight_lr_mult']
                 wd = 0.0  # No decay for bias/scale/norm
@@ -399,10 +386,11 @@ class ChaosGradConfig:
             projection_lr_mult=1.0,
             memory_lr_mult=1.0,
             gate_lr_mult=1.0,
+            hebbian_lr_mult=1.0,
             adaptive_lr=True,
             grad_centralization=True,
         )
-    
+
     @staticmethod
     def default(lr=3e-4):
         """Default exploration for fresh/small networks."""
@@ -418,13 +406,14 @@ class ChaosGradConfig:
             projection_lr_mult=1.2,
             memory_lr_mult=1.0,
             gate_lr_mult=1.0,
+            hebbian_lr_mult=2.0,
             plateau_patience=50,
             plateau_noise_scale=0.02,
             adaptive_lr=True,
             adaptive_lr_clip=(0.2, 5.0),
             grad_centralization=True,
         )
-    
+
     @staticmethod
     def finetune(lr=1e-5):
         """Conservative fine-tuning configuration."""
@@ -440,12 +429,13 @@ class ChaosGradConfig:
             projection_lr_mult=0.8,
             memory_lr_mult=0.8,
             gate_lr_mult=0.8,
+            hebbian_lr_mult=0.5,
             adaptive_lr=True,
             adaptive_lr_clip=(0.5, 2.0),
             grad_centralization=False,
         )
-    
-    @staticmethod 
+
+    @staticmethod
     def large_network(lr=1e-4):
         """
         For big networks (1000+ neurons) that tend to develop input-blind local minima.
@@ -463,6 +453,7 @@ class ChaosGradConfig:
             projection_lr_mult=1.5,
             memory_lr_mult=1.0,
             gate_lr_mult=1.0,
+            hebbian_lr_mult=1.5,
             plateau_patience=100,
             plateau_noise_scale=0.01,
             spectral_clip=3.0,
@@ -470,7 +461,7 @@ class ChaosGradConfig:
             adaptive_lr_clip=(0.1, 5.0),
             grad_centralization=True,
         )
-    
+
     @staticmethod
     def tiny_network(lr=0.01):
         """For tiny networks (<10 neurons) like XOR, Identity."""
@@ -486,6 +477,7 @@ class ChaosGradConfig:
             projection_lr_mult=1.0,
             memory_lr_mult=1.0,
             gate_lr_mult=1.0,
+            hebbian_lr_mult=1.0,
             adaptive_lr=False,
             grad_centralization=False,
         )

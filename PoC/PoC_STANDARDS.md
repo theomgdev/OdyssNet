@@ -109,6 +109,12 @@ When `gate` parameters exist, ChaosGrad handles them in a dedicated `gates` grou
 *   Default behavior keeps gates stable (`gate_decay=0.0`) and matches base group speed (`gate_lr_mult=1.0`).
 *   Recommended start for stronger gate adaptation: `gate_lr_mult=1.1` to `1.3`, `gate_decay=0.0`.
 
+### Hebbian Optimizer Contract (ChaosGrad)
+When `use_hebbian=True`, ChaosGrad places `hebb_factor` and `hebb_decay` in a dedicated `hebbian` group.
+*   `hebbian_lr_mult`: Independent LR multiplier for Hebbian logits. Default is `2.0` — plasticity scalars benefit from faster updates than the core weights.
+*   **Weight decay is always `0.0`** for this group regardless of the global `weight_decay` setting. The logits are unbounded by design; regularizing them would corrupt the learned plasticity rate.
+*   Recommended start: leave default (`hebbian_lr_mult=2.0`). Increase to `3.0–4.0` only if Hebbian correlations converge too slowly.
+
 ### D. Associative Memory (Database / Key-Value)
 For tasks requiring precise storage and retrieval of values over time (e.g., Neural Database):
 *   **Structure:** High neuron count (256+) to provide storage space for memories.
@@ -128,6 +134,32 @@ For tasks requiring high input/output dimensionality (like vision or LLMs) witho
 ```python
 # OdyssNet core has N=10 neurons, but processes 784 input channels and 10 output classes
 model = OdyssNet(num_neurons=10, ..., vocab_size=(784, 10))
+```
+
+### F. Hebbian Plasticity (Online Synaptic Adaptation)
+For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics:
+*   **Enable:** `use_hebbian=True`.
+*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and injects them as $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$. The Hebbian learning rate and retention factor are **learnable** — the network discovers how plastic it should be.
+*   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across forward calls and cleared on `reset_state()`.
+*   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
+*   **When *not* to use it:** If the task is fully stationary and the network converges cleanly without it, skip it — it adds two parameters and slightly increases forward-pass cost.
+*   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
+
+```python
+# Minimal (recommended starting point)
+model = OdyssNet(
+    num_neurons=32,
+    input_ids=[0, 1],
+    output_ids=[31],
+    activation='tanh',
+    use_hebbian=True,    # Enable online plasticity
+    device='cuda',
+)
+
+# With a custom Hebbian LR multiplier via ChaosGrad config
+cfg = ChaosGradConfig.default(lr=3e-4)
+cfg['hebbian_lr_mult'] = 3.0   # More aggressive plasticity updates
+trainer = OdyssNetTrainer(model, chaos_config=cfg)
 ```
 
 ---
@@ -245,7 +277,8 @@ Before submitting a new PoC:
 2.  [ ] Did you place it in the correct folder (`PoC/` vs `PoC/experiments/`)?
 3.  [ ] Are you using `OdyssNetTrainer`?
 4.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
-5.  [ ] Does it converge reliably?
-6.  [ ] Does the terminal output clearly explain what is happening?
+5.  [ ] If you enabled `use_hebbian=True`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
+6.  [ ] Does it converge reliably?
+7.  [ ] Does the terminal output clearly explain what is happening?
 
 Welcome to the Order of the Algorithm. Let's code Time.

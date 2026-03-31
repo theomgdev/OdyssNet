@@ -31,7 +31,8 @@ model = OdyssNet(
     activation=['none', 'tanh', 'tanh', 'none'],
     gate=None,           # Default resolves to ['none', 'none', 'identity']
     vocab_size=None,     # Optional: Decouples input/output size from neurons
-    vocab_mode='hybrid'  # 'hybrid', 'discrete', or 'continuous'
+    vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
+    use_hebbian=False,   # Optional: Enables online Hebbian plasticity
 )
 ```
 
@@ -64,6 +65,14 @@ model = OdyssNet(
     *   `'continuous'`: Initializes only Linear Projection. Use for float-only inputs (e.g., vision, audio). Saves VRAM.
 *   `tie_embeddings` (bool): 
     *   If `True`, ties the input embedding weights to the output decoder weights, saving significant VRAM and parameter count (Symmetric `vocab_size` only). Default is `False`.
+*   `use_hebbian` (bool): Enables **online Hebbian plasticity**. Default is `False`.
+    *   When enabled, two learnable scalar parameters are created:
+        *   `hebb_factor` (raw logit → `sigmoid` → Hebbian learning rate ≈ 0.047 initially)
+        *   `hebb_decay` (raw logit → `sigmoid` → correlation retention ≈ 0.90 initially)
+    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and adds a scaled version to the effective weight matrix: $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$.
+    *   The Hebbian state is persisted across forward calls via registered buffers (`hebb_state_W`, `hebb_state_mem`) and is cleared by `reset_state()`.
+    *   Both `hebb_factor` and `hebb_decay` are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
+    *   See [ChaosGrad — Parameter Groups](#parameter-groups) for how the optimizer treats these parameters.
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
     *   `None`: Default configuration with memory identity gate enabled, others disabled.
     *   `str` (e.g., `'sigmoid'`): Applies the same gate activation to all three branches `[encoder_decoder, core, memory]`.
@@ -284,6 +293,7 @@ A **OdyssNet-native optimizer** that understands and exploits the chaos chamber 
 | **memory_feedback** | Neuron self-connections | Independent LR and ultra-low decay to preserve temporal memories |
 | **projections** | Embeddings, Projections, Decoder | Standard LR with configurable decay |
 | **gates** | input_gate, output_gate, core_gate, memory_gate | Dedicated LR/decay controls for branch-wise gating |
+| **hebbian** | hebb_factor, hebb_decay | Higher LR (`hebbian_lr_mult`), **no weight decay** (raw logits must stay unbounded) |
 | **lightweight** | Bias, Scale, Norm | Higher LR, no weight decay |
 
 ### Key Features
@@ -292,6 +302,7 @@ A **OdyssNet-native optimizer** that understands and exploits the chaos chamber 
 *   **Plateau Escape**: Controlled gradient perturbation when training stalls.
 *   **Spectral Clipping**: Keeps chaos core's spectral radius bounded (edge-of-chaos control).
 *   **Gate-Aware Controls**: `gate_lr_mult` and `gate_decay` tune gate dynamics independently from memory/projection groups.
+*   **Hebbian-Aware Controls**: `hebbian_lr_mult` sets the LR multiplier for the `hebbian` group; weight decay is **always zero** for Hebbian logits regardless of global `weight_decay`.
 *   **Zero GPU→CPU sync**: Adaptive LR state (`grad_variance`, `prev_grad_norm`) is stored as Python floats rather than CUDA tensors, eliminating a host synchronization per parameter per step.
 
 ### Pre-built Configurations
@@ -305,10 +316,14 @@ ChaosGradConfig.finetune(lr=1e-5)      # Conservative (Fine-tuning)
 ChaosGradConfig.large_network(lr=1e-4) # Robust monitoring (1000+ neuron networks)
 ChaosGradConfig.tiny_network(lr=0.01)  # Minimal (XOR, Identity)
 
-# Gate-specific override example
+# Gate-specific override
 cfg = ChaosGradConfig.default(lr=3e-4)
 cfg['gate_lr_mult'] = 1.2
 cfg['gate_decay'] = 0.0
+
+# Hebbian-specific override
+cfg = ChaosGradConfig.default(lr=3e-4)
+cfg['hebbian_lr_mult'] = 3.0  # More aggressive plasticity updates
 ```
 
 ### Direct Usage
