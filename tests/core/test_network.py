@@ -523,44 +523,44 @@ class TestUtilityMethods:
 class TestHebbian:
     def test_disabled_by_default(self):
         model = _make(4)
-        assert model.use_hebbian is False
+        assert model.hebb_type is None
         assert model.hebb_factor is None
         assert model.hebb_decay is None
         assert not hasattr(model, 'hebb_state_W')
 
     def test_parameters_created_when_enabled(self):
-        model = _make(4, use_hebbian=True)
-        assert model.use_hebbian is True
+        model = _make(4, hebb_type="global")
+        assert model.hebb_type == "global"
         assert isinstance(model.hebb_factor, nn.Parameter)
         assert isinstance(model.hebb_decay, nn.Parameter)
 
     def test_buffer_shapes(self):
-        model = _make(6, use_hebbian=True)
+        model = _make(6, hebb_type="global")
         assert model.hebb_state_W.shape == (6, 6)
         assert model.hebb_state_mem.shape == (6,)
 
     def test_buffers_zero_at_init(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         assert model.hebb_state_W.abs().sum().item() == 0.0
         assert model.hebb_state_mem.abs().sum().item() == 0.0
 
     def test_initial_factor_bounds(self):
         # sigmoid(-3.0) ≈ 0.047, sigmoid(2.2) ≈ 0.90
-        model = _make(4, use_hebbian=True)
-        lr   = torch.sigmoid(model.hebb_factor).item()
-        ret  = torch.sigmoid(model.hebb_decay).item()
+        model = _make(4, hebb_type="global")
+        lr  = torch.sigmoid(model.hebb_factor).item()
+        ret = torch.sigmoid(model.hebb_decay).item()
         assert 0.0 < lr < 0.15
         assert 0.85 < ret < 1.0
 
     def test_forward_runs_with_hebbian(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         x = torch.randn(2, 4)
         out, h = model(x, steps=3)
         assert out.shape == (2, 3, 4)
         assert torch.isfinite(out).all()
 
     def test_state_updates_after_forward(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         x = torch.randn(2, 4)
         model(x, steps=3)
         # Hebbian state must be non-zero after a non-trivial forward pass.
@@ -569,13 +569,13 @@ class TestHebbian:
 
     def test_diagonal_zero_in_hebb_state_w(self):
         # hebb_state_W must mirror the W diagonal constraint.
-        model = _make(6, use_hebbian=True)
+        model = _make(6, hebb_type="global")
         x = torch.randn(2, 6)
         model(x, steps=10)
         assert model.hebb_state_W.diagonal().abs().max().item() == 0.0
 
     def test_gradient_flows_to_hebb_factor(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         model.train()
         x = torch.randn(2, 4)
         out, _ = model(x, steps=3)
@@ -585,7 +585,7 @@ class TestHebbian:
 
     def test_gradient_flows_to_hebb_decay(self):
         # hebb_decay only participates in the graph from step ≥ 1, so use steps ≥ 2.
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         model.train()
         x = torch.randn(2, 4)
         out, _ = model(x, steps=3)
@@ -594,7 +594,7 @@ class TestHebbian:
         assert torch.isfinite(model.hebb_decay.grad).all()
 
     def test_gradient_flows_through_w_as_well(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         model.train()
         x = torch.randn(2, 4)
         out, _ = model(x, steps=3)
@@ -602,16 +602,18 @@ class TestHebbian:
         assert model.W.grad is not None
 
     def test_reset_clears_hebb_state(self):
-        model = _make(4, use_hebbian=True)
-        x = torch.randn(2, 4)
-        model(x, steps=3)
-        assert model.hebb_state_W.abs().sum().item() > 0.0
-        model.reset_state()
-        assert model.hebb_state_W.abs().sum().item() == 0.0
-        assert model.hebb_state_mem.abs().sum().item() == 0.0
+        # Verify that reset_state() zeroes buffers for all active hebb_type modes.
+        for htype in ("global", "neuron", "synapse"):
+            model = _make(4, hebb_type=htype)
+            x = torch.randn(2, 4)
+            model(x, steps=3)
+            assert model.hebb_state_W.abs().sum().item() > 0.0
+            model.reset_state()
+            assert model.hebb_state_W.abs().sum().item() == 0.0, f"hebb_state_W not cleared for hebb_type={htype!r}"
+            assert model.hebb_state_mem.abs().sum().item() == 0.0, f"hebb_state_mem not cleared for hebb_type={htype!r}"
 
     def test_reset_also_resets_hidden_state(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         x = torch.randn(3, 4)
         model(x, steps=2)
         model.reset_state(batch_size=1)
@@ -621,7 +623,7 @@ class TestHebbian:
     def test_gradient_checkpointing_compatible(self):
         model = OdyssNet(
             num_neurons=4, input_ids=[0], output_ids=[3],
-            device="cpu", gradient_checkpointing=True, use_hebbian=True,
+            device="cpu", gradient_checkpointing=True, hebb_type="global",
         )
         model.train()
         x = torch.randn(2, 4)
@@ -631,7 +633,98 @@ class TestHebbian:
         assert model.hebb_factor.grad is not None
 
     def test_hebb_factor_in_named_parameters(self):
-        model = _make(4, use_hebbian=True)
+        model = _make(4, hebb_type="global")
         param_names = {n for n, _ in model.named_parameters()}
         assert 'hebb_factor' in param_names
         assert 'hebb_decay' in param_names
+
+    def test_invalid_hebb_type_raises(self):
+        with pytest.raises(ValueError):
+            _make(4, hebb_type="invalid")
+
+
+# ===========================================================================
+# Heterogeneous Hebbian Types
+# ===========================================================================
+
+class TestHebbianTypes:
+    def test_none_no_params(self):
+        model = _make(6)
+        assert model.hebb_type is None
+        assert model.hebb_factor is None
+        assert model.hebb_decay is None
+        assert not hasattr(model, 'hebb_state_W')
+
+    def test_global_scalar_shape(self):
+        model = _make(6, hebb_type="global")
+        assert model.hebb_factor.shape == torch.Size([])
+        assert model.hebb_decay.shape  == torch.Size([])
+
+    def test_neuron_vector_shape(self):
+        n = 6
+        model = _make(n, hebb_type="neuron")
+        assert model.hebb_factor.shape == (n,)
+        assert model.hebb_decay.shape  == (n,)
+
+    def test_synapse_matrix_shape(self):
+        n = 6
+        model = _make(n, hebb_type="synapse")
+        assert model.hebb_factor.shape == (n, n)
+        assert model.hebb_decay.shape  == (n, n)
+
+    def test_neuron_buffers_correct(self):
+        model = _make(5, hebb_type="neuron")
+        assert model.hebb_state_W.shape   == (5, 5)
+        assert model.hebb_state_mem.shape == (5,)
+
+    def test_synapse_buffers_correct(self):
+        model = _make(5, hebb_type="synapse")
+        assert model.hebb_state_W.shape   == (5, 5)
+        assert model.hebb_state_mem.shape == (5,)
+
+    def test_neuron_forward_finite(self):
+        model = _make(5, hebb_type="neuron")
+        x = torch.randn(2, 5)
+        out, _ = model(x, steps=4)
+        assert out.shape == (2, 4, 5)
+        assert torch.isfinite(out).all()
+
+    def test_synapse_forward_finite(self):
+        model = _make(5, hebb_type="synapse")
+        x = torch.randn(2, 5)
+        out, _ = model(x, steps=4)
+        assert out.shape == (2, 4, 5)
+        assert torch.isfinite(out).all()
+
+    def test_synapse_gradient_flows_to_factor_matrix(self):
+        # W_eff = W + hebb_lr * hebb_state — gradient must reach the (N,N) factor.
+        model = _make(4, hebb_type="synapse")
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+        assert model.hebb_factor.grad.shape == (4, 4)
+        assert torch.isfinite(model.hebb_factor.grad).all()
+
+    def test_neuron_gradient_flows_to_factor_vector(self):
+        model = _make(4, hebb_type="neuron")
+        model.train()
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+        assert model.hebb_factor.grad.shape == (4,)
+        assert torch.isfinite(model.hebb_factor.grad).all()
+
+    def test_synapse_diagonal_zero_in_hebb_state_w(self):
+        model = _make(6, hebb_type="synapse")
+        x = torch.randn(2, 6)
+        model(x, steps=10)
+        assert model.hebb_state_W.diagonal().abs().max().item() == 0.0
+
+    def test_synapse_factor_in_named_parameters(self):
+        model = _make(4, hebb_type="synapse")
+        names = {n for n, _ in model.named_parameters()}
+        assert 'hebb_factor' in names
+        assert 'hebb_decay' in names

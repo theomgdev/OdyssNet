@@ -32,7 +32,7 @@ model = OdyssNet(
     gate=None,           # Default resolves to ['none', 'none', 'identity']
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
-    use_hebbian=False,   # Optional: Enables online Hebbian plasticity
+    hebb_type=None,      # Optional: Plasticity resolution — None, 'global', 'neuron', or 'synapse'
 )
 ```
 
@@ -65,13 +65,22 @@ model = OdyssNet(
     *   `'continuous'`: Initializes only Linear Projection. Use for float-only inputs (e.g., vision, audio). Saves VRAM.
 *   `tie_embeddings` (bool): 
     *   If `True`, ties the input embedding weights to the output decoder weights, saving significant VRAM and parameter count (Symmetric `vocab_size` only). Default is `False`.
-*   `use_hebbian` (bool): Enables **online Hebbian plasticity**. Default is `False`.
-    *   When enabled, two learnable scalar parameters are created:
-        *   `hebb_factor` (raw logit → `sigmoid` → Hebbian learning rate ≈ 0.047 initially)
-        *   `hebb_decay` (raw logit → `sigmoid` → correlation retention ≈ 0.90 initially)
-    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and adds a scaled version to the effective weight matrix: $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$.
+*   `hebb_type` (str or None): Controls the structural resolution of **Heterogeneous Synaptic Plasticity**. Default is `None` (plasticity disabled).
+
+    | `hebb_type` | Parameter Shape | Extra Params | Mechanics |
+    |---|---|---|---|
+    | `None` | — | 0 | Disabled. |
+    | `"global"` | scalar `()` | +2 | Uniform plasticity — the whole network is equally plastic. |
+    | `"neuron"` | vector `(N,)` | +2N | Per-neuron plasticity — each neuron learns its own adaptation rate. |
+    | `"synapse"` | matrix `(N, N)` | +2N² | Per-synapse plasticity — each connection has its own factor and decay. |
+
+    *   Two learnable logit parameters are created according to the resolution:
+        *   `hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
+        *   `hebb_decay` (raw logit → `sigmoid` → retention ≈ 0.90 initially)
+    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$, where $\odot$ is element-wise multiplication with broadcasting appropriate to the chosen resolution.
     *   The Hebbian state is persisted across forward calls via registered buffers (`hebb_state_W`, `hebb_state_mem`) and is cleared by `reset_state()`.
     *   Both `hebb_factor` and `hebb_decay` are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
+    *   **Memory cost**: `"global"` adds negligible overhead; `"neuron"` adds $O(N)$; `"synapse"` triples total parameter count to $3N^2$.
     *   See [ChaosGrad — Parameter Groups](#parameter-groups) for how the optimizer treats these parameters.
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
     *   `None`: Default configuration with memory identity gate enabled, others disabled.
@@ -192,7 +201,7 @@ The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed pr
 ```python
 from odyssnet import OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
 
-# Standard (Legacy Compatible — uses AdamW8bit or AdamW)
+# Auto-selects AdamW8bit (CUDA) or AdamW (CPU)
 trainer = OdyssNetTrainer(model, device='cuda')
 
 # ChaosGrad Only — Fixed LR, No Scheduler (Observe with your own LR)

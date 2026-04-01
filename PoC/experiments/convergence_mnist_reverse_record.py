@@ -1,5 +1,5 @@
 """
-OdyssNet 2.0 - Inverse MNIST Reverse Record Experiment
+OdyssNet 2.1 - Inverse MNIST Reverse Record Experiment
 
 This experiment tests the network's ability to GENERATE images from labels,
 reversing the normal classification direction.
@@ -115,7 +115,7 @@ def main():
     set_seed(42)
     
     print("=" * 70)
-    print("OdyssNet 2.0: INVERSE MNIST REVERSE RECORD (Generation Record)")
+    print("OdyssNet 2.1: INVERSE MNIST REVERSE RECORD (Generation Record)")
     print("=" * 70)
     print("Task: Generate 28×28 MNIST images from digit labels (0-9)")
     print("Direction: Digit (scalar) -> Image (784 pixels)")

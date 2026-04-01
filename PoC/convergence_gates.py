@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
 
 def main():
-    print("OdyssNet 2.0: The Impossible XOR (Zero-Hidden)...")
+    print("OdyssNet 2.1: The Impossible XOR (Zero-Hidden)...")
     set_seed(42) # Reproducibility
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'

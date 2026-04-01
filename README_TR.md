@@ -1,4 +1,4 @@
-# OdyssNet 2.0: Zamansal Devrim
+# OdyssNet 2.1: Zamansal Devrim
 
 **OdyssNet, Zaman'ın nihai Gizli Katman olduğunun kanıtıdır.**
 
@@ -7,7 +7,7 @@ Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğ
 > **Sıfır-Gizli Atılım**
 >
 > 1969'da Minsky & Papert, gizli katmanı olmayan bir sinir ağının XOR gibi doğrusal olmayan problemleri çözemeyeceğini kanıtladı.
-> **OdyssNet 2.0 bu sınırı aştı.**
+> **OdyssNet 2.1 bu sınırı aştı.**
 >
 > Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak OdyssNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
 
@@ -15,7 +15,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 > 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> OdyssNet 2.0, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+> OdyssNet 2.1, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
 
 ## TLDR
 
@@ -32,7 +32,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
-*   **Hebbian Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`use_hebbian=True`) — ağ zamansal nöron korelasyonlarını biriktirir ve iki tamamen türevlenebilir logit parametresi (`hebb_factor`, `hebb_decay`) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
+*   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='synapse'|'neuron'|'global'`) — ağ zamansal nöron korelasyonlarını biriktirir ve global, nöron başına veya sinaps başına çözünürlükte tamamen türevlenebilir logit parametreleri (`hebb_factor`, `hebb_decay`) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
@@ -151,14 +151,14 @@ Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühen
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
 *   **ChaosGrad Optimizer:** İç bağlantıları zekice işleyerek **Hafıza Geri Beslemesini** (nöron özbağlantıları) **Kaos Çekirdeğinden** (çapraz bağlantılar) izole eder, **Gate Parametrelerini** bağımsız bir grup olarak `gate_lr_mult` ve `gate_decay` ile ayrı optimize eder ve **Hebbian logitlerini** (`hebb_factor`, `hebb_decay`) sıfır ağırlık çürümeli kendi grubuna yerleştirerek plastisit hızının bağımsız ayarlanmasını sağlar.
-*   **Hebbian Plastisitesi:** `use_hebbian=True` olduğunda her adımda zamansal korelasyonlar $h_t \otimes h_{t-1}$ biriktirilir ve $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$ olarak etkin ağırlık matrisine enjekte edilir. Öğrenme hızı ve çürüme oranının kendisi de öğrenilebilir olduğundan ağ, sinaptik ağırlıklarının aktivite desenlerini ne kadar hızlı takip edeceğini adaptif olarak belirler.
+*   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda zamansal korelasyonlar $h_t \otimes h_{t-1}$ biriktirilir ve $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$ olarak enjekte edilir — `hebb_factor` global bir skaler, nöron başına vektör veya tam sinaps başına matris olabilir. Tüm çeşitler öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
 *   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?
 
 OdyssNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi temelden farklıdır.
 
-| Özellik | Standart RNN / LSTM | OdyssNet 2.0 |
+| Özellik | Standart RNN / LSTM | OdyssNet 2.1 |
 | :--- | :--- | :--- |
 | **Giriş Akışı** | Sürekli Akış (örn. cümledeki kelimeler) | **Tek Nabız** ($t=0$'da İmpuls) |
 | **Amaç** | Dizi İşleme (Ayrıştırma) | **Derin Düşünme** (Sindirme) |
@@ -322,7 +322,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
 
     ```text
-    OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet 2.1: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```

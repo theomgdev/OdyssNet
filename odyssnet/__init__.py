@@ -1,3 +1,5 @@
+__version__ = "2.1.0"
+
 from .core.network import OdyssNet
 from .training.trainer import OdyssNetTrainer
 from .training.chaos_optimizer import ChaosGrad, ChaosGradConfig

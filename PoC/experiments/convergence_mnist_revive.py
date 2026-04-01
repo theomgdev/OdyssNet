@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
 
 def main():
-    print("OdyssNet 2.0: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
+    print("OdyssNet 2.1: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
     print("Hypothesis: Reviving weak synapses with random initialization improves learning capacity.")
     set_seed(42)
     

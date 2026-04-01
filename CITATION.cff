@@ -5,7 +5,7 @@ authors:
   given-names: "Cahit"
   email: "cksoftwaresystems@gmail.com"
 title: "OdyssNet: The Trainable Dynamic System & Zero-Hidden Architecture"
-version: 2.0.0
+version: 2.1.0
 date-released: 2025-12-12
 url: "https://github.com/theomgdev/OdyssNet"
 abstract: "OdyssNet is a chaotic, fully connected neural network architecture that proves temporal depth (thinking steps) can replace spatial depth (hidden layers). It solves non-linear problems like MNIST with Zero Hidden Layers by utilizing Trainable Chaos."

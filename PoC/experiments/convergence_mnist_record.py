@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
 
 def main():
-    print("OdyssNet 2.0: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
+    print("OdyssNet 2.1: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
     print("Strategy: 10 Sequential Chunks (79 pixels) -> Embed(3 Neurons) -> Core(10) -> Decoder(10 Classes)")
     set_seed(42)
     

@@ -130,7 +130,7 @@ class TestClassifyParams:
 
     def test_hebbian_params_in_hebbian_group(self):
         model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
-                         device="cpu", use_hebbian=True)
+                         device="cpu", hebb_type="global")
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "hebbian" in names
@@ -140,7 +140,7 @@ class TestClassifyParams:
 
     def test_all_params_covered_with_hebbian(self):
         model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
-                         device="cpu", use_hebbian=True)
+                         device="cpu", hebb_type="global")
         groups = ChaosGrad.classify_params(model)
         covered = {id(p) for g in groups for p in g["params"]}
         all_params = {id(p) for p in model.parameters()}
@@ -148,7 +148,7 @@ class TestClassifyParams:
 
     def test_hebbian_step_updates_params(self):
         model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
-                         device="cpu", use_hebbian=True)
+                         device="cpu", hebb_type="global")
         opt = _optimizer(model)
         factor_before = model.hebb_factor.data.clone()
         x = torch.randn(2, 5)

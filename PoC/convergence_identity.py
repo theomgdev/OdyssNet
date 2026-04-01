@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
 
 def main():
-    print("OdyssNet 2.0: The Atomic Identity...")
+    print("OdyssNet 2.1: The Atomic Identity...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     

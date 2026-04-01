@@ -2,7 +2,7 @@
 
 This document outlines the standards and best practices for contributing Proof-of-Concept (PoC) scripts and innovative experiments to the OdyssNet project.
 
-OdyssNet 2.0 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
+OdyssNet 2.1 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
 
 ---
 
@@ -110,7 +110,7 @@ When `gate` parameters exist, ChaosGrad handles them in a dedicated `gates` grou
 *   Recommended start for stronger gate adaptation: `gate_lr_mult=1.1` to `1.3`, `gate_decay=0.0`.
 
 ### Hebbian Optimizer Contract (ChaosGrad)
-When `use_hebbian=True`, ChaosGrad places `hebb_factor` and `hebb_decay` in a dedicated `hebbian` group.
+When `hebb_type` is set, ChaosGrad places `hebb_factor` and `hebb_decay` in a dedicated `hebbian` group.
 *   `hebbian_lr_mult`: Independent LR multiplier for Hebbian logits. Default is `2.0` — plasticity scalars benefit from faster updates than the core weights.
 *   **Weight decay is always `0.0`** for this group regardless of the global `weight_decay` setting. The logits are unbounded by design; regularizing them would corrupt the learned plasticity rate.
 *   Recommended start: leave default (`hebbian_lr_mult=2.0`). Increase to `3.0–4.0` only if Hebbian correlations converge too slowly.
@@ -136,26 +136,45 @@ For tasks requiring high input/output dimensionality (like vision or LLMs) witho
 model = OdyssNet(num_neurons=10, ..., vocab_size=(784, 10))
 ```
 
-### F. Hebbian Plasticity (Online Synaptic Adaptation)
-For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics:
-*   **Enable:** `use_hebbian=True`.
-*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and injects them as $W_{\text{eff}} = W + \text{hebb\_lr} \cdot C_t$. The Hebbian learning rate and retention factor are **learnable** — the network discovers how plastic it should be.
+### F. Heterogeneous Synaptic Plasticity (`hebb_type`)
+For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics — enable one of the three resolution levels:
+
+| `hebb_type` | Extra Params | When to use |
+|---|---|---|
+| `"global"` | +2 | Quick experiments; uniform plasticity across all synapses. |
+| `"neuron"` | +2N | RL and reactive environments; per-neuron "caste" differentiation. |
+| `"synapse"` | +2N² | Logic, NLP, and reasoning tasks requiring **dynamic variable binding**. |
+
+*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$. Both `hebb_factor` and `hebb_decay` are **learnable** — the network discovers how plastic each synapse should be.
 *   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across intra-sequence forward calls and are explicitly cleared on `reset_state()` between sequences.
 *   **Best Use Case (Generation / Sequential Building):** Hebbian shines in tasks where step T relies heavily on expanding or completing a pattern from step T-1. It provides a powerful **short-term working memory** between steps, acting as a dynamic shortcut that fast-tracks sequence generation.
-*   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise". When the network tries to interpret a new independent feature at step 2, the Hebbian state inappropriately forces it to view the input through the lens of the feature from step 1, confusing the base neural representation.
+*   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise".
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
 *   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
 
 ```python
-# Minimal (recommended starting point)
+# NLP / Logic / Reasoning — synapse-level plasticity for dynamic variable binding
 model = OdyssNet(
     num_neurons=32,
     input_ids=[0, 1],
     output_ids=[31],
     activation='tanh',
-    use_hebbian=True,    # Enable online plasticity
+    hebb_type='synapse',   # Per-synapse plasticity
     device='cuda',
 )
+
+# RL / reactive environments — neuron-level caste differentiation
+model = OdyssNet(
+    num_neurons=64,
+    input_ids=list(range(8)),
+    output_ids=list(range(56, 64)),
+    activation='tanh',
+    hebb_type='neuron',    # Per-neuron plasticity
+    device='cuda',
+)
+
+# Quick experiment — global plasticity
+model = OdyssNet(..., hebb_type='global')
 
 # With a custom Hebbian LR multiplier via ChaosGrad config
 cfg = ChaosGradConfig.default(lr=3e-4)
@@ -168,7 +187,7 @@ trainer = OdyssNetTrainer(model, chaos_config=cfg)
 ## ⚡ Hardware Optimization
 
 ### 1. 8-Bit Optimizers (bitsandbytes)
-OdyssNet V2.0 automatically uses `bitsandbytes` 8-bit AdamW if a CUDA GPU is detected. This reduces VRAM usage by ~75% for optimizer states.
+OdyssNet V2.1 automatically uses `bitsandbytes` 8-bit AdamW if a CUDA GPU is detected. This reduces VRAM usage by ~75% for optimizer states.
 *   **Default:** Enabled.
 *   **Disable:** Set `os.environ["NO_BNB"] = "1"` before importing `odyssnet`.
 *   **Debug:** Set `os.environ["VERBOSE_BNB"] = "1"` to see loading logs.
@@ -278,7 +297,7 @@ Before submitting a new PoC:
 2.  [ ] Did you place it in the correct folder (`PoC/` vs `PoC/experiments/`)?
 3.  [ ] Are you using `OdyssNetTrainer`?
 4.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
-5.  [ ] If you enabled `use_hebbian=True`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
+5.  [ ] If you set `hebb_type`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
 6.  [ ] Does it converge reliably?
 7.  [ ] Does the terminal output clearly explain what is happening?
 
