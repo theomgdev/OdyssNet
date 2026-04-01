@@ -56,6 +56,9 @@ REGENERATION_THRESHOLD = 0.01
 REGENERATION_PERCENTAGE = 0.001
 REGENERATION_INTERVAL = 10
 
+# NaN/Inf diagnosis — set False after root cause is found
+DEBUG = False
+
 # TOKENIZER CONFIG
 USE_TIKTOKEN = False
 TIKTOKEN_ENCODING = "o200k_base"
@@ -273,7 +276,7 @@ def generate(model, tokenizer, start_str="The", length=None, temperature=0.8, to
 
     return tokenizer.decode(input_seq)
 
-def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_count=-1, lr=1e-4, activation=None, weight_init=None, gates=None, hook=None):
+def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_count=-1, lr=1e-4, activation=None, weight_init=None, gates=None, hook=None, debug=False):
     if input_count == -1:
         input_neuron_count = num_neurons // 2
     else:
@@ -300,7 +303,8 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         gradient_checkpointing=True,
         vocab_size=vocab_size,
         vocab_mode='discrete',
-        tie_embeddings=TIE_EMBEDDINGS
+        tie_embeddings=TIE_EMBEDDINGS,
+        debug=debug
     )
 
     # Build scheduler config from global settings
@@ -471,10 +475,10 @@ def main():
 
     # --- MODEL SETUP ---
     model, trainer, input_ids, output_ids = initialize_system(
-        VOCAB_SIZE, NUM_NEURONS, DEVICE, 
-        input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT, 
+        VOCAB_SIZE, NUM_NEURONS, DEVICE,
+        input_count=INPUT_NEURON_COUNT, output_count=OUTPUT_NEURON_COUNT,
         lr=LEARNING_RATE, activation=ACTIVATION, weight_init=WEIGHT_INIT, gates=GATES,
-        hook=anomaly_event_handler
+        hook=anomaly_event_handler, debug=DEBUG
     )
     NUM_NEURONS = model.num_neurons
 

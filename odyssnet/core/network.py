@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from typing import cast
 
 class OdyssNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, debug=False):
         super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -22,6 +22,9 @@ class OdyssNet(nn.Module):
                  num_neurons = 0
         
         self.num_neurons = num_neurons
+        self.debug = debug
+        if debug:
+            torch.autograd.set_detect_anomaly(True)
 
         self.input_ids = input_ids
         self.output_ids = output_ids
@@ -158,6 +161,13 @@ class OdyssNet(nn.Module):
         # Internal State (hidden state h_t)
         self.state = torch.zeros(1, num_neurons, device=device)
         
+    def _dbg(self, tensor, label):
+        # Guard must be at the call site (`if self.debug: self._dbg(...)`) not only here.
+        # Python evaluates f-string arguments before entering this function, so an internal
+        # check would still build every label string on every step when debug=False.
+        if self.debug and not torch.isfinite(tensor).all():
+            raise RuntimeError(f"NaN/Inf — {label}")
+
     def _build_activation(self, name):
         if name is None:
             return nn.Identity()
@@ -424,6 +434,7 @@ class OdyssNet(nn.Module):
             # hebb_mem_contrib: (N,)   tensor or None — added to memory_feedback.
             W_eff = self.W if hebb_W_contrib is None else self.W + hebb_W_contrib
             signal = F.linear(h_t_in, W_eff.t(), self.B)
+            if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
 
             if self.core_gate_act is not None and self.core_gate is not None:
                 core_gate = self.core_gate_act(self.core_gate.to(signal.dtype))
@@ -432,15 +443,17 @@ class OdyssNet(nn.Module):
             mem_weights = self.memory_feedback if hebb_mem_contrib is None else self.memory_feedback + hebb_mem_contrib
             feedback = h_t_in * mem_weights
             feedback = self.mem_act(feedback)
+            if self.debug: self._dbg(feedback, f"memory_feedback (step {t_idx})")
 
             if self.mem_gate_act is not None and self.memory_gate is not None:
                 memory_gate = self.mem_gate_act(self.memory_gate.to(feedback.dtype))
                 feedback = feedback * memory_gate.unsqueeze(0)
 
             signal = signal + feedback
+            if self.debug: self._dbg(signal, f"signal+feedback (step {t_idx})")
 
             input_scale = self._get_input_scale(signal.dtype)
-            
+
             if x_input_info is not None:
                 if isinstance(x_input_info, tuple):
                     if len(x_input_info) == 2 and x_input_info[0] is True:
@@ -457,11 +470,15 @@ class OdyssNet(nn.Module):
                 else:
                     # Legacy Dense Injection
                     signal = signal + x_input_info
-            
+
+            if self.debug: self._dbg(signal, f"signal/pre-activation (step {t_idx})")
             activated = self.act(signal)
-            
+            if self.debug: self._dbg(activated, f"activated/{self.act.__class__.__name__} (step {t_idx})")
+
             # Dropout & StepNorm
-            return self.norm(self.drop(activated))
+            out = self.norm(self.drop(activated))
+            if self.debug: self._dbg(out, f"step_norm output (step {t_idx})")
+            return out
 
         # Thinking Ratio (Temporal Stretching)
         ratio = 1
@@ -635,6 +652,8 @@ class OdyssNet(nn.Module):
                 else:  # "global"
                     cur_hebb_W   = hebb_lr * local_hebb_W
                     cur_hebb_mem = hebb_lr * local_hebb_mem
+                if self.debug: self._dbg(cur_hebb_W,   f"cur_hebb_W (step {t})")
+                if self.debug: self._dbg(cur_hebb_mem, f"cur_hebb_mem (step {t})")
             else:
                 cur_hebb_W   = None
                 cur_hebb_mem = None
@@ -658,6 +677,8 @@ class OdyssNet(nn.Module):
                 corr_W = torch.einsum('bi,bj->ij', h_t.detach(), h_prev.detach()) / (batch_sz * self.num_neurons)
                 corr_W.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
                 corr_mem = (h_t.detach() * h_prev.detach()).mean(dim=0)
+                if self.debug: self._dbg(corr_W,   f"corr_W (step {t})")
+                if self.debug: self._dbg(corr_mem, f"corr_mem (step {t})")
                 if self.hebb_type == "neuron":
                     local_hebb_W   = hebb_ret.unsqueeze(1) * local_hebb_W.detach()   + hebb_lr.unsqueeze(1) * corr_W
                     local_hebb_mem = hebb_ret * local_hebb_mem.detach() + hebb_lr * corr_mem
@@ -667,6 +688,8 @@ class OdyssNet(nn.Module):
                 else:  # "global"
                     local_hebb_W   = hebb_ret * local_hebb_W.detach()   + hebb_lr * corr_W
                     local_hebb_mem = hebb_ret * local_hebb_mem.detach() + hebb_lr * corr_mem
+                if self.debug: self._dbg(local_hebb_W,   f"local_hebb_W (step {t})")
+                if self.debug: self._dbg(local_hebb_mem, f"local_hebb_mem (step {t})")
 
             # Smart Output Collection
             if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:

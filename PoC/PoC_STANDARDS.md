@@ -290,6 +290,18 @@ Use the `prepare_input` utility implicitly via the Trainer.
 
 ---
 
+## 🔍 Troubleshooting
+
+### Loss is NaN or Inf
+
+If your experiment produces `Loss nan` / `PPL nan`, enable the built-in diagnosis mode before anything else:
+
+```python
+model = OdyssNet(..., debug=True)
+```
+
+With `debug=True` the model checks every critical forward-pass operation (linear recurrence, memory feedback, activation, StepNorm, Hebbian correlation and accumulation) and raises a `RuntimeError` at the first operation that produces a non-finite value, with the operation name and step index. `debug=True` also automatically enables `torch.autograd.set_detect_anomaly(True)`, so backward-pass NaN is caught with a full stack trace at no extra setup cost. Overhead is zero when `debug=False`.
+
 ## 🚀 Checklist for New Contributors
 
 Before submitting a new PoC:
@@ -298,7 +310,7 @@ Before submitting a new PoC:
 3.  [ ] Are you using `OdyssNetTrainer`?
 4.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
 5.  [ ] If you set `hebb_type`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
-6.  [ ] Does it converge reliably?
+6.  [ ] Does it converge reliably? (If you see `Loss nan`, see **Troubleshooting** above.)
 7.  [ ] Does the terminal output clearly explain what is happening?
 
 Welcome to the Order of the Algorithm. Let's code Time.

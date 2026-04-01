@@ -33,6 +33,7 @@ model = OdyssNet(
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
     hebb_type=None,      # Optional: Plasticity resolution — None, 'global', 'neuron', or 'synapse'
+    debug=False,         # NaN/Inf diagnosis — raises RuntimeError at the first offending operation
 )
 ```
 
@@ -89,6 +90,7 @@ model = OdyssNet(
     *   `'none'`: Completely disables the gate branch (no learnable parameters).
     *   `'identity'`: Enables identity gating with learnable parameters (starts at identity function but can adapt).
     *   Gate parameters are initialized using the 4th entry in `weight_init` (default: `'zero'`).
+*   `debug` (bool): Enables NaN/Inf diagnosis mode. Default is `False`. When `True`, every critical operation in the forward pass (linear recurrence, memory feedback, activation, StepNorm, Hebbian correlation and accumulation) is checked after execution; the first non-finite value raises `RuntimeError` with the operation name and step index. Also automatically calls `torch.autograd.set_detect_anomaly(True)` so backward-pass NaN is caught with a full stack trace. Disable after the root cause is found — overhead is zero when `False`.
 
 ### Vocabulary Decoupling
 
