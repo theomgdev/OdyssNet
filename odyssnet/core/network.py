@@ -357,7 +357,7 @@ class OdyssNet(nn.Module):
                     self.hebb_decay.data[weak_mask]  =  2.2
 
             total_revived = count
-            total_params = self.W.numel() - self.W.shape[0]
+            total_params = self.get_num_params()
             
             return total_revived, total_params
             

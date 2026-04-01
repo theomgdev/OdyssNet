@@ -33,7 +33,6 @@ def main():
     NUM_NEURONS = INPUT_SIZE + OUTPUT_SIZE
     
     print(f"Neurons: {NUM_NEURONS} (784 In + 10 Out + 0 Hidden)")
-    print(f"Params: {NUM_NEURONS*NUM_NEURONS} (~630k)")
     
     input_ids = list(range(784))
     output_ids = list(range(784, 794))
@@ -45,6 +44,8 @@ def main():
         pulse_mode=True, 
         device=DEVICE
     )
+    
+    print(f"Params: {model.get_num_params()} (~630k)")
     
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()

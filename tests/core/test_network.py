@@ -497,7 +497,7 @@ class TestUtilityMethods:
             model.W.fill_diagonal_(0.0)
         revived, total = model.regenerate_weak_weights(threshold=0.01)
         assert revived >= 0
-        assert total == model.W.numel() - model.W.shape[0]
+        assert total == model.get_num_params()
 
     def test_regenerate_diagonal_not_revived(self):
         model = _make(6)

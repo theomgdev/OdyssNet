@@ -27,7 +27,6 @@ def main():
     NUM_NEURONS = INPUT_SIZE + OUTPUT_SIZE
     
     print(f"Neurons: {NUM_NEURONS} (49 In + 10 Out + 0 Hidden)")
-    print(f"Params: {NUM_NEURONS*NUM_NEURONS} (~3.5k)")
     
     input_ids = list(range(49))
     output_ids = list(range(49, 59))
@@ -39,6 +38,8 @@ def main():
         pulse_mode=True, 
         device=DEVICE
     )
+    
+    print(f"Params: {model.get_num_params()} (~3.5k)")
     
     train_transform = transforms.Compose([
         transforms.Resize((7, 7)),
