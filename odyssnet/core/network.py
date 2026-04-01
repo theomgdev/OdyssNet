@@ -166,7 +166,12 @@ class OdyssNet(nn.Module):
         # Python evaluates f-string arguments before entering this function, so an internal
         # check would still build every label string on every step when debug=False.
         if self.debug and not torch.isfinite(tensor).all():
-            raise RuntimeError(f"NaN/Inf — {label}")
+            n_nan = tensor.isnan().sum().item()
+            n_inf = tensor.isinf().sum().item()
+            raise RuntimeError(
+                f"NaN/Inf — {label} | "
+                f"nan={n_nan} inf={n_inf} shape={list(tensor.shape)} dtype={tensor.dtype}"
+            )
 
     def _build_activation(self, name):
         if name is None:
@@ -673,10 +678,17 @@ class OdyssNet(nn.Module):
             # while hebb_lr and hebb_ret remain in the graph for gradient flow.
             if self.hebb_type is not None:
                 batch_sz = h_t.size(0)
-                # Apply Hopfield Theory Normalization (1/N) to avoid matrix-mult Scale Explosion
-                corr_W = torch.einsum('bi,bj->ij', h_t.detach(), h_prev.detach()) / (batch_sz * self.num_neurons)
+                # AMP autocast overrides explicit .float() casts for matmul-family ops
+                # (einsum included), forcing them back to float16. Disable autocast here
+                # so the correlation is always accumulated in float32.
+                with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
+                    h_t_f    = h_t.detach().float()
+                    h_prev_f = h_prev.detach().float()
+                    if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
+                    if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
+                    corr_W   = torch.einsum('bi,bj->ij', h_t_f, h_prev_f) / (batch_sz * self.num_neurons)
+                    corr_mem = (h_t_f * h_prev_f).mean(dim=0)
                 corr_W.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
-                corr_mem = (h_t.detach() * h_prev.detach()).mean(dim=0)
                 if self.debug: self._dbg(corr_W,   f"corr_W (step {t})")
                 if self.debug: self._dbg(corr_mem, f"corr_mem (step {t})")
                 if self.hebb_type == "neuron":
