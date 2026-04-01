@@ -487,6 +487,15 @@ class OdyssNet(nn.Module):
             local_hebb_W   = self.hebb_state_W.detach().clone()
             local_hebb_mem = self.hebb_state_mem.detach().clone()
 
+        # Precompute Dense Input/Output Scale Vectors
+        input_scale_vec = torch.ones(self.num_neurons, dtype=h_t.dtype, device=self.device)
+        if len(input_pos) > 0:
+            input_scale_vec[input_pos] = self._get_input_scale(h_t.dtype)
+        
+        output_scale_vec = torch.ones(self.num_neurons, dtype=h_t.dtype, device=self.device)
+        if len(output_pos) > 0:
+            output_scale_vec[output_pos] = self._get_output_scale(h_t.dtype)
+
         for t in range(steps):
             # Prepare input for this step
             x_step_info = None
@@ -597,20 +606,15 @@ class OdyssNet(nn.Module):
                     elif x_input.ndim == 3:
                         # Sequential Input: (Batch, MultiSteps, Neurons)
                         if t % ratio == 0 and (t // ratio) < x_input.shape[1]:
-                            x_step = x_input[:, t // ratio, :].clone()
-                            x_step[:, input_pos] = x_step[:, input_pos] * self._get_input_scale(x_step.dtype)
-                            x_step_info = x_step
+                            x_step_info = x_input[:, t // ratio, :] * input_scale_vec
                             
                     elif self.pulse_mode:
                         if t == 0:
-                            x_step = x_input.clone()
-                            x_step[:, input_pos] = x_step[:, input_pos] * self._get_input_scale(x_step.dtype)
-                            x_step_info = x_step
+                            x_step_info = x_input * input_scale_vec
                     else:
                         # Continuous mode
                         if t == 0:
-                            self._cached_scaled_input = x_input.clone()
-                            self._cached_scaled_input[:, input_pos] = self._cached_scaled_input[:, input_pos] * self._get_input_scale(self._cached_scaled_input.dtype)
+                            self._cached_scaled_input = x_input * input_scale_vec
                         x_step_info = self._cached_scaled_input
             
             # Compute per-step Hebbian contributions before advancing the state.
@@ -650,7 +654,8 @@ class OdyssNet(nn.Module):
             # while hebb_lr and hebb_ret remain in the graph for gradient flow.
             if self.hebb_type is not None:
                 batch_sz = h_t.size(0)
-                corr_W = torch.einsum('bi,bj->ij', h_t.detach(), h_prev.detach()) / batch_sz
+                # Apply Hopfield Theory Normalization (1/N) to avoid matrix-mult Scale Explosion
+                corr_W = torch.einsum('bi,bj->ij', h_t.detach(), h_prev.detach()) / (batch_sz * self.num_neurons)
                 corr_W.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
                 corr_mem = (h_t.detach() * h_prev.detach()).mean(dim=0)
                 if self.hebb_type == "neuron":
@@ -678,9 +683,9 @@ class OdyssNet(nn.Module):
             stacked_outputs = torch.stack(outputs, dim=1)
         else:
             # Avoid allocating (B, T, N) when only the final state is needed.
-            # .clone() ensures the in-place scaling below does not modify h_t.
-            stacked_outputs = h_t.unsqueeze(1).clone()
-        stacked_outputs[:, :, output_pos] = stacked_outputs[:, :, output_pos] * self._get_output_scale(stacked_outputs.dtype)
+            stacked_outputs = h_t.unsqueeze(1)
+            
+        stacked_outputs = stacked_outputs * output_scale_vec.unsqueeze(0).unsqueeze(0)
 
         # Vocab Decoding
         if self.output_decoder is not None:
