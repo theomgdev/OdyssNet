@@ -65,8 +65,8 @@ def main():
     test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
     kwargs = {'num_workers': 0, 'pin_memory': True} if DEVICE == 'cuda' else {}
-    train_loader = DataLoader(train_dataset, batch_size=1024, shuffle=True, **kwargs)
-    test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, **kwargs)
+    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, **kwargs)
     
     NUM_EPOCHS = 100
     THINKING_STEPS = 10

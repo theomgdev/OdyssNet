@@ -79,9 +79,9 @@ def main():
         
         for batch_idx, (data, target) in enumerate(train_loader):
             inputs_val = data.view(data.size(0), -1).to(DEVICE)
-            targets_val = torch.ones(data.size(0), 10, device=DEVICE) * -1.0
+            targets_val = torch.ones(data.size(0), 10, device=DEVICE) * -0.90
             for i, label in enumerate(target):
-                targets_val[i, label] = 1.0
+                targets_val[i, label] = 0.90
                 
             loss = trainer.train_batch(inputs_val, targets_val, thinking_steps=THINKING_STEPS)
             total_loss += loss

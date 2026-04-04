@@ -86,8 +86,8 @@ def main():
             inputs_val = data.view(data.size(0), -1).to(DEVICE, non_blocking=True)
             
             # Efficient target creation
-            targets_val = torch.ones(data.size(0), 10, device=DEVICE) * -1.0
-            targets_val.scatter_(1, target.view(-1, 1).to(DEVICE), 1.0)
+            targets_val = torch.ones(data.size(0), 10, device=DEVICE) * -0.90
+            targets_val.scatter_(1, target.view(-1, 1).to(DEVICE), 0.90)
                 
             loss = trainer.train_batch(inputs_val, targets_val, thinking_steps=THINKING_STEPS)
             total_loss += loss

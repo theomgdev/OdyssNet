@@ -229,14 +229,14 @@ class TestOptimizerStep:
 # ===========================================================================
 
 class TestColdStartState:
-    def test_prev_grad_is_bfloat16(self):
+    def test_prev_grad_is_float32(self):
         model = _small_model()
         opt = _optimizer(model)
         _run_step(model, opt)
         for group in opt.param_groups:
             for p in group['params']:
                 if p in opt.state and opt.state[p]:
-                    assert opt.state[p]['prev_grad'].dtype == torch.bfloat16
+                    assert opt.state[p]['prev_grad'].dtype == torch.float32
 
     def test_momentum_is_float32(self):
         model = _small_model()
