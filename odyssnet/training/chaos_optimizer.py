@@ -311,7 +311,7 @@ class ChaosGrad(torch.optim.Optimizer):
             group_name = group.get('group_name',          'unknown')
             init_decay = self._INIT_DECAY.get(group_name, 0.0)
 
-            # The scheduler (if any) modifies group['lr'] to steer genesis_lr.
+            # group['lr'] is the genesis_lr — ChaosGrad derives per-param rates from it.
             genesis_lr = group.get('lr', self.defaults['lr'])
 
             for p in group['params']:

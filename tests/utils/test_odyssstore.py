@@ -184,7 +184,7 @@ class TestLoadCheckpoint:
 
     def test_load_checkpoint_restores_trainer_state(self, tmp_path):
         # experiment_llm.py passes trainer= to load_checkpoint so that the
-        # trainer's step_count, scheduler state etc. are fully restored.
+        # trainer's step_count, scaler state etc. are fully restored.
         os.environ["NO_BNB"] = "1"
         from odyssnet import OdyssNetTrainer
 

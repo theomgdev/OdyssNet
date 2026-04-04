@@ -2,7 +2,7 @@
 Unit tests for odyssnet.training.trainer.OdyssNetTrainer.
 
 Covers:
-- Initialisation (optimizer auto-selection, chaos config, scheduler config)
+- Initialisation (optimizer auto-selection, chaos config)
 - train_batch (basic step, loss returned, params updated)
 - predict (shapes, eval mode)
 - evaluate (returns scalar loss)
@@ -26,7 +26,6 @@ os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
 from odyssnet.training.chaos_optimizer import ChaosGrad
-from odyssnet.training.chaos_scheduler import TemporalSchedulerConfig
 
 
 # ---------------------------------------------------------------------------
@@ -74,19 +73,6 @@ class TestTrainerInit:
         t = OdyssNetTrainer(model, optimizer=custom_opt, device="cpu")
         assert isinstance(t.optimizer, torch.optim.AdamW)
         assert t._using_chaos_grad is False
-
-    def test_scheduler_none_by_default(self):
-        t = _trainer()
-        assert t.scheduler is None
-
-    def test_scheduler_created_when_config_provided(self):
-        from odyssnet.training.chaos_scheduler import TemporalScheduler
-        model = _model()
-        t = OdyssNetTrainer(
-            model, device="cpu", lr=1e-3,
-            scheduler_config=TemporalSchedulerConfig.short_experiment(),
-        )
-        assert isinstance(t.scheduler, TemporalScheduler)
 
     def test_custom_optimizer_used_directly(self):
         model = _model()

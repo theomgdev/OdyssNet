@@ -7,9 +7,6 @@ import os
 import time
 import warnings
 
-# Suppress the specific PyTorch warning about scheduler step order
-# This is a known artifact when using GradScaler (AMP) in the first epoch
-warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()` before `optimizer.step()`")
 
 # Disable BNB for this experiment to rule out quantization noise and use pure dynamics
 os.environ["NO_BNB"] = "1"
@@ -78,24 +75,16 @@ def main():
     test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
     # Hyperparameters for the Elite 480 model
-    BATCH_SIZE = 16 
+    BATCH_SIZE = 16
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=8)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=8)
     
     NUM_EPOCHS = 100
     steps_per_epoch = len(train_loader)
     
-    scheduler_config = dict(
-        warmup_steps=10 * steps_per_epoch,
-        max_steps=NUM_EPOCHS * steps_per_epoch,
-        min_lr_ratio=1e-6 / 1e-2
-    )
-    
     trainer = OdyssNetTrainer(
-        model, 
+        model,
         device=DEVICE, lr=1e-2,
-        scheduler_config=scheduler_config,
-        use_temporal_scheduler=True
     )
 
     loss_fn = nn.CrossEntropyLoss()
@@ -148,7 +137,7 @@ def main():
                 total += target.size(0)
         
         acc = 100.0 * correct / total
-        current_lr = trainer.scheduler.get_last_lr()[0] if trainer.scheduler else trainer.optimizer.param_groups[0]['lr']
+        current_lr = trainer.optimizer.param_groups[0]['lr']
         
         # Calculate time metrics
         elapsed = time.time() - start_time

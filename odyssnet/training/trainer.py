@@ -3,20 +3,17 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import math
-from typing import Any, Callable, cast
+from typing import Callable, cast
 from ..utils.data import prepare_input, to_tensor
 
 import os
 
-# Import ChaosGrad and TemporalScheduler
 from .chaos_optimizer import ChaosGrad
-from .chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-3, device='cpu',
                  gradient_persistence=0.0, synaptic_noise=0.0,
-                 scheduler_config=None, use_temporal_scheduler=None,
                  anomaly_hook=None):
         """
         Initializes the trainer.
@@ -30,10 +27,6 @@ class OdyssNetTrainer:
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
-            scheduler_config (dict, optional): Config dict for TemporalScheduler.
-                Use TemporalSchedulerConfig.default(), TemporalSchedulerConfig.llm(), etc.
-            use_temporal_scheduler (bool, optional): Force enable/disable TemporalScheduler.
-                None = auto (use when scheduler_config provided).
             anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
                 anomalies ('spike', 'plateau', 'increase').
         """
@@ -46,7 +39,6 @@ class OdyssNetTrainer:
 
         # --- Optimizer Initialization ---
         self._using_chaos_grad = False
-        self.scheduler = None
         self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
         self._start_time_pred = None
         self._loss_time_buffer = []
@@ -59,17 +51,6 @@ class OdyssNetTrainer:
         else:
             # ChaosGrad is the native OdyssNet optimizer.
             self._init_chaos_grad(model, lr)
-
-        # --- Scheduler Setup ---
-        should_use_scheduler = False
-        if use_temporal_scheduler is True:
-            should_use_scheduler = True
-        elif use_temporal_scheduler is None and scheduler_config is not None:
-            should_use_scheduler = True
-
-        if should_use_scheduler:
-            sched_cfg = cast(dict[str, Any], scheduler_config or TemporalSchedulerConfig.default())
-            self.scheduler = TemporalScheduler(self.optimizer, **sched_cfg)
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()
 
@@ -126,33 +107,6 @@ class OdyssNetTrainer:
     def _clear_persistent_grads(self):
         self._persistent_grads.clear()
 
-    def _rebind_scheduler(self, scheduler_state=None, verbose=True):
-        """Re-create scheduler against the current optimizer and restore state if possible."""
-        if self.scheduler is None:
-            return
-
-        old_sched = self.scheduler
-        self.scheduler = TemporalScheduler(
-            self.optimizer,
-            warmup_steps=old_sched.warmup_steps,
-            max_steps=old_sched.max_steps,
-            min_lr_ratio=old_sched.min_lr_ratio,
-            restart_factor=old_sched.restart_factor,
-            restart_decay=old_sched.restart_decay,
-            patience=old_sched.patience,
-            cooldown=old_sched.cooldown,
-            loss_smoothing=old_sched.loss_smoothing,
-            auto_extend=old_sched.auto_extend,
-            verbose=old_sched.verbose,
-        )
-
-        if scheduler_state is not None:
-            try:
-                self.scheduler.load_state_dict(scheduler_state)
-            except Exception as e:
-                if verbose:
-                    print(f"   WARNING: TemporalScheduler state restore failed after expand: {e}. Resetting scheduler state.")
-
     def state_dict(self):
         """Return trainer runtime state for robust checkpoint resume."""
         state = {
@@ -161,9 +115,6 @@ class OdyssNetTrainer:
             'acc_counter': self._acc_counter,
             'gradient_persistence': self.gradient_persistence,
         }
-
-        if self.scheduler is not None:
-            state['scheduler_state_dict'] = self.scheduler.state_dict()
 
         if hasattr(self, 'scaler'):
             state['scaler_state_dict'] = self.scaler.state_dict()
@@ -190,13 +141,6 @@ class OdyssNetTrainer:
         saved_gp = state.get('gradient_persistence', None)
         if isinstance(saved_gp, (float, int)) and self.gradient_persistence <= 0.0:
             self.gradient_persistence = float(saved_gp)
-
-        scheduler_state = state.get('scheduler_state_dict', None)
-        if self.scheduler is not None and scheduler_state is not None:
-            try:
-                self.scheduler.load_state_dict(scheduler_state)
-            except Exception as e:
-                print(f"WARNING: Could not restore TemporalScheduler state: {e}")
 
         scaler_state = state.get('scaler_state_dict', None)
         if scaler_state is not None:
@@ -339,10 +283,6 @@ class OdyssNetTrainer:
         if self._using_chaos_grad and step_now:
             chaos_opt = cast(ChaosGrad, self.optimizer)
             chaos_opt.report_loss(loss_val)
-
-        # Step scheduler if active
-        if self.scheduler is not None and step_now:
-            self.scheduler.step(loss=loss_val)
 
         # Predictive tracking formulation natively without blocking performance
         current_time = time.time()
@@ -493,7 +433,6 @@ class OdyssNetTrainer:
         Dynamically adds neurons to the model (Neurogenesis).
         Ensures optimizer continuity and memory cleanup.
         """
-        scheduler_state = self.scheduler.state_dict() if self.scheduler is not None else None
         self.optimizer = Neurogenesis.expand(
             self.model,
             self.optimizer,
@@ -502,32 +441,23 @@ class OdyssNetTrainer:
         )
         self._clear_persistent_grads()
 
-        if self.scheduler is not None:
-            self._rebind_scheduler(scheduler_state=scheduler_state, verbose=verbose)
-
         if self._using_chaos_grad and verbose:
             print("   ChaosGrad: Optimizer state preserved after neurogenesis.")
 
     # --- Diagnostic Methods ---
 
     def trigger_plateau_escape(self):
-        """Manually triggers plateau escape mechanisms in optimizer and scheduler."""
-        triggered = False
+        """Manually triggers plateau escape in ChaosGrad."""
         if self._using_chaos_grad:
             chaos_opt = cast(ChaosGrad, self.optimizer)
             chaos_opt.trigger_plateau_escape()
-            triggered = True
-        if self.scheduler:
-            self.scheduler.manual_restart()
-            triggered = True
-        if triggered:
             print("Manual plateau escape triggered!")
 
     def get_diagnostics(self):
         """
         Returns comprehensive training diagnostics.
 
-        Returns a dict with optimizer and scheduler health metrics.
+        Returns a dict with optimizer health metrics.
         Useful for monitoring and logging in complex training loops.
         """
         diag = {
@@ -540,8 +470,5 @@ class OdyssNetTrainer:
         if self._using_chaos_grad:
             chaos_opt = cast(ChaosGrad, self.optimizer)
             diag['optimizer'] = chaos_opt.get_diagnostics()
-
-        if self.scheduler is not None:
-            diag['scheduler'] = self.scheduler.get_diagnostics()
 
         return diag

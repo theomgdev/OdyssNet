@@ -201,17 +201,16 @@ The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed pr
 ### Initialization
 
 ```python
-from odyssnet import OdyssNetTrainer, TemporalSchedulerConfig
+from odyssnet import OdyssNetTrainer
 
 # ChaosGrad is the default — just pass a genesis lr
 trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda')
 
-# With TemporalScheduler
+# With optional features
 trainer = OdyssNetTrainer(
     model,
     lr=1e-4,
     device='cuda',
-    scheduler_config=TemporalSchedulerConfig.adaptive(),
     gradient_persistence=0.0,
     synaptic_noise=0.0,
     anomaly_hook=my_hook
@@ -271,10 +270,10 @@ Triggers **Darwinian Regeneration**. Instead of pruning weak weights, this metho
 *   **Returns**: `(revived_count, total_synapses)`
 
 #### `trainer.trigger_plateau_escape()`
-Manually triggers the plateau escape algorithms (noise injection & warm restarts) in both the optimizer and scheduler. Can be tied with the `anomaly_hook`.
+Manually triggers the plateau escape (frustration burst) in ChaosGrad. Can be tied with the `anomaly_hook`.
 
 #### `trainer.get_diagnostics()`
-Returns training diagnostics including optimizer and scheduler state.
+Returns training diagnostics including optimizer state.
 
 ---
 
@@ -343,54 +342,6 @@ optimizer.trigger_plateau_escape()
 # Diagnostics
 diag = optimizer.get_diagnostics()
 # Returns: global_step, frustration, best_loss, avg_effective_lr, avg_init_lr
-```
-
----
-
-## TemporalScheduler (`odyssnet.training.chaos_scheduler`)
-
-An **adaptive LR scheduler** that monitors the training process and adjusts in real-time.
-
-### Training Phases
-1.  **Warmup**: Linear ramp from 0 to `max_lr` (prevents chaos explosion at start).
-2.  **Cosine Decay**: Smooth decay to `min_lr_ratio × max_lr`.
-3.  **Warm Restart**: When a plateau is detected, temporarily boosts LR above the current base learning rate with a decaying factor, then begins a new cosine cycle.
-
-### Pre-built Configurations
-
-```python
-from odyssnet import TemporalSchedulerConfig
-
-TemporalSchedulerConfig.default()          # Standard cosine decay
-TemporalSchedulerConfig.llm()              # LLM-style long training
-TemporalSchedulerConfig.short_experiment() # Quick PoC runs
-TemporalSchedulerConfig.finetune()         # Conservative schedule
-TemporalSchedulerConfig.adaptive()         # Full auto-restart mode
-```
-
-### Features
-*   **Loss-Trend Awareness**: Adapts decay speed based on convergence rate.
-*   **Plateau Detection**: Auto-triggers warm restarts when training stalls.
-*   **Convergence Rate Tracking**: `scheduler.get_convergence_rate()` returns positive (bad) or negative (good).
-*   **Checkpoint Support**: Full `state_dict()` / `load_state_dict()` for seamless resume.
-
-```python
-# Direct usage (standalone)
-from odyssnet import TemporalScheduler
-
-scheduler = TemporalScheduler(
-    optimizer,
-    warmup_steps=500,
-    max_steps=5000,
-    patience=100  # Auto-restart on plateau
-)
-
-# In training loop:
-scheduler.step(loss=current_loss)  # Pass loss for adaptive behavior
-
-# Or integrated via Trainer:
-trainer = OdyssNetTrainer(model, scheduler_config=TemporalSchedulerConfig.adaptive())
-# Scheduler steps automatically inside train_batch()
 ```
 
 ---

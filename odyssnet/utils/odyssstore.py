@@ -19,7 +19,7 @@ def save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, traine
         loss (float): Current loss value.
         path (str): File path to save the checkpoint.
         extra_data (dict, optional): Any additional data to save.
-        trainer_state (dict, optional): Runtime trainer state (scheduler/scaler/counters).
+        trainer_state (dict, optional): Runtime trainer state (scaler/counters).
     """
     checkpoint = {
         'epoch': epoch,

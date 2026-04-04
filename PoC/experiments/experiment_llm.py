@@ -17,7 +17,7 @@ except ImportError:
 
 # --- ENVIRONMENT & IMPORTS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, TemporalSchedulerConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, set_seed
 from datasets import load_dataset
 
 # TF32 Optimization (Consistent with Notebook)
@@ -69,12 +69,6 @@ LEARNING_RATE = 1e-4
 
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
 TIE_EMBEDDINGS = False
-
-# SCHEDULER CONFIG (Now uses TemporalScheduler)
-USE_SCHEDULER = False
-WARMUP_STEPS = 50
-MAX_STEPS = 500
-MIN_LR_RATIO = 0.01
 
 # --- TOKENIZER ---
 def get_or_train_tokenizer():
@@ -305,22 +299,9 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         debug=debug
     )
 
-    # Build scheduler config from global settings
-    sched_config = None
-    if USE_SCHEDULER:
-        sched_config = dict(
-            warmup_steps=WARMUP_STEPS,
-            max_steps=MAX_STEPS,
-            min_lr_ratio=MIN_LR_RATIO,
-            patience=200,
-            cooldown=100,
-            auto_extend=True,
-        )
-
     trainer = OdyssNetTrainer(
         model, lr=lr, device=device,
         gradient_persistence=0.0,
-        scheduler_config=sched_config,
         anomaly_hook=hook
     )
 
@@ -426,7 +407,6 @@ def main():
     else:
         print(f"PHOENIX (Regeneration): Disabled")
     print(f"RESET_OPTIM_ON_LOAD: {RESET_OPTIMIZER_ON_LOAD}")
-    print(f"SCHEDULER: Enabled={USE_SCHEDULER}, Warmup={WARMUP_STEPS}, MaxSteps={MAX_STEPS}, MinRatio={MIN_LR_RATIO}")
     print(f"LEARNING_RATE: {LEARNING_RATE}")
     print(f"OVERWRITE_LR_OF_CKPT: {OVERWRITE_LR_OF_CKPT}")
     print(f"---------------------")
@@ -491,7 +471,7 @@ def main():
         if trainer_state is not None:
             try:
                 trainer.load_state_dict(trainer_state)
-                print("🧠 Trainer runtime state restored (scheduler/scaler/accumulators).")
+                print("🧠 Trainer runtime state restored (scaler/accumulators).")
             except Exception as e:
                 print(f"⚠️ Could not restore trainer runtime state: {e}")
 
@@ -673,11 +653,7 @@ def main():
                     output_transform=flatten_logits
                 )
 
-            # LR Tracking (TemporalScheduler auto-steps inside train_batch)
-            if trainer.scheduler:
-                current_lr = trainer.scheduler.get_last_lr()[0]
-            else:
-                current_lr = trainer.optimizer.param_groups[0]['lr']
+            current_lr = trainer.optimizer.param_groups[0]['lr']
 
             total_loss += loss
             steps += 1

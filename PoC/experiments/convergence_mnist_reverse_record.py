@@ -32,7 +32,6 @@ import re
 
 # --- Environment Setup ---
 import warnings
-warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()` before `optimizer.step()`")
 os.environ["NO_BNB"] = "1"  # Disable bitsandbytes for pure dynamics
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -173,17 +172,9 @@ def main():
     NUM_EPOCHS = 100
     steps_per_epoch = len(train_loader)
     
-    scheduler_config = dict(
-        warmup_steps=5 * steps_per_epoch,
-        max_steps=NUM_EPOCHS * steps_per_epoch,
-        min_lr_ratio=1e-3
-    )
-    
     trainer = OdyssNetTrainer(
-        model, 
+        model,
         device=DEVICE, lr=2e-3,
-        scheduler_config=scheduler_config,
-        use_temporal_scheduler=True,
         loss_fn=nn.MSELoss()
     )
 
@@ -248,7 +239,7 @@ def main():
                     print(f"[Samples] Save failed at epoch {epoch+1}: {e}")
             
             # Calculate metrics
-            current_lr = trainer.scheduler.get_last_lr()[0] if trainer.scheduler else trainer.optimizer.param_groups[0]['lr']
+            current_lr = trainer.optimizer.param_groups[0]['lr']
             elapsed = time.time() - start_time
             avg_time_per_epoch = elapsed / (epoch + 1)
             remaining_epochs = NUM_EPOCHS - (epoch + 1)

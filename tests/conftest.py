@@ -11,8 +11,6 @@ os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
 from odyssnet.training.chaos_optimizer import ChaosGrad
-from odyssnet.training.chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
-
 
 # ---------------------------------------------------------------------------
 # Model fixtures
@@ -69,12 +67,12 @@ def chaos_trainer(tiny_model):
 
 
 # ---------------------------------------------------------------------------
-# Optimizer / scheduler fixtures
+# Optimizer fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def dummy_optimizer(tiny_model):
-    """Plain AdamW for use in scheduler tests."""
+    """Plain AdamW for optimizer tests."""
     return torch.optim.AdamW(tiny_model.parameters(), lr=1e-3)
 
 
@@ -83,19 +81,6 @@ def chaos_optimizer(tiny_model):
     """ChaosGrad instance with classified parameter groups."""
     groups = ChaosGrad.classify_params(tiny_model)
     return ChaosGrad(groups, lr=1e-3)
-
-
-@pytest.fixture
-def temporal_scheduler(dummy_optimizer):
-    """TemporalScheduler with short warmup for fast tests."""
-    return TemporalScheduler(
-        dummy_optimizer,
-        warmup_steps=5,
-        max_steps=50,
-        min_lr_ratio=0.01,
-        patience=0,
-        verbose=False,
-    )
 
 
 # ---------------------------------------------------------------------------
