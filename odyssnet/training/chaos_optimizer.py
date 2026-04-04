@@ -97,21 +97,21 @@ class ChaosGrad(torch.optim.Optimizer):
     # ------------------------------------------------------------------ #
     # ---- Driving forces (hypergradient step size per unit of cosine signal) ----
     _ETA_LR    = 0.05    # LR: log-scale step (proportional acceleration/deceleration)
-    _ETA_MOM   = 0.02    # Momentum beta: additive step
+    _ETA_MOM   = 0.01    # Momentum beta: additive step
     _ETA_DECAY = 0.002   # Weight decay: additive step
     _ETA_ALPHA = 0.02    # Centralization gate: additive step
 
     # ---- Restoring forces (spring constants toward equilibrium) ----
-    _RESTORE_LR    = 0.02   # per_lr   → init_lr       (log-space spring)
-    _RESTORE_BETA  = 0.10   # per_beta → 0.9          (linear spring)
+    _RESTORE_LR    = 0.03   # per_lr   → init_lr       (log-space spring)
+    _RESTORE_BETA  = 0.12   # per_beta → 0.9          (linear spring)
     _RESTORE_ALPHA = 0.05   # per_alpha → 0.5         (linear spring)
     _RESTORE_DECAY = 0.10   # per_decay → seed/per_lr (product-coupled linear spring)
 
     # ---- Cross-couplings (prevent effective step amplitude from diverging) ----
     # Derived from restore constants — not independently tunable.
     # Effective step = per_lr / (1 - per_beta); neutral = init_lr / (10 * 0.1) = init_lr.
-    _COUPLE_LR_BETA  = _RESTORE_LR   / 2     # = 0.01
-    _COUPLE_BETA_LR  = _RESTORE_BETA / 10    # = 0.01
+    _COUPLE_LR_BETA  = _RESTORE_LR   / 2     # = 0.015
+    _COUPLE_BETA_LR  = _RESTORE_BETA / 10    # = 0.012
 
     # ---- Safety bounds (emergency rails, not primary constraints) ----
     _LR_MIN    = 0.01
@@ -121,10 +121,10 @@ class ChaosGrad(torch.optim.Optimizer):
     _DECAY_MAX = 0.1
 
     # ---- Frustration Accumulator ----
-    _FRUST_DECAY      = 0.995   # EMA decay rate
-    _FRUST_THRESH     = 0.75    # Threshold → burst
+    _FRUST_DECAY      = 0.99    # EMA decay rate (τ ≈ 100 steps)
+    _FRUST_THRESH     = 0.80    # Threshold → burst
     _FRUST_NOISE      = 0.01    # Momentum noise scale (relative to genesis_lr)
-    _FRUST_META_RESET = 0.30    # Fraction to pull meta-params toward neutral on burst
+    _FRUST_META_RESET = 0.35    # Fraction to pull meta-params toward neutral on burst
 
     _GENESIS_SCALAR  = 1e-6  # Cold-start prev_grad seed scale
     _SIZE_CAP_SCALE  = 2.0   # init_lr ceiling = SIZE_CAP_SCALE × √numel; transparent for large
