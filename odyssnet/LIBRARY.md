@@ -289,12 +289,12 @@ loss landscape at each step. No configuration dictionary required.
 
 | Mechanism | Formula | What it replaces |
 | :--- | :--- | :--- |
-| **Cold-start LR** | `per_lr₀ = 1/g_rms` — normalized first step across all parameter tensors | manual per-group lr tuning |
-| **Per-param LR** | conf-weighted drive + restore(→1.0) + derived coupling(LR×β step bound) | `lr_mult`, `adaptive_lr_clip` |
+| **Cold-start LR** | `per_lr₀ = min(1/g_rms, 2√numel)` — normalized first step; size cap protects small tensors | manual per-group lr tuning |
+| **Per-param LR** | conf-weighted drive + restore(→`init_lr`) + derived coupling(LR×β step bound) | `lr_mult`, `adaptive_lr_clip` |
 | **Per-param Momentum** | conf-weighted drive + restore(→0.9) + derived coupling(β×LR) | static `betas` |
 | **Per-param Decay** | conf-weighted drive + restore(→`seed/per_lr`); lr×decay product preserved | global `weight_decay` |
 | **Centralization Gate** | conf-weighted drive + restore(→0.5) | boolean `grad_centralization` |
-| **Frustration Accumulator** | loss stagnation → burst scaled to `genesis_lr × per_lr` + meta-param reset | integer `plateau_patience` |
+| **Frustration Accumulator** | loss stagnation → burst scaled to `genesis_lr × init_lr`; meta-param reset toward `init_lr` | integer `plateau_patience` |
 
 ### Hebbian Bypass Rule
 Hebbian logits (`hebb_factor`, `hebb_decay`) are raw unbounded scalars governing temporal
@@ -318,7 +318,8 @@ ChaosGrad still classifies parameters to seed initial decay values correctly:
 step            (int)        — update count
 prev_grad       (bfloat16)   — previous gradient (VRAM-compressed)
 momentum        (float32)    — gradient accumulator
-per_param_lr    (float)      — autonomous LR multiplier, init 1.0
+init_lr         (float)      — calibrated starting LR = 1/g_rms at T=0, capped by 2√numel (fixed)
+per_param_lr    (float)      — autonomous LR multiplier, init = init_lr
 per_param_decay (float)      — autonomous weight decay rate
 per_param_beta  (float)      — autonomous momentum coefficient, init 0.9
 per_param_alpha (float)      — autonomous centralization gate, init 0.5
@@ -341,7 +342,7 @@ optimizer.trigger_plateau_escape()
 
 # Diagnostics
 diag = optimizer.get_diagnostics()
-# Returns: global_step, frustration, best_loss, avg_per_param_lr
+# Returns: global_step, frustration, best_loss, avg_effective_lr, avg_init_lr
 ```
 
 ---

@@ -8,16 +8,17 @@ meta-parameters are computed analytically from the intrinsic geometry of the
 loss landscape at runtime.
 
 Core principles:
-- Cold-start calibration: per_lr_0 = 1/g_rms, so the first effective step is normalized
-  across all parameter tensors regardless of gradient scale.
+- Cold-start calibration: per_lr_0 = min(1/g_rms, SIZE_CAP_SCALE·√numel), so the first
+  effective step is normalized across all parameter tensors and bounded proportionally
+  to tensor size. Large tensors are unaffected; small tensors receive a conservative ceiling.
 - Confidence-weighted drive: all cosine signals are transformed as s = cos·|cos| before
   use. Strong signal (cos=0.9) acts at 81% of maximum; weak signal (cos=0.3) at 9%.
   The optimizer acts decisively on clear roads and conservatively in fog.
-- Per-parameter LR    ← conf(∇_t,∇_{t-1}) + restore(→1.0) + couple(LR×β step bound)
+- Per-parameter LR    ← conf(∇_t,∇_{t-1}) + restore(→init_lr) + couple(LR×β step bound)
 - Per-parameter beta  ← conf(∇_t,V_{t-1}) + restore(→0.9)  + couple(β×LR, symmetric)
 - Per-parameter decay ← conf(∇_t,W_{t-1}) + restore(→seed/lr) [lr×decay product coupling]
 - Centralization α    ← conf(noise signal) + restore(→0.5)   [independent]
-- Frustration         ← loss stagnation → burst scaled to current per_lr + meta-param reset
+- Frustration         ← loss stagnation → burst scaled to init_lr + meta-param reset toward init_lr
 
 The only external scalar is genesis_lr: a mathematical starting point,
 not a hyperparameter to tune. Set it near the rough scale of the problem
@@ -92,7 +93,7 @@ class ChaosGrad(torch.optim.Optimizer):
     _ETA_ALPHA = 0.02    # Centralization gate: additive step
 
     # ---- Restoring forces (spring constants toward equilibrium) ----
-    _RESTORE_LR    = 0.02   # per_lr   → 1.0          (log-space spring)
+    _RESTORE_LR    = 0.02   # per_lr   → init_lr       (log-space spring)
     _RESTORE_BETA  = 0.10   # per_beta → 0.9          (linear spring)
     _RESTORE_ALPHA = 0.05   # per_alpha → 0.5         (linear spring)
     _RESTORE_DECAY = 0.10   # per_decay → seed/per_lr (product-coupled linear spring)
@@ -116,7 +117,9 @@ class ChaosGrad(torch.optim.Optimizer):
     _FRUST_NOISE      = 0.01    # Momentum noise scale (relative to genesis_lr)
     _FRUST_META_RESET = 0.30    # Fraction to pull meta-params toward neutral on burst
 
-    _GENESIS_SCALAR = 1e-6  # Cold-start prev_grad seed scale
+    _GENESIS_SCALAR  = 1e-6  # Cold-start prev_grad seed scale
+    _SIZE_CAP_SCALE  = 2.0   # init_lr ceiling = SIZE_CAP_SCALE × √numel; transparent for large
+                              # tensors, conservative for small ones where every parameter matters
 
     # Initial per-group decay seeds (autonomous adaptation starts here)
     _INIT_DECAY = {
@@ -319,7 +322,11 @@ class ChaosGrad(torch.optim.Optimizer):
                     # Calibrate per_lr so genesis_lr * per_lr * g_rms ≈ genesis_lr:
                     # the first effective step is normalized across all parameter tensors.
                     g_rms = (g.float() ** 2).mean().sqrt().item()
-                    init_lr = max(self._LR_MIN, min(self._LR_MAX,
+                    # Size cap: √numel grows with tensor area, so small tensors (W of a
+                    # 3-neuron net has numel=9 → cap=6) receive a conservative ceiling while
+                    # large tensors (numel=630k → cap≈1588 >> LR_MAX) are fully unaffected.
+                    size_cap = self._SIZE_CAP_SCALE * math.sqrt(p.numel())
+                    init_lr = max(self._LR_MIN, min(self._LR_MAX, size_cap,
                                   1.0 / max(g_rms, 1e-8)))
                     # Decay seeded so that the lr×decay product starts at the group seed.
                     init_decay_calibrated = init_decay / max(init_lr, 0.1)
@@ -436,15 +443,16 @@ class ChaosGrad(torch.optim.Optimizer):
                 # 5. Frustration burst (escape local minima)                #
                 # -------------------------------------------------------- #
                 if do_burst:
-                    # Noise scales with the current effective LR, not genesis_lr alone.
-                    # A parameter whose LR has drifted to 10× genesis needs 10× more
-                    # noise to actually perturb its trajectory.
-                    noise_scale = self._FRUST_NOISE * genesis_lr * per_lr
+                    # Noise scales with init_lr, not per_lr. When a small network is stuck,
+                    # per_lr has already collapsed toward LR_MIN, making per_lr-scaled bursts
+                    # too weak to escape. init_lr reflects the true gradient scale of the
+                    # tensor and stays fixed, so bursts remain meaningful even under distress.
+                    noise_scale = self._FRUST_NOISE * genesis_lr * init_lr
                     v.add_(torch.randn_like(v) * noise_scale)
-                    # Partially reset meta-parameters toward neutral so the burst
-                    # launches from a clean state rather than from whatever extreme
-                    # configuration preceded stagnation.
-                    per_lr    = per_lr    + self._FRUST_META_RESET * (1.0 - per_lr)
+                    # Reboot per_lr toward init_lr (the calibrated starting point for this
+                    # tensor), so the burst relaunches from the gradient-derived magnitude
+                    # rather than from an arbitrary fixed point.
+                    per_lr    = per_lr    + self._FRUST_META_RESET * (init_lr - per_lr)
                     per_beta  = per_beta  + self._FRUST_META_RESET * (0.9 - per_beta)
                     per_alpha = per_alpha + self._FRUST_META_RESET * (0.5 - per_alpha)
 
