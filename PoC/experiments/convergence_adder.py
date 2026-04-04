@@ -62,7 +62,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-2)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     
     print(f"Structure: Pulse A at t={DELAY_1}. Pulse B at t={DELAY_2}. Target at t={SEQ_LEN-1}.")
     

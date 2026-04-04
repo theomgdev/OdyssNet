@@ -40,16 +40,25 @@ import torch
 import math
 
 
+import torch.nn.functional as F
+
 def _cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
     """
-    Cosine similarity between two tensors, flattened.
-    Returns a float in [-1, 1]. Returns 0.0 when either tensor is near-zero.
+    Cosine similarity immune to the Curse of Dimensionality.
+    Instead of flattening large tensors (which drives cosine to 0),
+    it computes similarity locally along the last dimension (e.g., per-neuron)
+    and averages the consensus.
     """
-    a_norm = a.norm()
-    b_norm = b.norm()
-    if a_norm < 1e-12 or b_norm < 1e-12:
+    if a.dim() == 0:
         return 0.0
-    return (a * b).sum().item() / (a_norm.item() * b_norm.item())
+        
+    # dim=-1 ensures that for a 2D matrix (N, M), we get N similarities.
+    # For a 1D vector (like bias), we get a single global similarity.
+    # eps=1e-12 prevents division by zero for dead/silent neurons.
+    sim = F.cosine_similarity(a, b, dim=-1, eps=1e-12)
+    
+    # Return the collective consensus of the similarities
+    return sim.mean().item()
 
 
 def _conf_signal(cos: float) -> float:
@@ -333,7 +342,7 @@ class ChaosGrad(torch.optim.Optimizer):
 
                     state['step']           = 0
                     state['init_lr']        = init_lr   # fixed reference; never mutated
-                    state['prev_grad']      = (g.detach() * self._GENESIS_SCALAR).to(torch.bfloat16)
+                    state['prev_grad']      = (g.detach() * self._GENESIS_SCALAR)
                     state['momentum']       = torch.zeros_like(g, dtype=torch.float32)
                     state['per_param_lr']   = init_lr
                     state['per_param_decay']= float(init_decay_calibrated)
@@ -364,9 +373,9 @@ class ChaosGrad(torch.optim.Optimizer):
                 #    This weights the adaptation step by signal confidence: #
                 #    strong signal → act decisively; weak → act sparingly. #
                 # -------------------------------------------------------- #
-                sig_lr  = _conf_signal(_cosine_sim(g_f, prev_g))          # LR / alpha signal
-                sig_wd  = _conf_signal(_cosine_sim(g_f, p.data.float()))  # Decay signal
-                sig_mom = _conf_signal(_cosine_sim(g_f, v.float()))       # Momentum signal
+                sig_lr  = _conf_signal(_cosine_sim(g_f, prev_g))               # LR / alpha signal
+                sig_wd  = _conf_signal(abs(_cosine_sim(g_f, p.data.float())))  # Decay signal
+                sig_mom = _conf_signal(_cosine_sim(g_f, v.float()))            # Momentum signal
 
                 # -------------------------------------------------------- #
                 # 2. Autonomous hyperparameter update                       #
@@ -448,7 +457,17 @@ class ChaosGrad(torch.optim.Optimizer):
                     # too weak to escape. init_lr reflects the true gradient scale of the
                     # tensor and stays fixed, so bursts remain meaningful even under distress.
                     noise_scale = self._FRUST_NOISE * genesis_lr * init_lr
-                    v.add_(torch.randn_like(v) * noise_scale)
+                    noise = torch.randn_like(v) * noise_scale
+                    
+                    # Centralized Noise (Gradient Centralization Protection)
+                    # Shakes the system without destroying the zero-mean equilibrium it has built.
+                    if g_f.dim() >= 2 and per_alpha > 1e-3:
+                        noise = noise - per_alpha * noise.mean(
+                            dim=tuple(range(1, noise.dim())), keepdim=True
+                        )
+                        
+                    v.add_(noise)
+                    
                     # Reboot per_lr toward init_lr (the calibrated starting point for this
                     # tensor), so the burst relaunches from the gradient-derived magnitude
                     # rather than from an arbitrary fixed point.
@@ -476,7 +495,7 @@ class ChaosGrad(torch.optim.Optimizer):
                 # -------------------------------------------------------- #
                 # 9. Persist state                                           #
                 # -------------------------------------------------------- #
-                state['prev_grad']       = g.detach().to(torch.bfloat16)
+                state['prev_grad']       = g.detach()
                 state['momentum']        = v
                 state['per_param_lr']    = per_lr
                 state['per_param_decay'] = per_decay
