@@ -27,7 +27,7 @@ not a hyperparameter to tune. Set it near the rough scale of the problem
 State per parameter:
     step (int)                  — update count
     init_lr  (float)            — calibrated starting LR = 1/g_rms at T=0 (fixed, never updated)
-    prev_grad (bfloat16 tensor) — previous gradient (VRAM-compressed)
+    prev_grad (float32 tensor) — previous gradient
     momentum  (float32 tensor)  — exponential gradient accumulator
     per_param_lr    (float)     — autonomous LR multiplier (starts at init_lr; restore/couple
                                   reference this initial value, not 1.0)
@@ -496,7 +496,6 @@ class ChaosGrad(torch.optim.Optimizer):
                 # 9. Persist state                                           #
                 # -------------------------------------------------------- #
                 state['prev_grad']       = g.detach()
-                state['momentum']        = v
                 state['per_param_lr']    = per_lr
                 state['per_param_decay'] = per_decay
                 state['per_param_beta']  = per_beta

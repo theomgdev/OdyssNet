@@ -5,7 +5,7 @@ Covers:
 - Initialisation with single lr parameter
 - Parameter group classification (classify_params)
 - Optimizer step — parameter updates and global_step increment
-- Cold start state initialisation (prev_grad as bfloat16, momentum zeros)
+- Cold start state initialisation (prev_grad as float32, momentum zeros)
 - Hypergradient adaptation (per_param_lr, per_param_beta, per_param_alpha change)
 - Hebbian bypass rule (per_param_decay stays zero for hebb params)
 - W diagonal stays zero after step
