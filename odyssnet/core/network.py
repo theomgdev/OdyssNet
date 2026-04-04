@@ -363,8 +363,8 @@ class OdyssNet(nn.Module):
             count = weak_mask.sum().item()
             if count > 0:
                 self.W.data[weak_mask] = fresh_W[weak_mask]
-                # Phoenix: reset Hebbian state for revived pathways so they start
-                # with pristine plasticity rather than stale correlation history.
+                # Revived synapses must start with a clean Hebbian state —
+                # stale correlations from dead pathways would corrupt plasticity.
                 if self.hebb_type is not None:
                     self.hebb_state_W[weak_mask] = 0.0
                 if self.hebb_type == "synapse":

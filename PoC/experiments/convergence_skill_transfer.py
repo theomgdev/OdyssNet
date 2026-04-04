@@ -6,7 +6,7 @@ import torch
 
 # Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from odyssnet import ChaosGradConfig, OdyssNet, OdyssNetTrainer, save_checkpoint, transplant_weights, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, transplant_weights, set_seed
 
 def generate_two_pulse_batch(batch_size, seq_len, delay_a, delay_b, task, device):
     """
@@ -112,8 +112,7 @@ def main():
     )
     small_trainer = OdyssNetTrainer(
         small_model,
-        device=device,
-        chaos_config=ChaosGradConfig.default(lr=lr),
+        device=device, lr=lr,
     )
     add_losses = train_single_task(
         small_trainer,
@@ -165,13 +164,11 @@ def main():
 
     scratch_trainer = OdyssNetTrainer(
         scratch_model,
-        device=device,
-        chaos_config=ChaosGradConfig.default(lr=lr),
+        device=device, lr=lr,
     )
     transfer_trainer = OdyssNetTrainer(
         transfer_model,
-        device=device,
-        chaos_config=ChaosGradConfig.default(lr=lr),
+        device=device, lr=lr,
     )
 
     print("\nStep 3/3: Train both LARGE models on MULTIPLY")

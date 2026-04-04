@@ -2,7 +2,7 @@
 
 This document outlines the standards and best practices for contributing Proof-of-Concept (PoC) scripts and innovative experiments to the OdyssNet project.
 
-OdyssNet 2.1 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
+OdyssNet 2.2 relies on a highly modular library structure. To ensure long-term maintainability and performance, all new contributions must adhere to these guidelines.
 
 ---
 
@@ -145,7 +145,7 @@ For tasks where **online synaptic plasticity** may help — e.g., fast-adaptatio
 | `"neuron"` | +2N | RL and reactive environments; per-neuron "caste" differentiation. |
 | `"synapse"` | +2N² | Logic, NLP, and reasoning tasks requiring **dynamic variable binding**. |
 
-*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$. Both `hebb_factor` and `hebb_decay` are **learnable** — the network discovers how plastic each synapse should be.
+*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_\text{eff} = W + (f_h \odot C_t)$ (where $f_h$ is `hebb_factor`). Both `hebb_factor` and `hebb_decay` are **learnable** — the network discovers how plastic each synapse should be.
 *   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across intra-sequence forward calls and are explicitly cleared on `reset_state()` between sequences.
 *   **Best Use Case (Generation / Sequential Building):** Hebbian shines in tasks where step T relies heavily on expanding or completing a pattern from step T-1. It provides a powerful **short-term working memory** between steps, acting as a dynamic shortcut that fast-tracks sequence generation.
 *   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise".
@@ -176,21 +176,19 @@ model = OdyssNet(
 # Quick experiment — global plasticity
 model = OdyssNet(..., hebb_type='global')
 
-# With a custom Hebbian LR multiplier via ChaosGrad config
-cfg = ChaosGradConfig.default(lr=3e-4)
-cfg['hebbian_lr_mult'] = 3.0   # More aggressive plasticity updates
-trainer = OdyssNetTrainer(model, chaos_config=cfg)
+# ChaosGrad is the default optimizer — just set lr
+trainer = OdyssNetTrainer(model, lr=3e-4)
 ```
 
 ---
 
 ## ⚡ Hardware Optimization
 
-### 1. 8-Bit Optimizers (bitsandbytes)
-OdyssNet V2.1 automatically uses `bitsandbytes` 8-bit AdamW if a CUDA GPU is detected. This reduces VRAM usage by ~75% for optimizer states.
-*   **Default:** Enabled.
-*   **Disable:** Set `os.environ["NO_BNB"] = "1"` before importing `odyssnet`.
-*   **Debug:** Set `os.environ["VERBOSE_BNB"] = "1"` to see loading logs.
+### 1. ChaosGrad Optimizer
+OdyssNet v2.2 uses **ChaosGrad** as the default optimizer. ChaosGrad is a zero-hyperparameter optimizer: it autonomously adapts per-parameter learning rate, momentum, weight decay, and gradient centralization at each step using Analytic Hypergradient Descent. No configuration is required — just pass `lr` (genesis learning rate) to `OdyssNetTrainer`.
+*   **Default:** ChaosGrad with `lr=1e-3`.
+*   **Feed frustration signal:** Call `trainer.optimizer.report_loss(loss)` each step to drive the Frustration Accumulator.
+*   **Custom optimizer:** Pass `optimizer=` to `OdyssNetTrainer` to bypass ChaosGrad.
 
 ### 2. TensorFloat-32 (TF32)
 Always enable TF32 on Ampere+ GPUs for free speedup.

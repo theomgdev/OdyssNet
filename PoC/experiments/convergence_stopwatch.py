@@ -5,7 +5,7 @@ import os
 
 # Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def generate_stopwatch_data(batch_size, seq_len, device):
     """
@@ -58,8 +58,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-3))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
     
     print("Training...")
     

@@ -5,7 +5,7 @@ import os
 
 # Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def generate_adder_data(batch_size, seq_len, delay_1, delay_2, device):
     """
@@ -52,7 +52,7 @@ def main():
     DELAY_2 = 8
     
     BATCH_SIZE = 1024
-    EPOCHS = 10000
+    EPOCHS = 2000
     
     # Initialize Model
     model = OdyssNet(
@@ -62,8 +62,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-3))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-2)
     
     print(f"Structure: Pulse A at t={DELAY_1}. Pulse B at t={DELAY_2}. Target at t={SEQ_LEN-1}.")
     

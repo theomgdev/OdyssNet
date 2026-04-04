@@ -3,10 +3,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: The Atomic Identity...")
+    print("OdyssNet 2.2: The Atomic Identity...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -27,8 +27,7 @@ def main():
         pulse_mode=True, 
         device=DEVICE
     )
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=0.01)
     
     # Data
     inputs_val = torch.randint(0, 2, (100, 1)).float() * 2 - 1 

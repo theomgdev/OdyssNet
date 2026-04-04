@@ -8,10 +8,10 @@ import time
 
 # Ensure library path is correct
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
+    print("OdyssNet 2.2: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
     print("Hypothesis: Reviving weak synapses with random initialization improves learning capacity.")
     set_seed(42)
     
@@ -42,8 +42,7 @@ def main():
     # Compile model
     model = model.compile()
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-4))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     

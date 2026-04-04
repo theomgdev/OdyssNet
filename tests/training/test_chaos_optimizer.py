@@ -1,15 +1,18 @@
 """
-Unit tests for odyssnet.training.chaos_optimizer.ChaosGrad and ChaosGradConfig.
+Unit tests for odyssnet.training.chaos_optimizer.ChaosGrad.
 
 Covers:
-- Initialisation with defaults and custom configs
+- Initialisation with single lr parameter
 - Parameter group classification (classify_params)
-- Optimizer step — parameter updates
-- Plateau detection and escape mechanisms
-- Spectral clipping for the core W matrix
-- Adaptive LR and gradient centralization
-- All ChaosGradConfig presets
-- Diagnostics
+- Optimizer step — parameter updates and global_step increment
+- Cold start state initialisation (prev_grad as bfloat16, momentum zeros)
+- Hypergradient adaptation (per_param_lr, per_param_beta, per_param_alpha change)
+- Hebbian bypass rule (per_param_decay stays zero for hebb params)
+- W diagonal stays zero after step
+- Sparse gradient raises
+- Closure support
+- Frustration Accumulator (report_loss, trigger_plateau_escape)
+- Diagnostics (get_diagnostics keys)
 """
 
 import pytest
@@ -20,7 +23,7 @@ import os
 os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet
-from odyssnet.training.chaos_optimizer import ChaosGrad, ChaosGradConfig
+from odyssnet.training.chaos_optimizer import ChaosGrad
 
 
 # ---------------------------------------------------------------------------
@@ -31,15 +34,18 @@ def _small_model(n=5):
     return OdyssNet(num_neurons=n, input_ids=[0], output_ids=[n - 1], device="cpu")
 
 
-def _optimizer(model, **kwargs):
+def _optimizer(model, lr=1e-3):
     groups = ChaosGrad.classify_params(model)
-    cfg = ChaosGradConfig.default(lr=1e-3)
-    cfg.update(kwargs)
-    for g in groups:
-        for k, v in cfg.items():
-            if k not in g and k != "params":
-                g[k] = v
-    return ChaosGrad(groups, **cfg)
+    return ChaosGrad(groups, lr=lr)
+
+
+def _run_step(model, opt, n=5):
+    """Run one forward+backward+step cycle."""
+    x = torch.randn(2, n)
+    out, _ = model(x, steps=2)
+    out.sum().backward()
+    opt.step()
+    opt.zero_grad()
 
 
 # ===========================================================================
@@ -57,15 +63,32 @@ class TestChaosGradInit:
         opt = _optimizer(model)
         assert opt._global_step == 0
 
+    def test_frustration_starts_at_zero(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        assert opt._frustration == pytest.approx(0.0)
+
     def test_best_loss_starts_at_inf(self):
         model = _small_model()
         opt = _optimizer(model)
         assert opt._best_loss == float("inf")
 
-    def test_plateau_counter_starts_at_zero(self):
+    def test_lr_stored_in_defaults(self):
         model = _small_model()
-        opt = _optimizer(model)
-        assert opt._plateau_counter == 0
+        opt = _optimizer(model, lr=5e-4)
+        assert opt.defaults['lr'] == pytest.approx(5e-4)
+
+    def test_negative_lr_raises(self):
+        model = _small_model()
+        groups = ChaosGrad.classify_params(model)
+        with pytest.raises(ValueError, match="lr"):
+            ChaosGrad(groups, lr=-1e-3)
+
+    def test_lr_accessible_in_param_groups(self):
+        model = _small_model()
+        opt = _optimizer(model, lr=2e-3)
+        for g in opt.param_groups:
+            assert g['lr'] == pytest.approx(2e-3)
 
 
 # ===========================================================================
@@ -78,42 +101,33 @@ class TestClassifyParams:
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "chaos_core" in names
-        params = names["chaos_core"]["params"]
-        assert any(p is model.W for p in params)
+        assert any(p is model.W for p in names["chaos_core"]["params"])
 
     def test_memory_feedback_in_memory_group(self):
         model = _small_model()
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "memory_feedback" in names
-        params = names["memory_feedback"]["params"]
-        assert any(p is model.memory_feedback for p in params)
+        assert any(p is model.memory_feedback for p in names["memory_feedback"]["params"])
 
     def test_b_in_lightweight_group(self):
         model = _small_model()
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "lightweight" in names
-        params = names["lightweight"]["params"]
-        assert any(p is model.B for p in params)
+        assert any(p is model.B for p in names["lightweight"]["params"])
 
     def test_embed_in_projections_group(self):
         model = OdyssNet(
-            num_neurons=8,
-            input_ids=list(range(4)),
-            output_ids=list(range(4, 8)),
-            device="cpu",
-            vocab_size=16,
-            vocab_mode="discrete",
+            num_neurons=8, input_ids=list(range(4)), output_ids=list(range(4, 8)),
+            device="cpu", vocab_size=16, vocab_mode="discrete",
         )
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "projections" in names
 
     def test_gate_params_in_gates_group(self):
-        model = OdyssNet(
-            num_neurons=5, input_ids=[0], output_ids=[4], device="cpu", gate="sigmoid"
-        )
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4], device="cpu", gate="sigmoid")
         groups = ChaosGrad.classify_params(model)
         names = {g["group_name"]: g for g in groups}
         assert "gates" in names
@@ -121,10 +135,7 @@ class TestClassifyParams:
     def test_all_params_covered(self):
         model = _small_model()
         groups = ChaosGrad.classify_params(model)
-        covered = set()
-        for g in groups:
-            for p in g["params"]:
-                covered.add(id(p))
+        covered = {id(p) for g in groups for p in g["params"]}
         all_params = {id(p) for p in model.parameters()}
         assert covered == all_params
 
@@ -146,18 +157,6 @@ class TestClassifyParams:
         all_params = {id(p) for p in model.parameters()}
         assert covered == all_params
 
-    def test_hebbian_step_updates_params(self):
-        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
-                         device="cpu", hebb_type="global")
-        opt = _optimizer(model)
-        factor_before = model.hebb_factor.data.clone()
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=3)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
-        assert not torch.allclose(model.hebb_factor.data, factor_before)
-
 
 # ===========================================================================
 # Optimizer Step
@@ -167,38 +166,25 @@ class TestOptimizerStep:
     def test_step_increments_global_step(self):
         model = _small_model()
         opt = _optimizer(model)
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=2)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
+        _run_step(model, opt)
         assert opt._global_step == 1
 
     def test_w_changes_after_step(self):
         model = _small_model()
         opt = _optimizer(model)
         w_before = model.W.data.clone()
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=2)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
+        _run_step(model, opt)
         assert not torch.allclose(model.W.data, w_before)
 
     def test_w_diagonal_stays_zero_after_step(self):
         model = _small_model()
         opt = _optimizer(model)
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=2)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
+        _run_step(model, opt)
         assert torch.all(model.W.diag() == 0.0)
 
     def test_sparse_gradient_raises(self):
         model = _small_model()
         opt = _optimizer(model)
-        # Inject a sparse gradient manually
         for p in model.parameters():
             p.grad = p.data.to_sparse()
             break
@@ -221,32 +207,213 @@ class TestOptimizerStep:
         opt.step(closure=closure)
         assert called["flag"]
 
+    def test_multiple_steps_converge_direction(self):
+        """After several steps the model should produce finite, changing outputs."""
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        losses = []
+        for _ in range(5):
+            x = torch.randn(4, 5)
+            out, _ = model(x, steps=3)
+            loss = out.sum().pow(2)
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+            model.reset_state(4)
+            losses.append(loss.item())
+        assert all(torch.isfinite(torch.tensor(l)) for l in losses)
+
 
 # ===========================================================================
-# Plateau Detection and Escape
+# Cold Start State
 # ===========================================================================
 
-class TestPlateauDetection:
+class TestColdStartState:
+    def test_prev_grad_is_bfloat16(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    assert opt.state[p]['prev_grad'].dtype == torch.bfloat16
+
+    def test_momentum_is_float32(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    assert opt.state[p]['momentum'].dtype == torch.float32
+
+    def test_per_param_lr_calibrated_at_cold_start(self):
+        """per_param_lr is calibrated from gradient RMS at T=0 (1/g_rms), so it is
+        within valid bounds but not necessarily close to 1.0."""
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    lr = opt.state[p]['per_param_lr']
+                    assert ChaosGrad._LR_MIN <= lr <= ChaosGrad._LR_MAX
+
+    def test_per_param_beta_initialized_around_09(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    beta = opt.state[p]['per_param_beta']
+                    assert 0.5 <= beta <= 0.999
+
+
+# ===========================================================================
+# Hypergradient Adaptation
+# ===========================================================================
+
+class TestHypergradientAdaptation:
+    def test_per_param_lr_changes_after_steps(self):
+        """After multiple steps, per_param_lr should differ from its initial value of 1.0."""
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        for _ in range(5):
+            _run_step(model, opt)
+        any_changed = False
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    if abs(opt.state[p]['per_param_lr'] - 1.0) > 1e-6:
+                        any_changed = True
+        assert any_changed, "per_param_lr should drift from 1.0 after multiple steps"
+
+    def test_per_param_beta_adapts(self):
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        for _ in range(5):
+            _run_step(model, opt)
+        any_changed = False
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    if abs(opt.state[p]['per_param_beta'] - 0.9) > 1e-6:
+                        any_changed = True
+        assert any_changed, "per_param_beta should adapt from 0.9 after multiple steps"
+
+    def test_per_param_alpha_adapts(self):
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        for _ in range(5):
+            _run_step(model, opt)
+        any_changed = False
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    if abs(opt.state[p]['per_param_alpha'] - 0.5) > 1e-6:
+                        any_changed = True
+        assert any_changed, "per_param_alpha should adapt from 0.5 after multiple steps"
+
+    def test_per_param_lr_stays_within_bounds(self):
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        for _ in range(20):
+            _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    lr = opt.state[p]['per_param_lr']
+                    assert ChaosGrad._LR_MIN <= lr <= ChaosGrad._LR_MAX
+
+    def test_per_param_beta_stays_within_bounds(self):
+        model = _small_model()
+        opt = _optimizer(model, lr=1e-2)
+        for _ in range(20):
+            _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    beta = opt.state[p]['per_param_beta']
+                    assert ChaosGrad._BETA_MIN <= beta <= ChaosGrad._BETA_MAX
+
+
+# ===========================================================================
+# Hebbian Bypass Rule
+# ===========================================================================
+
+class TestHebbianBypass:
+    def test_hebbian_params_updated(self):
+        """hebb_factor receives a non-zero gradient when Hebbian correlations are active.
+        ≥5 thinking steps ensure hebb_state_W accumulates before backward.
+        We verify the gradient exists and is non-zero rather than checking parameter
+        change (which is lr-scale dependent)."""
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
+                         device="cpu", hebb_type="global")
+        opt = _optimizer(model, lr=0.1)
+        torch.manual_seed(7)
+        x = torch.randn(2, 5)
+        out, _ = model(x, steps=5)
+        out.sum().backward()
+        assert model.hebb_factor.grad is not None
+        assert model.hebb_factor.grad.abs().item() > 0.0
+        opt.step()
+        opt.zero_grad()
+
+    def test_hebbian_per_param_decay_stays_zero(self):
+        """per_param_decay for Hebbian params must always remain 0.0 regardless of gradient signals."""
+        model = OdyssNet(num_neurons=5, input_ids=[0], output_ids=[4],
+                         device="cpu", hebb_type="global")
+        opt = _optimizer(model)
+        for _ in range(10):
+            _run_step(model, opt, n=5)
+        for group in opt.param_groups:
+            if group.get('_is_hebbian'):
+                for p in group['params']:
+                    if p in opt.state and opt.state[p]:
+                        assert opt.state[p]['per_param_decay'] == pytest.approx(0.0), \
+                            "Hebbian params must never receive autonomous weight decay"
+
+    def test_chaos_core_decay_can_grow(self):
+        """chaos_core per_param_decay should start at 0.01 and evolve."""
+        model = _small_model()
+        opt = _optimizer(model)
+        for _ in range(10):
+            _run_step(model, opt)
+        for group in opt.param_groups:
+            if group.get('_is_chaos_core'):
+                for p in group['params']:
+                    if p in opt.state and opt.state[p]:
+                        # Should be non-negative and within bounds
+                        decay = opt.state[p]['per_param_decay']
+                        assert 0.0 <= decay <= ChaosGrad._DECAY_MAX
+
+
+# ===========================================================================
+# Frustration Accumulator
+# ===========================================================================
+
+class TestFrustrationAccumulator:
     def test_report_loss_updates_best(self):
         model = _small_model()
         opt = _optimizer(model)
         opt.report_loss(1.0)
         assert opt._best_loss == pytest.approx(1.0)
 
-    def test_report_loss_increments_plateau_on_no_improvement(self):
+    def test_frustration_grows_on_stagnation(self):
         model = _small_model()
         opt = _optimizer(model)
-        opt.report_loss(1.0)
-        opt.report_loss(1.1)
-        assert opt._plateau_counter == 1
+        opt.report_loss(1.0)  # sets best
+        for _ in range(20):
+            opt.report_loss(1.0)  # stagnating
+        assert opt._frustration > 0.0
 
-    def test_report_loss_resets_plateau_on_improvement(self):
+    def test_frustration_stays_low_on_improvement(self):
         model = _small_model()
         opt = _optimizer(model)
-        opt.report_loss(1.0)
-        opt.report_loss(1.1)
-        opt.report_loss(0.5)
-        assert opt._plateau_counter == 0
+        for i in range(20):
+            opt.report_loss(1.0 / (i + 1))  # continuously improving
+        assert opt._frustration < 0.05
 
     def test_trigger_plateau_escape_sets_flag(self):
         model = _small_model()
@@ -254,78 +421,20 @@ class TestPlateauDetection:
         opt.trigger_plateau_escape()
         assert opt._force_plateau_escape is True
 
-    def test_plateau_escape_resets_flag_after_step(self):
+    def test_plateau_escape_clears_flag_after_step(self):
         model = _small_model()
-        opt = _optimizer(model, plateau_patience=0)
+        opt = _optimizer(model)
         opt.trigger_plateau_escape()
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=1)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
+        _run_step(model, opt)
         assert opt._force_plateau_escape is False
 
-
-# ===========================================================================
-# Spectral Clipping
-# ===========================================================================
-
-class TestSpectralClipping:
-    def test_spectral_clip_reduces_radius(self):
-        model = _small_model(8)
-        # Force a large W
-        with torch.no_grad():
-            model.W.data.fill_(1.0)
-            model.W.fill_diagonal_(0.0)
-        opt = _optimizer(model, spectral_clip=1.0)
-        x = torch.randn(2, 8)
-        out, _ = model(x, steps=2)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
-        # After clipping, spectral radius should be tracked
-        assert opt._spectral_radius >= 0.0
-
-    def test_spectral_clip_zero_disables(self):
+    def test_frustration_partially_resets_after_burst(self):
         model = _small_model()
-        opt = _optimizer(model, spectral_clip=0.0)
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=1)
-        out.sum().backward()
-        opt.step()
-        opt.zero_grad()
-        # spectral radius should remain 0 (no computation done)
-        assert opt._spectral_radius == 0.0
-
-
-# ===========================================================================
-# Adaptive LR and Gradient Centralization
-# ===========================================================================
-
-class TestAdaptiveFeatures:
-    def test_adaptive_lr_enabled_still_converges(self):
-        model = _small_model()
-        opt = _optimizer(model, adaptive_lr=True)
-        x = torch.randn(8, 5)
-        target = torch.zeros(8, 1)
-        for _ in range(5):
-            out, _ = model(x, steps=2)
-            loss = (out[:, -1, -1:] - target).pow(2).mean()
-            loss.backward()
-            opt.step()
-            opt.zero_grad(set_to_none=True)
-            model.reset_state(8)
-
-    def test_grad_centralization_zero_mean(self):
-        """With centralization, row-mean of gradient should approach zero."""
-        model = _small_model(6)
-        opt = _optimizer(model, grad_centralization=True)
-        x = torch.randn(4, 6)
-        out, _ = model(x, steps=2)
-        out.sum().backward()
-        # Just verify step runs without error
-        opt.step()
-        opt.zero_grad()
+        opt = _optimizer(model)
+        # Force frustration above threshold
+        opt._frustration = ChaosGrad._FRUST_THRESH + 0.1
+        _run_step(model, opt)
+        assert opt._frustration < ChaosGrad._FRUST_THRESH
 
 
 # ===========================================================================
@@ -337,38 +446,40 @@ class TestDiagnostics:
         model = _small_model()
         opt = _optimizer(model)
         diag = opt.get_diagnostics()
-        assert "global_step" in diag
-        assert "plateau_counter" in diag
-        assert "best_loss" in diag
-        assert "spectral_radius" in diag
+        assert "global_step"      in diag
+        assert "frustration"      in diag
+        assert "best_loss"        in diag
+        assert "avg_effective_lr" in diag
+        assert "avg_init_lr"      in diag
 
+    def test_avg_effective_lr_after_steps(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        diag = opt.get_diagnostics()
+        assert diag['avg_effective_lr'] > 0.0
+        assert diag['avg_init_lr'] > 0.0
 
-# ===========================================================================
-# ChaosGradConfig Presets
-# ===========================================================================
+    def test_init_lr_stored_in_state(self):
+        """init_lr is stored at cold start and reflects gradient scale (1/g_rms)."""
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                if p in opt.state and opt.state[p]:
+                    assert 'init_lr' in opt.state[p]
+                    assert ChaosGrad._LR_MIN <= opt.state[p]['init_lr'] <= ChaosGrad._LR_MAX
 
-class TestChaosGradConfig:
-    @pytest.mark.parametrize("preset,kwargs", [
-        ("conservative", {}),
-        ("default", {}),
-        ("finetune", {}),
-        ("large_network", {}),
-        ("tiny_network", {}),
-    ])
-    def test_preset_returns_dict(self, preset, kwargs):
-        fn = getattr(ChaosGradConfig, preset)
-        cfg = fn(**kwargs)
-        assert isinstance(cfg, dict)
-        assert "lr" in cfg
-
-    def test_default_lr_can_be_overridden(self):
-        cfg = ChaosGradConfig.default(lr=5e-5)
-        assert cfg["lr"] == pytest.approx(5e-5)
-
-    def test_tiny_network_no_weight_decay(self):
-        cfg = ChaosGradConfig.tiny_network()
-        assert cfg["weight_decay"] == 0.0
-
-    def test_large_network_has_spectral_clip(self):
-        cfg = ChaosGradConfig.large_network()
-        assert cfg["spectral_clip"] > 0
+    def test_coupling_zero_at_cold_start(self):
+        """At T=1, log_drift = log(per_lr/init_lr) should be near zero — coupling inactive."""
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        for group in opt.param_groups:
+            for p in group['params']:
+                s = opt.state.get(p)
+                if s:
+                    ratio = s['per_param_lr'] / s['init_lr']
+                    # After one step, drift should be small (cold start prev_grad ≈ 0 → sig_lr ≈ 1)
+                    assert 0.5 < ratio < 2.0

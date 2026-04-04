@@ -1,4 +1,4 @@
-# OdyssNet 2.1: The Temporal Revolution
+# OdyssNet 2.2: The Temporal Revolution
 
 **OdyssNet is the proof that Time is the ultimate Hidden Layer.**
 
@@ -7,7 +7,7 @@ Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of 
 > **The Zero-Hidden Breakthrough**
 >
 > In 1969, Minsky & Papert proved that a neural network without hidden layers cannot solve non-linear problems like XOR.
-> **OdyssNet 2.1 has broken this limit.**
+> **OdyssNet 2.2 has broken this limit.**
 >
 > By treating the network as a **Trainable Dynamic System**, OdyssNet solves non-linear problems (XOR, MNIST) using **0 Hidden Layers**. It replaces spatial neurons with temporal thinking steps.
 
@@ -15,7 +15,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 > **WORLD RECORD: Parametric Intelligence Density**
 >
-> OdyssNet 2.1 achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> OdyssNet 2.2 achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
 
 ## TL;DR
 
@@ -151,14 +151,14 @@ Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to f
 *   **StepNorm** acts as gravity, keeping energy bounded.
 *   **Tanh** filters meaningful signals while maintaining signal symmetry.
 *   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (neuron self-connections) from the **Chaos Core** (cross-connections), handles **Gate Parameters** as a dedicated group with independent `gate_lr_mult` and `gate_decay`, and places **Hebbian logits** (`hebb_factor`, `hebb_decay`) in their own zero-decay group so plasticity speed can be tuned separately.
-*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, temporal correlations $h_t \otimes h_{t-1}$ are accumulated each step and injected as $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$ — where `hebb_factor` can be a global scalar, a per-neuron vector, or a full per-synapse matrix. All variants are learnable, letting the network discover how plastic each pathway should be.
+*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, temporal correlations $h_t \otimes h_{t-1}$ are accumulated each step and injected as $W_\text{eff} = W + (f_h \odot C_t)$ — where `hebb_factor` can be a global scalar, a per-neuron vector, or a full per-synapse matrix. All variants are learnable, letting the network discover how plastic each pathway should be.
 *   **The Latch Experiment** proved OdyssNet can create a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?
 
 While OdyssNet looks like a Recurrent Neural Network (RNN) on paper, its philosophy is fundamentally different.
 
-| Feature | Standard RNN / LSTM | OdyssNet 2.1 |
+| Feature | Standard RNN / LSTM | OdyssNet 2.2 |
 | :--- | :--- | :--- |
 | **Input Flow** | Continuous Stream (e.g., words in a sentence) | **Single Pulse** (Impulse at $t=0$) |
 | **Purpose** | Sequence Processing (Parsing) | **Deep Thinking** (Digestion) |
@@ -322,7 +322,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <summary>See the "Parametric Efficiency" Log</summary>
 
     ```text
-    OdyssNet 2.1: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet 2.2: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```

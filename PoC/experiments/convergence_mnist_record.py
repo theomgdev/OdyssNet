@@ -15,10 +15,10 @@ warnings.filterwarnings("ignore", message="Detected call of `lr_scheduler.step()
 os.environ["NO_BNB"] = "1"
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
+    print("OdyssNet 2.2: MNIST RECORD CHALLENGE (Elite 480-Param Model)")
     print("Strategy: 10 Sequential Chunks (79 pixels) -> Embed(3 Neurons) -> Core(10) -> Decoder(10 Classes)")
     set_seed(42)
     
@@ -93,8 +93,7 @@ def main():
     
     trainer = OdyssNetTrainer(
         model, 
-        device=DEVICE,
-        chaos_config=ChaosGradConfig.tiny_network(lr=1e-2),
+        device=DEVICE, lr=1e-2,
         scheduler_config=scheduler_config,
         use_temporal_scheduler=True
     )

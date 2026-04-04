@@ -6,10 +6,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, TemporalSchedulerConfig, set_seed
 
 def main():
-    print("OdyssNet 2.1: PURE MNIST CHALLENGE (28x28 Raw Input)...")
+    print("OdyssNet 2.2: PURE MNIST CHALLENGE (28x28 Raw Input)...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -50,8 +50,7 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-4))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     
@@ -70,15 +69,10 @@ def main():
     train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=train_transform)
     test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=test_transform)
     
-    # Fair subset size
-    SUBSET_SIZE = 10000 
-    train_subset = Subset(train_dataset, range(SUBSET_SIZE))
-    test_subset = Subset(test_dataset, range(1000))
-    
     # Optimization: Pin Memory & Workers
     kwargs = {'num_workers': 4, 'pin_memory': True} if DEVICE == 'cuda' else {}
-    train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, **kwargs)
-    test_loader = DataLoader(test_subset, batch_size=64, shuffle=False, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, **kwargs)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, **kwargs)
     
     NUM_EPOCHS = 100
     THINKING_STEPS = 10 # 10 Steps should be enough for full resolution
@@ -121,7 +115,7 @@ def main():
         
         # Speed stats
         elapsed = time.time() - start_time
-        fps = ((epoch + 1) * len(train_subset)) / elapsed
+        fps = ((epoch + 1) * len(train_dataset)) / elapsed
         
         print(f"Epoch {epoch+1}: Loss {avg_loss:.4f} | Test Acc {acc:.2f}% | FPS: {fps:.1f}")
 

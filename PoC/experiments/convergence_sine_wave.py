@@ -6,7 +6,7 @@ import math
 
 # Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def generate_sine_data(batch_size, steps, device):
     """
@@ -57,8 +57,7 @@ def main():
     )
     
     # Initialize Trainer
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=5e-5))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=5e-5)
     
     print(f"Model: {NUM_NEURONS} Neurons. Thinking for {STEPS} steps.")
     

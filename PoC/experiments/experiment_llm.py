@@ -17,9 +17,7 @@ except ImportError:
 
 # --- ENVIRONMENT & IMPORTS ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, ChaosGradConfig, TemporalSchedulerConfig, set_seed
-from datasets import load_dataset
-from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNet, OdyssNetTrainer, save_checkpoint, load_checkpoint, transplant_weights, TemporalSchedulerConfig, set_seed
 from datasets import load_dataset
 
 # TF32 Optimization (Consistent with Notebook)
@@ -322,7 +320,6 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
     trainer = OdyssNetTrainer(
         model, lr=lr, device=device,
         gradient_persistence=0.0,
-        chaos_config=ChaosGradConfig.default(lr=lr),
         scheduler_config=sched_config,
         anomaly_hook=hook
     )

@@ -10,7 +10,7 @@ import os
 os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
-from odyssnet.training.chaos_optimizer import ChaosGrad, ChaosGradConfig
+from odyssnet.training.chaos_optimizer import ChaosGrad
 from odyssnet.training.chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 
 
@@ -64,13 +64,8 @@ def basic_trainer(tiny_model):
 
 @pytest.fixture
 def chaos_trainer(tiny_model):
-    """Trainer configured with ChaosGrad optimizer."""
-    return OdyssNetTrainer(
-        tiny_model,
-        device="cpu",
-        lr=1e-3,
-        chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-    )
+    """Trainer using ChaosGrad (default optimizer)."""
+    return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -79,20 +74,15 @@ def chaos_trainer(tiny_model):
 
 @pytest.fixture
 def dummy_optimizer(tiny_model):
-    """Plain AdamW for use in optimizer/scheduler tests."""
+    """Plain AdamW for use in scheduler tests."""
     return torch.optim.AdamW(tiny_model.parameters(), lr=1e-3)
 
 
 @pytest.fixture
 def chaos_optimizer(tiny_model):
-    """ChaosGrad instance with default config."""
+    """ChaosGrad instance with classified parameter groups."""
     groups = ChaosGrad.classify_params(tiny_model)
-    cfg = ChaosGradConfig.default(lr=1e-3)
-    for g in groups:
-        for k, v in cfg.items():
-            if k not in g and k != "params":
-                g[k] = v
-    return ChaosGrad(groups, **cfg)
+    return ChaosGrad(groups, lr=1e-3)
 
 
 @pytest.fixture

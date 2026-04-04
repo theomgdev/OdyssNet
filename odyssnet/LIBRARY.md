@@ -1,4 +1,4 @@
-# OdyssNet Library Documentation
+# OdyssNet 2.2 Library Documentation
 
 OdyssNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural networks using **Temporal Depth**. By treating the neural network as a dynamic system that evolves over time, OdyssNet achieves deep learning capabilities without stacking spatial layers.
 
@@ -78,7 +78,7 @@ model = OdyssNet(
     *   Two learnable logit parameters are created according to the resolution:
         *   `hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
         *   `hebb_decay` (raw logit → `sigmoid` → retention ≈ 0.90 initially)
-    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_{\text{eff}} = W + (\text{hebb\_factor} \odot C_t)$, where $\odot$ is element-wise multiplication with broadcasting appropriate to the chosen resolution.
+    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_\text{eff} = W + (f_h \odot C_t)$ (where $f_h$ is `hebb_factor`), with $\odot$ element-wise multiplication broadcast to the chosen resolution.
     *   The Hebbian state is persisted across forward calls via registered buffers (`hebb_state_W`, `hebb_state_mem`) and is cleared by `reset_state()`.
     *   Both `hebb_factor` and `hebb_decay` are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
     *   **Memory cost**: `"global"` adds negligible overhead; `"neuron"` adds $O(N)$; `"synapse"` triples total parameter count to $3N^2$.
@@ -196,49 +196,34 @@ Runs the dynamic system.
 
 ## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. It now supports the **ChaosGrad** optimizer and **TemporalScheduler** for OdyssNet-native training.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **ChaosGrad** is the default and only built-in optimizer — no configuration dictionary is required.
 
 ### Initialization
 
 ```python
-from odyssnet import OdyssNetTrainer, ChaosGradConfig, TemporalSchedulerConfig
+from odyssnet import OdyssNetTrainer, TemporalSchedulerConfig
 
-# Auto-selects AdamW8bit (CUDA) or AdamW (CPU)
-trainer = OdyssNetTrainer(model, device='cuda')
+# ChaosGrad is the default — just pass a genesis lr
+trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda')
 
-# ChaosGrad Only — Fixed LR, No Scheduler (Observe with your own LR)
-trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda',
-                         use_chaos_grad=True)
-# Or with a specific config:
-trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda',
-                         chaos_config=ChaosGradConfig.default(lr=1e-3))
-
-# Full Featured — ChaosGrad + TemporalScheduler
+# With TemporalScheduler
 trainer = OdyssNetTrainer(
-    model, 
+    model,
     lr=1e-4,
     device='cuda',
-    chaos_config=ChaosGradConfig.conservative(lr=1e-4),       # ChaosGrad Optimizer
-    scheduler_config=TemporalSchedulerConfig.adaptive(),  # Adaptive Scheduler
-    gradient_persistence=0.0,   # Ghost Gradients (Persistence)
-    synaptic_noise=0.0,         # Thermal Noise (Default: 0.0)
-    anomaly_hook=my_hook        # (Optional) Callable triggered on plateaus/spikes
+    scheduler_config=TemporalSchedulerConfig.adaptive(),
+    gradient_persistence=0.0,
+    synaptic_noise=0.0,
+    anomaly_hook=my_hook
 )
+
+# Custom optimizer (bypasses ChaosGrad)
+import torch
+trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3))
 ```
 
-> **Note:** When using ChaosGrad without a scheduler, LR stays fixed at the value you set. 
-> ChaosGrad's per-parameter adaptive scaling and gradient centralization still apply — 
-> you get all the optimizer benefits without automatic LR decay.
-
-**Auto-Optimization (bitsandbytes):**
-*   If `optimizer` is `None` AND `device` is `'cuda'`, the trainer will attempt to load `bitsandbytes` and use `AdamW8bit`.
-*   **VRAM Savings:** ~75% reduction in optimizer memory.
-*   **Control Variables (Set before import):**
-    *   `os.environ["NO_BNB"] = "1"`: Disables 8-bit optimizer (Forces standard Torch AdamW).
-    *   `os.environ["VERBOSE_BNB"] = "1"`: Enables verbose loading logs for debugging.
-
 **Parameters:**
-*   `lr` (float): The initial learning rate. If no optimizer is provided, this LR is used to initialize one. It is also stored as `trainer.initial_lr` for use in Scheduler warm restarts or resets.
+*   `lr` (float): Genesis learning rate for ChaosGrad. This is the single mathematical starting point from which all per-parameter learning rates autonomously adapt. Default: `1e-3`.
 *   `gradient_persistence` (float): **Ghost Gradients / Persistence**.
     *   `0.0`: Standard behavior (`zero_grad()` after every step).
     *   `> 0.0` (e.g., `0.1`): Keeps a percentage of the previous step's gradient. This creates a "momentum" over time, effectively simulating a larger batch size or longer temporal context. Useful for difficult convergence landscapes.
@@ -295,62 +280,68 @@ Returns training diagnostics including optimizer and scheduler state.
 
 ## ChaosGrad Optimizer (`odyssnet.training.chaos_optimizer`)
 
-A **OdyssNet-native optimizer** that understands and exploits the chaos chamber dynamics. Unlike generic AdamW which treats all parameters identically, ChaosGrad classifies parameters into groups and applies different strategies.
+A zero-hyperparameter optimizer that autonomously adapts every learning mechanism via
+Analytic Hypergradient Descent. All meta-parameters — learning rate multiplier, momentum
+beta, weight decay, and gradient centralization — emerge from the intrinsic geometry of the
+loss landscape at each step. No configuration dictionary required.
+
+### Autonomous Mechanisms
+
+| Mechanism | Formula | What it replaces |
+| :--- | :--- | :--- |
+| **Cold-start LR** | `per_lr₀ = 1/g_rms` — normalized first step across all parameter tensors | manual per-group lr tuning |
+| **Per-param LR** | conf-weighted drive + restore(→1.0) + derived coupling(LR×β step bound) | `lr_mult`, `adaptive_lr_clip` |
+| **Per-param Momentum** | conf-weighted drive + restore(→0.9) + derived coupling(β×LR) | static `betas` |
+| **Per-param Decay** | conf-weighted drive + restore(→`seed/per_lr`); lr×decay product preserved | global `weight_decay` |
+| **Centralization Gate** | conf-weighted drive + restore(→0.5) | boolean `grad_centralization` |
+| **Frustration Accumulator** | loss stagnation → burst scaled to `genesis_lr × per_lr` + meta-param reset | integer `plateau_patience` |
+
+### Hebbian Bypass Rule
+Hebbian logits (`hebb_factor`, `hebb_decay`) are raw unbounded scalars governing temporal
+working memory. The autonomous decay mechanism is **unconditionally bypassed** for these
+parameters — their `per_param_decay` is permanently fixed at `0.0`.
 
 ### Parameter Groups
-| Group | Parameters | Strategy |
-| :--- | :--- | :--- |
-| **chaos_core** | W matrix (cross-connections) | Spectral monitoring, adaptive LR, plateau escape |
-| **memory_feedback** | Neuron self-connections | Independent LR and ultra-low decay to preserve temporal memories |
-| **projections** | Embeddings, Projections, Decoder | Standard LR with configurable decay |
-| **gates** | input_gate, output_gate, core_gate, memory_gate | Dedicated LR/decay controls for branch-wise gating |
-| **hebbian** | hebb_factor, hebb_decay | Higher LR (`hebbian_lr_mult`), **no weight decay** (raw logits must stay unbounded) |
-| **lightweight** | Bias, Scale, Norm | Higher LR, no weight decay |
+ChaosGrad still classifies parameters to seed initial decay values correctly:
 
-### Key Features
-*   **Gradient Centralization**: Removes gradient mean for faster convergence.
-*   **Adaptive LR**: Per-parameter LR scaling based on gradient consistency.
-*   **Plateau Escape**: Controlled gradient perturbation when training stalls.
-*   **Spectral Clipping**: Keeps chaos core's spectral radius bounded (edge-of-chaos control).
-*   **Gate-Aware Controls**: `gate_lr_mult` and `gate_decay` tune gate dynamics independently from memory/projection groups.
-*   **Hebbian-Aware Controls**: `hebbian_lr_mult` sets the LR multiplier for the `hebbian` group; weight decay is **always zero** for Hebbian logits regardless of global `weight_decay`.
-*   **Zero GPU→CPU sync**: Adaptive LR state (`grad_variance`, `prev_grad_norm`) is stored as Python floats rather than CUDA tensors, eliminating a host synchronization per parameter per step.
+| Group | Initial Decay Seed |
+| :--- | :--- |
+| **chaos_core** (W matrix) | 0.01 |
+| **memory_feedback** | 0.0 |
+| **projections** | 0.01 |
+| **gates** | 0.0 |
+| **hebbian** | 0.0 (bypass enforced) |
+| **lightweight** | 0.0 |
 
-### Pre-built Configurations
-
-```python
-from odyssnet import ChaosGradConfig
-
-ChaosGradConfig.conservative(lr=1e-4)  # Conservative balanced (Standard training)
-ChaosGradConfig.default(lr=3e-4)       # Explorer (Fresh/small networks)
-ChaosGradConfig.finetune(lr=1e-5)      # Conservative (Fine-tuning)
-ChaosGradConfig.large_network(lr=1e-4) # Robust monitoring (1000+ neuron networks)
-ChaosGradConfig.tiny_network(lr=0.01)  # Minimal (XOR, Identity)
-
-# Gate-specific override
-cfg = ChaosGradConfig.default(lr=3e-4)
-cfg['gate_lr_mult'] = 1.2
-cfg['gate_decay'] = 0.0
-
-# Hebbian-specific override
-cfg = ChaosGradConfig.default(lr=3e-4)
-cfg['hebbian_lr_mult'] = 3.0  # More aggressive plasticity updates
+### Optimizer State per Parameter
+```
+step            (int)        — update count
+prev_grad       (bfloat16)   — previous gradient (VRAM-compressed)
+momentum        (float32)    — gradient accumulator
+per_param_lr    (float)      — autonomous LR multiplier, init 1.0
+per_param_decay (float)      — autonomous weight decay rate
+per_param_beta  (float)      — autonomous momentum coefficient, init 0.9
+per_param_alpha (float)      — autonomous centralization gate, init 0.5
 ```
 
-### Direct Usage
+### Usage
 
 ```python
 from odyssnet import ChaosGrad
 
-# Classify parameters and create optimizer manually
+# Single parameter — the genesis lr
 param_groups = ChaosGrad.classify_params(model)
-optimizer = ChaosGrad(param_groups, lr=1e-4, plateau_patience=100)
+optimizer = ChaosGrad(param_groups, lr=1e-3)
 
-# Report loss for plateau detection
+# Feed loss to Frustration Accumulator (optional but recommended)
 optimizer.report_loss(loss_value)
 
-# Get diagnostics
+# Manual escape from local minima
+optimizer.trigger_plateau_escape()
+
+# Diagnostics
 diag = optimizer.get_diagnostics()
+# Returns: global_step, frustration, best_loss, avg_per_param_lr
 ```
 
 ---

@@ -7,39 +7,16 @@ from typing import Any, Callable, cast
 from ..utils.data import prepare_input, to_tensor
 
 import os
-if os.environ.get('NO_BNB'):
-    HAS_BNB = False
-else:
-    try:
-        os.environ["BITSANDBYTES_NOWELCOME"] = "1"
-        # Check if user wants verbose logs (VERBOSE_BNB=1)
-        if os.environ.get('VERBOSE_BNB'):
-            import bitsandbytes as bnb
-            HAS_BNB = True
-        else:
-            # Suppress bitsandbytes logs during import
-            import sys
-            _old_out, _old_err = sys.stdout, sys.stderr
-            try:
-                with open(os.devnull, 'w') as _null_out, open(os.devnull, 'w') as _null_err:
-                    sys.stdout, sys.stderr = _null_out, _null_err
-                    import bitsandbytes as bnb
-                    HAS_BNB = True
-            finally:
-                sys.stdout, sys.stderr = _old_out, _old_err
-    except ImportError:
-        HAS_BNB = False
 
 # Import ChaosGrad and TemporalScheduler
-from .chaos_optimizer import ChaosGrad, ChaosGradConfig
+from .chaos_optimizer import ChaosGrad
 from .chaos_scheduler import TemporalScheduler, TemporalSchedulerConfig
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
-    def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu',
+    def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-3, device='cpu',
                  gradient_persistence=0.0, synaptic_noise=0.0,
-                 chaos_config=None, scheduler_config=None,
-                 use_chaos_grad=None, use_temporal_scheduler=None,
+                 scheduler_config=None, use_temporal_scheduler=None,
                  anomaly_hook=None):
         """
         Initializes the trainer.
@@ -47,20 +24,18 @@ class OdyssNetTrainer:
         Args:
             model (nn.Module): The OdyssNet model to train.
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
-                If None, auto-selects: ChaosGrad (if use_chaos_grad) or AdamW8bit/AdamW.
+                If None, ChaosGrad is used automatically with lr as genesis_lr.
             loss_fn (callable): Custom loss function (Optional).
-            lr (float): Initial learning rate (Default: 1e-4). Used if optimizer is None.
+            lr (float): Genesis learning rate for ChaosGrad. Default: 1e-3.
             device (str): Device to run training on.
-            gradient_persistence (float): How much gradient to keep from previous step (0.0 - 0.9).
-            synaptic_noise (float): Scale of noise added to weights during training (Regularization). Default 0.0.
-            chaos_config (dict, optional): Config dict for ChaosGrad. See ChaosGradConfig presets.
-                Use ChaosGradConfig.conservative(), ChaosGradConfig.default(), etc.
+            gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
+            synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
             scheduler_config (dict, optional): Config dict for TemporalScheduler.
                 Use TemporalSchedulerConfig.default(), TemporalSchedulerConfig.llm(), etc.
-            use_chaos_grad (bool, optional): Force enable/disable ChaosGrad.
-                None = auto (use ChaosGrad only when no custom optimizer given and chaos_config provided).
             use_temporal_scheduler (bool, optional): Force enable/disable TemporalScheduler.
                 None = auto (use when scheduler_config provided).
+            anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
+                anomalies ('spike', 'plateau', 'increase').
         """
         self.model = model
         self.device = device
@@ -71,7 +46,6 @@ class OdyssNetTrainer:
 
         # --- Optimizer Initialization ---
         self._using_chaos_grad = False
-        self._chaos_config = chaos_config  # Store for re-use after neurogenesis
         self.scheduler = None
         self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
         self._start_time_pred = None
@@ -80,27 +54,11 @@ class OdyssNetTrainer:
         if optimizer:
             # User explicitly provided an optimizer — use it directly.
             self.optimizer = optimizer
+            if isinstance(optimizer, ChaosGrad):
+                self._using_chaos_grad = True
         else:
-            # Auto-select optimizer
-            should_use_chaos = False
-            if use_chaos_grad is True:
-                should_use_chaos = True
-            elif use_chaos_grad is None and chaos_config is not None:
-                should_use_chaos = True
-
-            if should_use_chaos:
-                self._init_chaos_grad(model, lr, chaos_config)
-            elif HAS_BNB and device == 'cuda':
-                print("OdyssNetTrainer: Using bitsandbytes 8-bit AdamW for VRAM efficiency.")
-                adamw8bit_cls = getattr(bnb.optim, 'AdamW8bit', None)
-                if adamw8bit_cls is not None:
-                    self.optimizer = adamw8bit_cls(model.parameters(), lr=lr, weight_decay=0.01)
-                else:
-                    print("OdyssNetTrainer: AdamW8bit symbol not found. Falling back to standard AdamW.")
-                    self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-            else:
-                print("OdyssNetTrainer: bitsandbytes not found or CPU mode. Using standard AdamW.")
-                self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+            # ChaosGrad is the native OdyssNet optimizer.
+            self._init_chaos_grad(model, lr)
 
         # --- Scheduler Setup ---
         should_use_scheduler = False
@@ -121,28 +79,14 @@ class OdyssNetTrainer:
         self._acc_counter = 0
         self._persistent_grads = {}
 
-    def _init_chaos_grad(self, model, lr, chaos_config):
-        """Initialize ChaosGrad optimizer with parameter classification."""
-        config = cast(dict[str, Any], chaos_config or ChaosGradConfig.default(lr=lr))
-
-        # Set base LR in config
-        if 'lr' not in config:
-            config['lr'] = lr
-
-        # Classify parameters
+    def _init_chaos_grad(self, model, lr):
+        """Initialize ChaosGrad with classified parameter groups."""
         param_groups = ChaosGrad.classify_params(model)
-
-        # Apply config to each group while preserving group-specific flags
-        for group in param_groups:
-            for key, value in config.items():
-                if key not in group and key != 'params':
-                    group[key] = value
-
-        self.optimizer = ChaosGrad(param_groups, **config)
+        self.optimizer = ChaosGrad(param_groups, lr=lr)
         self._using_chaos_grad = True
 
         group_info = {g.get('group_name', '?'): len(g['params']) for g in param_groups}
-        print(f"OdyssNetTrainer: Using ChaosGrad optimizer. Groups: {group_info}")
+        print(f"OdyssNetTrainer: ChaosGrad initialized. Groups: {group_info}")
 
     def _ensure_scaler(self):
         """Lazily initialize AMP scaler in a version-compatible way."""
@@ -555,14 +499,12 @@ class OdyssNetTrainer:
             self.optimizer,
             amount,
             verbose,
-            chaos_config=self._chaos_config if self._using_chaos_grad else None,
         )
         self._clear_persistent_grads()
 
         if self.scheduler is not None:
             self._rebind_scheduler(scheduler_state=scheduler_state, verbose=verbose)
 
-        # Neurogenesis internally orchestrates optimizer state migration.
         if self._using_chaos_grad and verbose:
             print("   ChaosGrad: Optimizer state preserved after neurogenesis.")
 

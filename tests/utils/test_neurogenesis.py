@@ -22,7 +22,7 @@ os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet
 from odyssnet.utils.neurogenesis import Neurogenesis
-from odyssnet.training.chaos_optimizer import ChaosGrad, ChaosGradConfig
+from odyssnet.training.chaos_optimizer import ChaosGrad
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +41,7 @@ def _adamw(model, lr=1e-3):
 
 def _chaosgrad(model, lr=1e-3):
     groups = ChaosGrad.classify_params(model)
-    cfg = ChaosGradConfig.tiny_network(lr=lr)
-    for g in groups:
-        for k, v in cfg.items():
-            if k not in g and k != "params":
-                g[k] = v
-    return ChaosGrad(groups, **cfg)
+    return ChaosGrad(groups, lr=lr)
 
 
 # ===========================================================================
@@ -216,19 +211,13 @@ class TestChaosGradExpansion:
     def test_expand_with_chaosgrad_returns_chaosgrad(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
-        new_opt = Neurogenesis.expand(
-            model, opt, amount=2, verbose=False,
-            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-        )
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, ChaosGrad)
 
     def test_expand_with_chaosgrad_model_can_train(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
-        new_opt = Neurogenesis.expand(
-            model, opt, amount=2, verbose=False,
-            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-        )
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=2)
         out.sum().backward()
@@ -369,10 +358,7 @@ class TestHebbianExpansion:
     def test_chaosgrad_expand_with_hebbian(self):
         model = _model(n=4, hebb_type="global")
         opt = _chaosgrad(model)
-        new_opt = Neurogenesis.expand(
-            model, opt, amount=2, verbose=False,
-            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-        )
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, ChaosGrad)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=3)
@@ -542,10 +528,7 @@ class TestSynapseHebbExpansion:
     def test_chaosgrad_expand_with_synapse(self):
         model = _model(n=4, hebb_type="synapse")
         opt = _chaosgrad(model)
-        new_opt = Neurogenesis.expand(
-            model, opt, amount=2, verbose=False,
-            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-        )
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, ChaosGrad)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=3)

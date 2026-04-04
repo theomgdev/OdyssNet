@@ -7,10 +7,10 @@ import os
 import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: EMBEDDED MNIST CHALLENGE (8k Params)")
+    print("OdyssNet 2.2: EMBEDDED MNIST CHALLENGE (8k Params)")
     print("Strategy: 784 Pixels -> Proj(10) -> RNN(10) -> Decode(10)")
     set_seed(42)
     
@@ -45,8 +45,7 @@ def main():
     total_params = model.get_num_params()
     print(f"Total Params: {total_params}")
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-3))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-2)
     loss_fn = nn.CrossEntropyLoss()
     trainer.loss_fn = loss_fn
     

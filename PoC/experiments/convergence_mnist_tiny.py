@@ -6,10 +6,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: TINY EXPERIMENT (7x7 Input)...")
+    print("OdyssNet 2.2: TINY EXPERIMENT (7x7 Input)...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -64,8 +64,7 @@ def main():
     test_subset = Subset(test_dataset, range(1000))
     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=1e-3))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     

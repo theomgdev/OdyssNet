@@ -4,10 +4,10 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def main():
-    print("OdyssNet 2.1: The Impossible XOR (Zero-Hidden)...")
+    print("OdyssNet 2.2: The Impossible XOR (Zero-Hidden)...")
     set_seed(42) # Reproducibility
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -29,8 +29,7 @@ def main():
         device=DEVICE
     )
 
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.tiny_network(lr=0.01))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=0.01)
     
     # XOR Data
     data = [
@@ -53,7 +52,7 @@ def main():
 
     print("Training...")
     # 5 Thinking steps to allow chaotic resonance to find the XOR pattern
-    history = trainer.fit(inputs_val, targets_val, epochs=100, batch_size=16, thinking_steps=5)
+    history = trainer.fit(inputs_val, targets_val, epochs=100, batch_size=8, thinking_steps=5)
 
     print(f"Final Loss: {history[-1]:.6f}")
 

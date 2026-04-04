@@ -25,7 +25,7 @@ import os
 os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
-from odyssnet.training.chaos_optimizer import ChaosGradConfig
+from odyssnet.training.chaos_optimizer import ChaosGrad
 from odyssnet.training.chaos_scheduler import TemporalSchedulerConfig
 
 
@@ -63,19 +63,17 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
-    def test_default_optimizer_is_adamw(self):
+    def test_default_optimizer_is_chaos_grad(self):
         t = _trainer()
-        assert isinstance(t.optimizer, torch.optim.AdamW)
-
-    def test_chaos_grad_selected_when_config_provided(self):
-        from odyssnet.training.chaos_optimizer import ChaosGrad
-        model = _model()
-        t = OdyssNetTrainer(
-            model, device="cpu", lr=1e-3,
-            chaos_config=ChaosGradConfig.tiny_network(lr=1e-3),
-        )
-        assert t._using_chaos_grad is True
         assert isinstance(t.optimizer, ChaosGrad)
+        assert t._using_chaos_grad is True
+
+    def test_custom_optimizer_bypasses_chaos_grad(self):
+        model = _model()
+        custom_opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        t = OdyssNetTrainer(model, optimizer=custom_opt, device="cpu")
+        assert isinstance(t.optimizer, torch.optim.AdamW)
+        assert t._using_chaos_grad is False
 
     def test_scheduler_none_by_default(self):
         t = _trainer()

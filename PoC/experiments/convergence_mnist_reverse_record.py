@@ -42,7 +42,7 @@ SAMPLE_DIR = os.path.join(PROJECT_ROOT, 'tmp', 'reverse_record_samples')
 SAVE_EVERY_EPOCHS = 5
 
 sys.path.append(PROJECT_ROOT)
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def format_time(seconds):
     """Formats seconds into HH:MM:SS."""
@@ -115,7 +115,7 @@ def main():
     set_seed(42)
     
     print("=" * 70)
-    print("OdyssNet 2.1: INVERSE MNIST REVERSE RECORD (Generation Record)")
+    print("OdyssNet 2.2: INVERSE MNIST REVERSE RECORD (Generation Record)")
     print("=" * 70)
     print("Task: Generate 28×28 MNIST images from digit labels (0-9)")
     print("Direction: Digit (scalar) -> Image (784 pixels)")
@@ -181,8 +181,7 @@ def main():
     
     trainer = OdyssNetTrainer(
         model, 
-        device=DEVICE,
-        chaos_config=ChaosGradConfig.tiny_network(lr=2e-3),
+        device=DEVICE, lr=2e-3,
         scheduler_config=scheduler_config,
         use_temporal_scheduler=True,
         loss_fn=nn.MSELoss()

@@ -5,7 +5,7 @@ import os
 
 # Adjust path to import odyssnet
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGradConfig, set_seed
+from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
 def generate_latch_data(batch_size, seq_len, device):
     """
@@ -52,8 +52,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE,
-                             chaos_config=ChaosGradConfig.default(lr=0.01))
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=0.01)
     
     print("Training...")
     
@@ -79,12 +78,12 @@ def main():
     with torch.no_grad():
         # Predict Full Sequence
         # Returns (Batch, Steps, OutputDim)
-        preds = trainer.predict(test_input, thinking_steps=SEQ_LEN, full_sequence=True)
+        preds = trainer.predict(test_input, thinking_steps=SEQ_LEN*5, full_sequence=True)
         # We want (Steps) for printing
         # preds[0, :, 0] shape is (Steps)
         
     print(f"Trigger sent at t={test_trigger}")
-    for t in range(SEQ_LEN):
+    for t in range(SEQ_LEN*5):
         val = preds[0, t, 0].item()
         status = "OFF" if val < 0.0 else "ON "
         visual = "🔴" if val < 0.0 else "🟢"

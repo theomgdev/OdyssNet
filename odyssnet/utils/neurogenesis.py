@@ -1,28 +1,5 @@
 import torch
 import torch.nn as nn
-import os
-if os.environ.get('NO_BNB'):
-    HAS_BNB = False
-else:
-    try:
-        os.environ["BITSANDBYTES_NOWELCOME"] = "1"
-        # Check if user wants verbose logs (VERBOSE_BNB=1)
-        if os.environ.get('VERBOSE_BNB'):
-            import bitsandbytes as bnb
-            HAS_BNB = True
-        else:
-            # Suppress bitsandbytes logs during import
-            import sys
-            _old_out, _old_err = sys.stdout, sys.stderr
-            try:
-                with open(os.devnull, 'w') as _null_out, open(os.devnull, 'w') as _null_err:
-                    sys.stdout, sys.stderr = _null_out, _null_err
-                    import bitsandbytes as bnb
-                    HAS_BNB = True
-            finally:
-                sys.stdout, sys.stderr = _old_out, _old_err
-    except ImportError:
-        HAS_BNB = False
 
 class Neurogenesis:
     """
@@ -30,7 +7,7 @@ class Neurogenesis:
     """
 
     @staticmethod
-    def expand(model, optimizer, amount=1, verbose=True, chaos_config=None):
+    def expand(model, optimizer, amount=1, verbose=True):
         """
         Dynamically adds neurons to the network while preserving state and memory.
         
@@ -39,7 +16,7 @@ class Neurogenesis:
             optimizer (torch.optim.Optimizer): The current optimizer.
             amount (int): Number of neurons to add.
             verbose (bool): Whether to print status.
-            
+
         Returns:
             torch.optim.Optimizer: The new optimizer instance.
         """
@@ -235,26 +212,15 @@ class Neurogenesis:
         group = old_opt.param_groups[0]
         optimizer_cls = type(old_opt)
 
-        # Helper to safely get arg
         def get_arg(name, default):
             return group.get(name, default)
 
-        # Re-instantiate optimizer
         try:
             from ..training.chaos_optimizer import ChaosGrad
             if isinstance(old_opt, ChaosGrad):
-                cfg = dict(old_opt.defaults)
-                if isinstance(chaos_config, dict):
-                    cfg.update(chaos_config)
-                cfg['lr'] = get_arg('lr', cfg.get('lr', 0.001))
-
+                genesis_lr = old_opt.defaults.get('lr', 1e-3)
                 param_groups = ChaosGrad.classify_params(model)
-                for group_cfg in param_groups:
-                    for key, value in cfg.items():
-                        if key not in group_cfg and key != 'params':
-                            group_cfg[key] = value
-
-                new_opt = ChaosGrad(param_groups, **cfg)
+                new_opt = ChaosGrad(param_groups, lr=genesis_lr)
             else:
                 new_opt = optimizer_cls(
                     model.parameters(),
@@ -314,68 +280,53 @@ class Neurogenesis:
                     new_opt.state[new_p] = new_s
                 
         # Transfer state for each parameter
-        is_bnb = False
-        if HAS_BNB:
-            adam8_cls = getattr(bnb.optim, 'Adam8bit', None)
-            adamw8_cls = getattr(bnb.optim, 'AdamW8bit', None)
-            if isinstance(adam8_cls, type) and isinstance(new_opt, adam8_cls):
-                is_bnb = True
-            if isinstance(adamw8_cls, type) and isinstance(new_opt, adamw8_cls):
-                is_bnb = True
-        
-        if is_bnb:
-            print("   INFO: BNB optimizer detected. Skipping state transfer (cold restart) to avoid quantization issues.")
-        else:
-            try:
-                transfer_state(old_W_param, model.W, is_matrix=True)
-                transfer_state(old_B_param, model.B, is_matrix=False)
-                transfer_state(old_memory_param, model.memory_feedback, is_matrix=False)
-                
-                # Transfer StepNorm State
-                transfer_state(old_norm_w_param, model.norm.weight, is_matrix=False)
-                if old_norm_b_param is not None and getattr(model.norm, 'bias', None) is not None:
-                    transfer_state(old_norm_b_param, model.norm.bias, is_matrix=False)
-                
-                transfer_state(old_input_scale, model.input_scale, is_matrix=False)
-                transfer_state(old_output_scale, model.output_scale, is_matrix=False)
+        try:
+            transfer_state(old_W_param, model.W, is_matrix=True)
+            transfer_state(old_B_param, model.B, is_matrix=False)
+            transfer_state(old_memory_param, model.memory_feedback, is_matrix=False)
 
-                if isinstance(old_input_gate_param, nn.Parameter) and isinstance(getattr(model, 'input_gate', None), nn.Parameter):
-                    transfer_state(old_input_gate_param, model.input_gate, is_matrix=False)
-                if isinstance(old_output_gate_param, nn.Parameter) and isinstance(getattr(model, 'output_gate', None), nn.Parameter):
-                    transfer_state(old_output_gate_param, model.output_gate, is_matrix=False)
-                if isinstance(old_core_gate_param, nn.Parameter) and isinstance(getattr(model, 'core_gate', None), nn.Parameter):
-                    transfer_state(old_core_gate_param, model.core_gate, is_matrix=False)
-                if isinstance(old_memory_gate_param, nn.Parameter) and isinstance(getattr(model, 'memory_gate', None), nn.Parameter):
-                    transfer_state(old_memory_gate_param, model.memory_gate, is_matrix=False)
+            # Transfer StepNorm state
+            transfer_state(old_norm_w_param, model.norm.weight, is_matrix=False)
+            if old_norm_b_param is not None and getattr(model.norm, 'bias', None) is not None:
+                transfer_state(old_norm_b_param, model.norm.bias, is_matrix=False)
 
-                # Transfer Hebbian parameter optimizer state.
-                # "global" scalars are shape-invariant; "neuron"/"synapse" params were
-                # padded above so the old optimizer state is copied into the overlapping
-                # region via transfer_state (is_matrix=True for the 2-D "synapse" case).
-                if (hebb_type is not None
-                        and isinstance(old_hebb_factor, nn.Parameter)
-                        and isinstance(getattr(model, 'hebb_factor', None), nn.Parameter)):
-                    transfer_state(old_hebb_factor, model.hebb_factor,
-                                   is_matrix=(hebb_type == "synapse"))
-                if (hebb_type is not None
-                        and isinstance(old_hebb_decay, nn.Parameter)
-                        and isinstance(getattr(model, 'hebb_decay', None), nn.Parameter)):
-                    transfer_state(old_hebb_decay, model.hebb_decay,
-                                   is_matrix=(hebb_type == "synapse"))
+            transfer_state(old_input_scale, model.input_scale, is_matrix=False)
+            transfer_state(old_output_scale, model.output_scale, is_matrix=False)
 
-                # Transfer Vocab Layers State (Shapes are constant during Neurogenesis)
-                if old_embed_param is not None and hasattr(model, 'embed') and model.embed is not None:
-                     transfer_state(old_embed_param, model.embed.weight, is_matrix=True)
+            if isinstance(old_input_gate_param, nn.Parameter) and isinstance(getattr(model, 'input_gate', None), nn.Parameter):
+                transfer_state(old_input_gate_param, model.input_gate, is_matrix=False)
+            if isinstance(old_output_gate_param, nn.Parameter) and isinstance(getattr(model, 'output_gate', None), nn.Parameter):
+                transfer_state(old_output_gate_param, model.output_gate, is_matrix=False)
+            if isinstance(old_core_gate_param, nn.Parameter) and isinstance(getattr(model, 'core_gate', None), nn.Parameter):
+                transfer_state(old_core_gate_param, model.core_gate, is_matrix=False)
+            if isinstance(old_memory_gate_param, nn.Parameter) and isinstance(getattr(model, 'memory_gate', None), nn.Parameter):
+                transfer_state(old_memory_gate_param, model.memory_gate, is_matrix=False)
 
-                if old_proj_param is not None and hasattr(model, 'proj') and model.proj is not None:
-                     transfer_state(old_proj_param, model.proj.weight, is_matrix=True)
+            # Transfer Hebbian parameter optimizer state.
+            # "global" scalars are shape-invariant; "neuron"/"synapse" params were
+            # padded above so the old state is copied into the overlapping region.
+            if (hebb_type is not None
+                    and isinstance(old_hebb_factor, nn.Parameter)
+                    and isinstance(getattr(model, 'hebb_factor', None), nn.Parameter)):
+                transfer_state(old_hebb_factor, model.hebb_factor,
+                               is_matrix=(hebb_type == "synapse"))
+            if (hebb_type is not None
+                    and isinstance(old_hebb_decay, nn.Parameter)
+                    and isinstance(getattr(model, 'hebb_decay', None), nn.Parameter)):
+                transfer_state(old_hebb_decay, model.hebb_decay,
+                               is_matrix=(hebb_type == "synapse"))
 
-                if old_decoder_param is not None and hasattr(model, 'output_decoder') and model.output_decoder is not None:
-                     transfer_state(old_decoder_param, model.output_decoder.weight, is_matrix=True)
-                
-                print("   OK: Optimizer state transferred (momentum preserved)")
-            except Exception as e:
-                print(f"   WARNING: Optimizer state transfer failed ({e}). Performing cold restart.")
+            # Transfer vocab layer state (shapes constant during neurogenesis)
+            if old_embed_param is not None and hasattr(model, 'embed') and model.embed is not None:
+                transfer_state(old_embed_param, model.embed.weight, is_matrix=True)
+            if old_proj_param is not None and hasattr(model, 'proj') and model.proj is not None:
+                transfer_state(old_proj_param, model.proj.weight, is_matrix=True)
+            if old_decoder_param is not None and hasattr(model, 'output_decoder') and model.output_decoder is not None:
+                transfer_state(old_decoder_param, model.output_decoder.weight, is_matrix=True)
+
+            print("   OK: Optimizer state transferred (momentum preserved)")
+        except Exception as e:
+            print(f"   WARNING: Optimizer state transfer failed ({e}). Performing cold restart.")
 
         # CUDA cache cleanup
         if torch.cuda.is_available():

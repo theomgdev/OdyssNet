@@ -1,483 +1,478 @@
 """
-ChaosGrad: A OdyssNet-Native Optimizer
+ChaosGrad — Analytic Hypergradient Optimizer for OdyssNet
 
-Built specifically for OdyssNet's chaotic recurrent dynamics. Unlike AdamW which 
-treats all parameters identically, ChaosGrad understands the different roles of 
-parameters in a chaos chamber:
+A zero-hyperparameter optimizer that autonomously adapts every learning
+mechanism via Analytic Hypergradient Descent. Instead of developer-specified
+constants (learning rates, betas, weight decay, plateau patience), all
+meta-parameters are computed analytically from the intrinsic geometry of the
+loss landscape at runtime.
 
-1. W (Core Matrix): The chaos engine. Needs careful spectral management.
-2. Embeddings/Projections: Standard LLM-style parameters.
-3. Gates: Parametric gate controls for branch-wise signal modulation.
-4. Bias/Scale/Norm: Lightweight params that should train faster.
+Core principles:
+- Cold-start calibration: per_lr_0 = 1/g_rms, so the first effective step is normalized
+  across all parameter tensors regardless of gradient scale.
+- Confidence-weighted drive: all cosine signals are transformed as s = cos·|cos| before
+  use. Strong signal (cos=0.9) acts at 81% of maximum; weak signal (cos=0.3) at 9%.
+  The optimizer acts decisively on clear roads and conservatively in fog.
+- Per-parameter LR    ← conf(∇_t,∇_{t-1}) + restore(→1.0) + couple(LR×β step bound)
+- Per-parameter beta  ← conf(∇_t,V_{t-1}) + restore(→0.9)  + couple(β×LR, symmetric)
+- Per-parameter decay ← conf(∇_t,W_{t-1}) + restore(→seed/lr) [lr×decay product coupling]
+- Centralization α    ← conf(noise signal) + restore(→0.5)   [independent]
+- Frustration         ← loss stagnation → burst scaled to current per_lr + meta-param reset
 
-Key Features:
-- Per-parameter adaptive learning rates based on gradient health
-- Input-gradient monitoring to detect "input-blind" local minima
-- Spectral radius awareness for edge-of-chaos control
-- Plateau escape via controlled gradient perturbation
-- Decoupled weight decay for different parameter groups
+The only external scalar is genesis_lr: a mathematical starting point,
+not a hyperparameter to tune. Set it near the rough scale of the problem
+(default 1e-3) and let the system adapt from there.
+
+State per parameter:
+    step (int)                  — update count
+    init_lr  (float)            — calibrated starting LR = 1/g_rms at T=0 (fixed, never updated)
+    prev_grad (bfloat16 tensor) — previous gradient (VRAM-compressed)
+    momentum  (float32 tensor)  — exponential gradient accumulator
+    per_param_lr    (float)     — autonomous LR multiplier (starts at init_lr; restore/couple
+                                  reference this initial value, not 1.0)
+    per_param_decay (float)     — autonomous weight decay rate (group-seeded, lr-coupled)
+    per_param_beta  (float)     — autonomous momentum coefficient (init 0.9)
+    per_param_alpha (float)     — autonomous centralization gate (init 0.5)
 """
 
 import torch
 import math
 
 
+def _cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
+    """
+    Cosine similarity between two tensors, flattened.
+    Returns a float in [-1, 1]. Returns 0.0 when either tensor is near-zero.
+    """
+    a_norm = a.norm()
+    b_norm = b.norm()
+    if a_norm < 1e-12 or b_norm < 1e-12:
+        return 0.0
+    return (a * b).sum().item() / (a_norm.item() * b_norm.item())
+
+
+def _conf_signal(cos: float) -> float:
+    """
+    Confidence-weighted directional signal: s = cos · |cos| = sign(cos) · cos².
+
+    Transforms raw cosine similarity so that the adaptation step scales with
+    signal confidence. A driver on a clear road acts decisively; in fog, cautiously.
+
+    cos=±1.0 → s=±1.0 (full action)   cos=±0.5 → s=±0.25 (quarter action)
+    cos= 0.0 → s= 0.0 (no action)     cos=±0.3 → s=±0.09 (near-idle)
+    """
+    return cos * abs(cos)
+
+
 class ChaosGrad(torch.optim.Optimizer):
     """
-    ChaosGrad: OdyssNet-native optimizer.
-    
-    Extends AdamW with chaos-aware features:
-    - Separate momentum/LR for chaos core (W) vs projections vs lightweight params
-    - Gradient health monitoring with per-param adaptive LR
-    - Plateau detection and escape via controlled perturbation
-    - Input gradient monitoring for detecting vanishing input gradients
-    
-    Args:
-        params: Iterable of parameters or parameter groups.
-        lr (float): Base learning rate. Default: 1e-4.
-        betas (tuple): AdamW momentum coefficients. Default: (0.9, 0.999).
-        eps (float): Numerical stability. Default: 1e-8.
-        weight_decay (float): Weight decay for chaos core. Default: 0.01.
-        projection_decay (float): Weight decay for projections/embeddings. Default: 0.01.
-        gate_decay (float): Weight decay for gate parameters. Default: 0.0.
-        lightweight_lr_mult (float): LR multiplier for bias/scale/norm params. Default: 2.0.
-        chaos_core_lr_mult (float): LR multiplier for core W matrix. Default: 1.0.
-        projection_lr_mult (float): LR multiplier for projection layers. Default: 1.0.
-        gate_lr_mult (float): LR multiplier for gate parameters. Default: 1.0.
-        hebbian_lr_mult (float): LR multiplier for hebb_factor and hebb_decay. Default: 2.0.
-        plateau_patience (int): Steps of no improvement before perturbation. Default: 0 (disabled).
-        plateau_noise_scale (float): Scale of perturbation noise on plateau escape. Default: 0.01.
-        spectral_clip (float): Max spectral radius for W matrix. Default: 0 (disabled).
-        adaptive_lr (bool): Enable per-param adaptive LR scaling. Default: True.
-        adaptive_lr_clip (tuple): (min, max) multiplier for adaptive LR. Default: (0.1, 10.0).
-        grad_centralization (bool): Center gradients by removing mean. Default: True.
-    """
-    
-    def __init__(self, params, lr=1e-4, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=0.01, projection_decay=0.01, memory_decay=0.0, gate_decay=0.0,
-                 lightweight_lr_mult=2.0, chaos_core_lr_mult=1.0,
-                 projection_lr_mult=1.0, memory_lr_mult=1.0, gate_lr_mult=1.0,
-                 hebbian_lr_mult=2.0,
-                 plateau_patience=0, plateau_noise_scale=0.01,
-                 spectral_clip=0.0,
-                 adaptive_lr=True, adaptive_lr_clip=(0.1, 10.0),
-                 grad_centralization=True):
+    Zero-hyperparameter OdyssNet optimizer.
 
-        defaults = dict(
-            lr=lr, betas=betas, eps=eps,
-            weight_decay=weight_decay,
-            projection_decay=projection_decay,
-            memory_decay=memory_decay,
-            gate_decay=gate_decay,
-            lightweight_lr_mult=lightweight_lr_mult,
-            chaos_core_lr_mult=chaos_core_lr_mult,
-            projection_lr_mult=projection_lr_mult,
-            memory_lr_mult=memory_lr_mult,
-            gate_lr_mult=gate_lr_mult,
-            hebbian_lr_mult=hebbian_lr_mult,
-            plateau_patience=plateau_patience,
-            plateau_noise_scale=plateau_noise_scale,
-            spectral_clip=spectral_clip,
-            adaptive_lr=adaptive_lr,
-            adaptive_lr_clip=adaptive_lr_clip,
-            grad_centralization=grad_centralization,
-        )
+    Every learning meta-parameter (lr multiplier, weight decay, momentum beta,
+    gradient centralization gate) adapts autonomously via cosine-similarity-based
+    hypergradient descent.
+
+    Args:
+        params: Iterable of parameters or classified parameter groups (from
+                classify_params). Providing classified groups enables
+                group-specific decay seeding and the Hebbian bypass rule.
+        lr (float): Genesis learning rate — the single mathematical starting
+                    point. Default: 1e-3. This is NOT a tunable hyperparameter;
+                    it sets the initial update scale before autonomous
+                    adaptation takes over.
+    """
+
+    # ------------------------------------------------------------------ #
+    # Fixed meta-constants (not configurable by design)                   #
+    # ------------------------------------------------------------------ #
+    # ---- Driving forces (hypergradient step size per unit of cosine signal) ----
+    _ETA_LR    = 0.05    # LR: log-scale step (proportional acceleration/deceleration)
+    _ETA_MOM   = 0.02    # Momentum beta: additive step
+    _ETA_DECAY = 0.002   # Weight decay: additive step
+    _ETA_ALPHA = 0.02    # Centralization gate: additive step
+
+    # ---- Restoring forces (spring constants toward equilibrium) ----
+    _RESTORE_LR    = 0.02   # per_lr   → 1.0          (log-space spring)
+    _RESTORE_BETA  = 0.10   # per_beta → 0.9          (linear spring)
+    _RESTORE_ALPHA = 0.05   # per_alpha → 0.5         (linear spring)
+    _RESTORE_DECAY = 0.10   # per_decay → seed/per_lr (product-coupled linear spring)
+
+    # ---- Cross-couplings (prevent effective step amplitude from diverging) ----
+    # Derived from restore constants — not independently tunable.
+    # Effective step = per_lr / (1 - per_beta); neutral = init_lr / (10 * 0.1) = init_lr.
+    _COUPLE_LR_BETA  = _RESTORE_LR   / 2     # = 0.01
+    _COUPLE_BETA_LR  = _RESTORE_BETA / 10    # = 0.01
+
+    # ---- Safety bounds (emergency rails, not primary constraints) ----
+    _LR_MIN    = 0.01
+    _LR_MAX    = 100.0
+    _BETA_MIN  = 0.5
+    _BETA_MAX  = 0.999
+    _DECAY_MAX = 0.1
+
+    # ---- Frustration Accumulator ----
+    _FRUST_DECAY      = 0.995   # EMA decay rate
+    _FRUST_THRESH     = 0.75    # Threshold → burst
+    _FRUST_NOISE      = 0.01    # Momentum noise scale (relative to genesis_lr)
+    _FRUST_META_RESET = 0.30    # Fraction to pull meta-params toward neutral on burst
+
+    _GENESIS_SCALAR = 1e-6  # Cold-start prev_grad seed scale
+
+    # Initial per-group decay seeds (autonomous adaptation starts here)
+    _INIT_DECAY = {
+        'chaos_core':      0.01,
+        'memory_feedback': 0.0,
+        'projections':     0.01,
+        'gates':           0.0,
+        'hebbian':         0.0,
+        'lightweight':     0.0,
+    }
+
+    def __init__(self, params, lr: float = 1e-3):
+        if lr <= 0.0:
+            raise ValueError(f"Genesis lr must be positive, got {lr}")
+        defaults = dict(lr=lr)
         super().__init__(params, defaults)
-        
-        # Global tracking
+
         self._global_step = 0
-        self._loss_history = []
-        self._plateau_counter = 0
-        self._best_loss = float('inf')
-        self._spectral_radius = 0.0
-        self._last_perturbation_step = -1
+        self._frustration = 0.0    # Global Frustration Accumulator
+        self._best_loss   = float('inf')
         self._force_plateau_escape = False
-    
+
+    # ------------------------------------------------------------------ #
+    # Parameter classification                                            #
+    # ------------------------------------------------------------------ #
+
     @staticmethod
     def classify_params(model):
         """
-        Classifies OdyssNet parameters into groups with appropriate settings.
-        Returns a list of param groups suitable for the optimizer.
-        
-        Groups:
-        1. chaos_core: W matrix (the NxN core)
-        2. memory_feedback: memory_feedback (self-connections)
-        3. projections: Embedding, Linear projection, Output decoder
-        4. gates: input/output/core/memory gate parameters
-        5. hebbian: hebb_factor, hebb_decay (Hebbian learning control scalars)
-        6. lightweight: Bias, Scale, Norm parameters
+        Classifies OdyssNet parameters into semantically distinct groups.
+
+        Groups determine the initial decay seed and enforce the Hebbian
+        bypass rule (Hebbian logits must never receive autonomous weight
+        decay because they govern unbounded temporal working-memory logits).
+
+        Returns a list of param-group dicts suitable for ChaosGrad.__init__.
         """
-        chaos_core      = []  # W matrix (cross connections)
-        memory_feedback = []  # memory_feedback (self connections)
-        projections     = []  # Embeddings, projections, decoders
-        gates           = []  # Parametric gate vectors
-        hebbian         = []  # Hebbian learning rate and decay scalars
-        lightweight     = []  # Bias, scale, norm
+        chaos_core      = []
+        memory_feedback = []
+        projections     = []
+        gates           = []
+        hebbian         = []
+        lightweight     = []
 
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
+            leaf = name.split('.')[-1]
 
-            # Torch wrappers (e.g. torch.compile, DDP) often prefix names
-            # like "_orig_mod." or "module.". Use leaf names for exact groups.
-            leaf_name = name.split('.')[-1]
-
-            if leaf_name == 'W':
+            if leaf == 'W':
                 chaos_core.append(param)
-            elif leaf_name == 'memory_feedback':
+            elif leaf == 'memory_feedback':
                 memory_feedback.append(param)
-            elif any(k in name for k in ['embed', 'proj', 'output_decoder']):
+            elif any(k in name for k in ('embed', 'proj', 'output_decoder')):
                 projections.append(param)
-            elif leaf_name in {'input_gate', 'output_gate', 'core_gate', 'memory_gate'}:
+            elif leaf in {'input_gate', 'output_gate', 'core_gate', 'memory_gate'}:
                 gates.append(param)
-            elif leaf_name in {'hebb_factor', 'hebb_decay'}:
+            elif leaf in {'hebb_factor', 'hebb_decay'}:
                 hebbian.append(param)
             else:
-                # B, input_scale, output_scale, norm.weight, norm.bias
                 lightweight.append(param)
 
         _flags = {
             '_is_chaos_core': False, '_is_memory_feedback': False,
             '_is_projection': False, '_is_gate': False,
-            '_is_hebbian': False, '_is_lightweight': False,
+            '_is_hebbian':    False, '_is_lightweight': False,
         }
 
         groups = []
-
         if chaos_core:
             groups.append({**_flags, 'params': chaos_core,
                            'group_name': 'chaos_core', '_is_chaos_core': True})
-
         if memory_feedback:
             groups.append({**_flags, 'params': memory_feedback,
                            'group_name': 'memory_feedback', '_is_memory_feedback': True})
-
         if projections:
             groups.append({**_flags, 'params': projections,
                            'group_name': 'projections', '_is_projection': True})
-
         if gates:
             groups.append({**_flags, 'params': gates,
                            'group_name': 'gates', '_is_gate': True})
-
         if hebbian:
             groups.append({**_flags, 'params': hebbian,
                            'group_name': 'hebbian', '_is_hebbian': True})
-
         if lightweight:
             groups.append({**_flags, 'params': lightweight,
                            'group_name': 'lightweight', '_is_lightweight': True})
-
         return groups
-    
+
+    # ------------------------------------------------------------------ #
+    # Frustration Accumulator interface                                   #
+    # ------------------------------------------------------------------ #
+
     def report_loss(self, loss_value):
-        """Report current loss for plateau detection and adaptive behavior."""
+        """
+        Feed the current loss to the Frustration Accumulator.
+
+        Frustration grows when loss fails to improve. When frustration
+        exceeds the internal threshold, the next step injects a momentum
+        noise burst across all parameters to escape local minima and
+        shallow attractors.
+        """
         if isinstance(loss_value, torch.Tensor):
             loss_value = loss_value.item()
-        self._loss_history.append(loss_value)
-        
-        # Keep only recent history
-        max_history = max(200, self.defaults.get('plateau_patience', 0) * 2)
-        if len(self._loss_history) > max_history:
-            self._loss_history = self._loss_history[-max_history:]
-            
-        if loss_value < self._best_loss:
+
+        if loss_value < self._best_loss * 0.9999:
             self._best_loss = loss_value
-            self._plateau_counter = 0
+            frustration_signal = 0.0
         else:
-            self._plateau_counter += 1
-    
+            # Loss stagnating or worsening relative to best — accumulate frustration.
+            frustration_signal = min(1.0, loss_value / (self._best_loss + 1e-10))
+
+        self._frustration = (
+            self._frustration * self._FRUST_DECAY
+            + frustration_signal * (1.0 - self._FRUST_DECAY)
+        )
+
     def trigger_plateau_escape(self):
-        """Manually trigger a plateau escape perturbation in the next step."""
+        """Manually force a frustration noise burst on the next step."""
         self._force_plateau_escape = True
 
     def get_diagnostics(self):
-        """Returns minimal optimizer state."""
+        """
+        Returns optimizer health metrics.
+
+        avg_effective_lr: mean of (per_param_lr / init_lr) — how much adaptation
+            has moved each parameter's LR relative to its calibrated starting point.
+            1.0 = no drift from cold start; >1 = training is going well; <1 = struggling.
+        avg_init_lr: mean of init_lr across parameters — reflects the gradient scale
+            of the network at cold start. Useful for detecting misconfigured genesis_lr.
+        """
+        total_drift = 0.0
+        total_init  = 0.0
+        count = 0
+        for group in self.param_groups:
+            genesis_lr = group.get('lr', self.defaults['lr'])
+            for p in group['params']:
+                s = self.state.get(p)
+                if s:
+                    init_lr = s.get('init_lr', s.get('per_param_lr', 1.0))
+                    per_lr  = s.get('per_param_lr', init_lr)
+                    total_drift += per_lr / max(init_lr, 1e-9)
+                    total_init  += init_lr * genesis_lr
+                    count += 1
+        n = count if count > 0 else 1
         return {
-            'global_step': self._global_step,
-            'plateau_counter': self._plateau_counter,
-            'best_loss': self._best_loss,
-            'spectral_radius': self._spectral_radius,
+            'global_step':       self._global_step,
+            'frustration':       self._frustration,
+            'best_loss':         self._best_loss,
+            'avg_effective_lr':  total_drift / n,
+            'avg_init_lr':       total_init  / n,
         }
+
+    # ------------------------------------------------------------------ #
+    # Optimization step                                                   #
+    # ------------------------------------------------------------------ #
 
     @torch.no_grad()
     def step(self, closure=None):
-        """Performs a single optimization step."""
+        """Performs a single autonomous optimization step."""
         loss = None
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-        
-        self._global_step += 1
-        
-        # Plateau check
-        plateau_patience = self.defaults.get('plateau_patience', 0)
-        plateau_noise = self.defaults.get('plateau_noise_scale', 0.01)
-        is_plateau = (plateau_patience > 0 and 
-                     self._plateau_counter >= plateau_patience and
-                     self._global_step - self._last_perturbation_step > plateau_patience) or self._force_plateau_escape
-        
-        if is_plateau:
-            self._last_perturbation_step = self._global_step
-            self._plateau_counter = 0
-            self._force_plateau_escape = False
-        
-        # Adaptive LR settings
-        use_adaptive = self.defaults.get('adaptive_lr', True)
-        adaptive_clip = self.defaults.get('adaptive_lr_clip', (0.1, 10.0))
-        use_centralization = self.defaults.get('grad_centralization', True)
-        spectral_clip = self.defaults.get('spectral_clip', 0.0)
-        
-        for group in self.param_groups:
-            is_core    = group.get('_is_chaos_core', False)
-            is_memory  = group.get('_is_memory_feedback', False)
-            is_proj    = group.get('_is_projection', False)
-            is_gate    = group.get('_is_gate', False)
-            is_hebbian = group.get('_is_hebbian', False)
-            is_light   = group.get('_is_lightweight', False)
 
-            # Select appropriate LR multiplier and weight decay per group.
-            if is_core:
-                lr_mult = self.defaults['chaos_core_lr_mult']
-                wd = self.defaults['weight_decay']
-            elif is_memory:
-                lr_mult = self.defaults['memory_lr_mult']
-                wd = self.defaults['memory_decay']
-            elif is_proj:
-                lr_mult = self.defaults['projection_lr_mult']
-                wd = self.defaults['projection_decay']
-            elif is_gate:
-                lr_mult = self.defaults['gate_lr_mult']
-                wd = self.defaults['gate_decay']
-            elif is_hebbian:
-                # Hebbian control scalars — no weight decay (they are unbounded logits).
-                lr_mult = self.defaults.get('hebbian_lr_mult', 2.0)
-                wd = 0.0
-            elif is_light:
-                lr_mult = self.defaults['lightweight_lr_mult']
-                wd = 0.0  # No decay for bias/scale/norm
-            else:
-                lr_mult = 1.0
-                wd = self.defaults['weight_decay']
-            
-            beta1, beta2 = group.get('betas', self.defaults['betas'])
-            eps = group.get('eps', self.defaults['eps'])
-            base_lr = group.get('lr', self.defaults['lr'])
-            
+        self._global_step += 1
+
+        # Determine whether to fire a frustration noise burst this step.
+        do_burst = (
+            self._frustration > self._FRUST_THRESH
+            or self._force_plateau_escape
+        )
+        if do_burst:
+            self._frustration *= 0.3   # Partial reset after burst
+            self._force_plateau_escape = False
+
+        for group in self.param_groups:
+            is_core    = group.get('_is_chaos_core',      False)
+            is_hebbian = group.get('_is_hebbian',         False)
+            group_name = group.get('group_name',          'unknown')
+            init_decay = self._INIT_DECAY.get(group_name, 0.0)
+
+            # The scheduler (if any) modifies group['lr'] to steer genesis_lr.
+            genesis_lr = group.get('lr', self.defaults['lr'])
+
             for p in group['params']:
                 if p.grad is None:
                     continue
-                    
-                grad = p.grad
-                
-                if grad.is_sparse:
+
+                g = p.grad
+                if g.is_sparse:
                     raise RuntimeError('ChaosGrad does not support sparse gradients.')
-                
-                # Get or create state
+
                 state = self.state[p]
+
+                # -------------------------------------------------------- #
+                # Cold start (T=0): calibrate from the first gradient.     #
+                # -------------------------------------------------------- #
                 if len(state) == 0:
-                    state['step'] = 0
-                    state['exp_avg'] = torch.zeros_like(p)
-                    state['exp_avg_sq'] = torch.zeros_like(p)
-                    # For adaptive LR: track gradient variance
-                    if use_adaptive:
-                        state['grad_variance'] = 1.0
-                        state['prev_grad_norm'] = 1.0
-                
+                    # Calibrate per_lr so genesis_lr * per_lr * g_rms ≈ genesis_lr:
+                    # the first effective step is normalized across all parameter tensors.
+                    g_rms = (g.float() ** 2).mean().sqrt().item()
+                    init_lr = max(self._LR_MIN, min(self._LR_MAX,
+                                  1.0 / max(g_rms, 1e-8)))
+                    # Decay seeded so that the lr×decay product starts at the group seed.
+                    init_decay_calibrated = init_decay / max(init_lr, 0.1)
+
+                    state['step']           = 0
+                    state['init_lr']        = init_lr   # fixed reference; never mutated
+                    state['prev_grad']      = (g.detach() * self._GENESIS_SCALAR).to(torch.bfloat16)
+                    state['momentum']       = torch.zeros_like(g, dtype=torch.float32)
+                    state['per_param_lr']   = init_lr
+                    state['per_param_decay']= float(init_decay_calibrated)
+                    state['per_param_beta'] = 0.9
+                    state['per_param_alpha']= 0.5
+
                 state['step'] += 1
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-                
-                if use_centralization and grad.dim() >= 2:
-                    grad = grad - grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True)
-                
-                if is_plateau and is_core:
-                    noise = torch.randn_like(grad) * plateau_noise * grad.abs().mean()
-                    grad = grad + noise
-                    
-                if is_core and grad.dim() == 2 and grad.shape[0] == grad.shape[1]:
-                    grad.fill_diagonal_(0.0)
-                
-                if wd > 0:
-                    p.data.mul_(1 - base_lr * lr_mult * wd)
-                
-                # --- AdamW Core Update ---
-                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
-                
-                # Bias correction
-                bias_correction1 = 1 - beta1 ** state['step']
-                bias_correction2 = 1 - beta2 ** state['step']
-                
-                corrected_avg = exp_avg / bias_correction1
-                corrected_avg_sq = exp_avg_sq / bias_correction2
-                
-                # Step size
-                step_size = base_lr * lr_mult
-                
-                if use_adaptive:
-                    current_grad_norm = grad.norm().item()
 
-                    prev_grad_norm = state.get('prev_grad_norm', 0.0)
-                    if not isinstance(prev_grad_norm, float):
-                        prev_grad_norm = prev_grad_norm.item()
+                g_f       = g.float()
+                prev_g    = state['prev_grad'].float()
+                v         = state['momentum']
+                init_lr   = state['init_lr']
+                per_lr    = state['per_param_lr']
+                per_decay = state['per_param_decay']
+                per_beta  = state['per_param_beta']
+                per_alpha = state['per_param_alpha']
 
-                    if prev_grad_norm > 0.0 and current_grad_norm > 0.0:
-                        ratio = current_grad_norm / (prev_grad_norm + eps)
+                # Drift of per_lr relative to its calibrated starting point.
+                # Zero at cold start; non-zero only when training signal has moved per_lr.
+                # All restore and coupling terms reference this, so they are neutral
+                # at T=0 and only activate as adaptation occurs.
+                _log_drift = math.log(max(per_lr / init_lr, 1e-9))
 
-                        grad_var = state.get('grad_variance', 1.0)
-                        if not isinstance(grad_var, float):
-                            grad_var = grad_var.item()
+                # -------------------------------------------------------- #
+                # 1. Hypergradient signals                                  #
+                #    Raw cosine similarities are transformed via            #
+                #    s = cos·|cos| before driving any meta-parameter.      #
+                #    This weights the adaptation step by signal confidence: #
+                #    strong signal → act decisively; weak → act sparingly. #
+                # -------------------------------------------------------- #
+                sig_lr  = _conf_signal(_cosine_sim(g_f, prev_g))          # LR / alpha signal
+                sig_wd  = _conf_signal(_cosine_sim(g_f, p.data.float()))  # Decay signal
+                sig_mom = _conf_signal(_cosine_sim(g_f, v.float()))       # Momentum signal
 
-                        grad_var = grad_var * 0.99 + ratio * 0.01
+                # -------------------------------------------------------- #
+                # 2. Autonomous hyperparameter update                       #
+                #                                                           #
+                # Each meta-parameter is governed by three forces:         #
+                #   Drive:   cosine signal pushes toward the better state. #
+                #   Restore: spring toward a principled equilibrium.       #
+                #   Couple:  cross-terms prevent per_lr × per_beta from    #
+                #            forming a runaway effective step amplitude.   #
+                # -------------------------------------------------------- #
 
-                        adaptive_mult = 1.0 / (grad_var + eps)
-                        adaptive_mult = max(adaptive_clip[0], min(adaptive_clip[1], adaptive_mult))
-                        step_size *= adaptive_mult
+                # Per-param LR — multiplicative (log-space).
+                # Restore pulls per_lr toward init_lr (calibrated start), not toward 1.0.
+                # Coupling measures drift of the effective step amplitude from its calibrated
+                # neutral: (per_lr/init_lr) / (10*(1-beta)) = 1.0 at cold start with beta=0.9.
+                _drift_amp = (per_lr / init_lr) / (10.0 * max(1.0 - per_beta, 1e-4))
+                per_lr = max(self._LR_MIN, min(self._LR_MAX,
+                             per_lr * math.exp(
+                                 self._ETA_LR          * sig_lr
+                                 - self._RESTORE_LR    * _log_drift
+                                 - self._COUPLE_LR_BETA * math.log(max(_drift_amp, 1e-9))
+                             )))
 
-                        state['grad_variance'] = grad_var
-                    
-                    state['prev_grad_norm'] = current_grad_norm
-                
-                denom = corrected_avg_sq.sqrt().add_(eps)
-                p.data.addcdiv_(corrected_avg, denom, value=-step_size)
-                
+                # Recompute log_drift with updated per_lr for use in beta coupling.
+                _log_drift = math.log(max(per_lr / init_lr, 1e-9))
+
+                # Per-param momentum beta — additive.
+                # Coupling uses log_drift so that cold-start high per_lr (small gradients)
+                # does not incorrectly suppress beta — only signal-driven per_lr changes do.
+                per_beta = max(self._BETA_MIN, min(self._BETA_MAX,
+                               per_beta
+                               + self._ETA_MOM         * sig_mom
+                               - self._RESTORE_BETA    * (per_beta - 0.9)
+                               - self._COUPLE_BETA_LR  * _log_drift))
+
+                # Centralization gate alpha — additive.
+                # No cross-coupling: sig_lr already carries implicit LR effects
+                # (high LR → oscillation → lower sig_lr → higher alpha).
+                per_alpha = max(0.0, min(1.0,
+                                per_alpha
+                                - self._ETA_ALPHA    * sig_lr
+                                - self._RESTORE_ALPHA * (per_alpha - 0.5)))
+
+                # Per-param weight decay — additive; Hebbian bypass enforced.
+                # Decay neutral = seed / per_lr (lr×decay product coupling).
+                if not is_hebbian:
+                    _decay_neutral = init_decay / max(per_lr, 0.1)
+                    per_decay = max(0.0, min(self._DECAY_MAX,
+                                   per_decay
+                                   + self._ETA_DECAY    * sig_wd
+                                   - self._RESTORE_DECAY * (per_decay - _decay_neutral)))
+
+                # -------------------------------------------------------- #
+                # 3. Gradient Centralization (continuous gate)              #
+                # -------------------------------------------------------- #
+                if g_f.dim() >= 2 and per_alpha > 1e-3:
+                    g_proc = g_f - per_alpha * g_f.mean(
+                        dim=tuple(range(1, g_f.dim())), keepdim=True
+                    )
+                else:
+                    g_proc = g_f
+
+                # Enforce zero diagonal on chaos core gradient.
+                if is_core and g_proc.dim() == 2 and g_proc.shape[0] == g_proc.shape[1]:
+                    g_proc = g_proc.clone()
+                    g_proc.fill_diagonal_(0.0)
+
+                # -------------------------------------------------------- #
+                # 4. Momentum update                                        #
+                # -------------------------------------------------------- #
+                v.mul_(per_beta).add_(g_proc, alpha=1.0 - per_beta)
+
+                # -------------------------------------------------------- #
+                # 5. Frustration burst (escape local minima)                #
+                # -------------------------------------------------------- #
+                if do_burst:
+                    # Noise scales with the current effective LR, not genesis_lr alone.
+                    # A parameter whose LR has drifted to 10× genesis needs 10× more
+                    # noise to actually perturb its trajectory.
+                    noise_scale = self._FRUST_NOISE * genesis_lr * per_lr
+                    v.add_(torch.randn_like(v) * noise_scale)
+                    # Partially reset meta-parameters toward neutral so the burst
+                    # launches from a clean state rather than from whatever extreme
+                    # configuration preceded stagnation.
+                    per_lr    = per_lr    + self._FRUST_META_RESET * (1.0 - per_lr)
+                    per_beta  = per_beta  + self._FRUST_META_RESET * (0.9 - per_beta)
+                    per_alpha = per_alpha + self._FRUST_META_RESET * (0.5 - per_alpha)
+
+                # -------------------------------------------------------- #
+                # 6. Autonomous weight decay                                 #
+                # -------------------------------------------------------- #
+                if per_decay > 0.0 and not is_hebbian:
+                    p.data.mul_(1.0 - genesis_lr * per_decay)
+
+                # -------------------------------------------------------- #
+                # 7. Parameter update                                        #
+                # -------------------------------------------------------- #
+                p.data.add_(v, alpha=-(genesis_lr * per_lr))
+
+                # -------------------------------------------------------- #
+                # 8. Core matrix diagonal constraint                        #
+                # -------------------------------------------------------- #
                 if is_core and p.dim() == 2 and p.shape[0] == p.shape[1]:
                     p.data.fill_diagonal_(0.0)
 
-                # --- Spectral Clip for Core Matrix ---
-                if is_core and spectral_clip > 0 and p.dim() == 2:
-                    try:
-                        u = torch.randn(p.shape[0], 1, device=p.device)
-                        for _ in range(3):  # 3 power iterations
-                            v = p.t() @ u
-                            v = v / (v.norm() + 1e-12)
-                            u = p @ v
-                            u = u / (u.norm() + 1e-12)
-                        sigma_max = (u.t() @ p @ v).item()
-                        self._spectral_radius = abs(sigma_max)
+                # -------------------------------------------------------- #
+                # 9. Persist state                                           #
+                # -------------------------------------------------------- #
+                state['prev_grad']       = g.detach().to(torch.bfloat16)
+                state['momentum']        = v
+                state['per_param_lr']    = per_lr
+                state['per_param_decay'] = per_decay
+                state['per_param_beta']  = per_beta
+                state['per_param_alpha'] = per_alpha
 
-                        # Use larger epsilon for numerical stability
-                        spectral_eps = 1e-8
-                        if self._spectral_radius > spectral_eps and self._spectral_radius > spectral_clip:
-                            p.data.mul_(spectral_clip / self._spectral_radius)
-                    except Exception:
-                        pass
-                        
         return loss
-
-
-class ChaosGradConfig:
-    """
-    Pre-built configurations for ChaosGrad optimizer.
-    """
-    
-    @staticmethod
-    def conservative(lr=1e-4):
-        """Conservative balanced configuration."""
-        return dict(
-            lr=lr,
-            betas=(0.9, 0.999),
-            weight_decay=0.01,
-            projection_decay=0.01,
-            memory_decay=0.0,
-            gate_decay=0.0,
-            lightweight_lr_mult=2.0,
-            chaos_core_lr_mult=1.0,
-            projection_lr_mult=1.0,
-            memory_lr_mult=1.0,
-            gate_lr_mult=1.0,
-            hebbian_lr_mult=1.0,
-            adaptive_lr=True,
-            grad_centralization=True,
-        )
-
-    @staticmethod
-    def default(lr=3e-4):
-        """Default exploration for fresh/small networks."""
-        return dict(
-            lr=lr,
-            betas=(0.9, 0.98),
-            weight_decay=0.001,
-            projection_decay=0.001,
-            memory_decay=0.0,
-            gate_decay=0.0,
-            lightweight_lr_mult=3.0,
-            chaos_core_lr_mult=1.5,
-            projection_lr_mult=1.2,
-            memory_lr_mult=1.0,
-            gate_lr_mult=1.0,
-            hebbian_lr_mult=2.0,
-            plateau_patience=50,
-            plateau_noise_scale=0.02,
-            adaptive_lr=True,
-            adaptive_lr_clip=(0.2, 5.0),
-            grad_centralization=True,
-        )
-
-    @staticmethod
-    def finetune(lr=1e-5):
-        """Conservative fine-tuning configuration."""
-        return dict(
-            lr=lr,
-            betas=(0.9, 0.999),
-            weight_decay=0.01,
-            projection_decay=0.005,
-            memory_decay=0.0,
-            gate_decay=0.0,
-            lightweight_lr_mult=1.0,
-            chaos_core_lr_mult=0.5,
-            projection_lr_mult=0.8,
-            memory_lr_mult=0.8,
-            gate_lr_mult=0.8,
-            hebbian_lr_mult=0.5,
-            adaptive_lr=True,
-            adaptive_lr_clip=(0.5, 2.0),
-            grad_centralization=False,
-        )
-
-    @staticmethod
-    def large_network(lr=1e-4):
-        """
-        For big networks (1000+ neurons) that tend to develop input-blind local minima.
-        Extra monitoring and plateau escape.
-        """
-        return dict(
-            lr=lr,
-            betas=(0.9, 0.98),
-            weight_decay=0.01,
-            projection_decay=0.01,
-            memory_decay=0.001,
-            gate_decay=0.0,
-            lightweight_lr_mult=3.0,
-            chaos_core_lr_mult=0.8,
-            projection_lr_mult=1.5,
-            memory_lr_mult=1.0,
-            gate_lr_mult=1.0,
-            hebbian_lr_mult=1.5,
-            plateau_patience=100,
-            plateau_noise_scale=0.01,
-            spectral_clip=3.0,
-            adaptive_lr=True,
-            adaptive_lr_clip=(0.1, 5.0),
-            grad_centralization=True,
-        )
-
-    @staticmethod
-    def tiny_network(lr=0.01):
-        """For tiny networks (<10 neurons) like XOR, Identity."""
-        return dict(
-            lr=lr,
-            betas=(0.9, 0.999),
-            weight_decay=0.0,
-            projection_decay=0.0,
-            memory_decay=0.0,
-            gate_decay=0.0,
-            lightweight_lr_mult=1.0,
-            chaos_core_lr_mult=1.0,
-            projection_lr_mult=1.0,
-            memory_lr_mult=1.0,
-            gate_lr_mult=1.0,
-            hebbian_lr_mult=1.0,
-            adaptive_lr=False,
-            grad_centralization=False,
-        )
