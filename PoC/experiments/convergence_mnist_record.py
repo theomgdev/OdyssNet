@@ -87,7 +87,7 @@ def main():
         device=DEVICE, lr=1e-2,
     )
 
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
     trainer.loss_fn = loss_fn
     
     print(f"Training with Batch Size: {BATCH_SIZE} for {NUM_EPOCHS} Epochs...")

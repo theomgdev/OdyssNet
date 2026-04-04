@@ -545,7 +545,7 @@ def main():
     )
 
     # CrossEntropy
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.0)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     trainer.loss_fn = criterion
 
     # OUTPUT TRANSFORM: Flatten (Batch, Steps, Out) -> (N, Out)
