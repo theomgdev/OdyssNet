@@ -2,6 +2,10 @@
 
 **OdyssNet, Zaman'ın nihai Gizli Katman olduğunun kanıtıdır.**
 
+[![CI](https://github.com/theomgdev/odyssnet/actions/workflows/ci.yml/badge.svg)](https://github.com/theomgdev/odyssnet/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğe** (üst üste yığılan katmanlar) dayanır. OdyssNet bu ortodoksiyi reddederek **Zamansal Derinliğin** (zaman içinde evrimleşen kaos) çok daha verimli bir alternatif olduğunu kanıtlar.
 
 > **Sıfır-Gizli Atılım**
