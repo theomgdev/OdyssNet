@@ -23,7 +23,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - Yalnızca **480 parametre** ile **%90.14 MNIST doğruluğu** elde eder (LeNet-5'ten 110 kat daha verimli).
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
-- Kanıtlar için [PoC deneyleri](PoC), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
+- Kanıtlar için [örnekler](examples), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
 ---
 
@@ -75,6 +75,10 @@ OdyssNet, modüler bir PyTorch kütüphanesi olarak tasarlanmıştır.
 ### Kurulum
 
 ```bash
+# Gelistirme modu (onerilen)
+pip install -e .
+
+# Veya tum bagimliliklari yukleyin
 pip install -r requirements.txt
 ```
 
@@ -87,7 +91,7 @@ pip install -r requirements.txt
 import torch
 from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
-# Tüm PoC/deneyler için yeniden üretilebilir sonuçlar
+# Tüm örnekler için yeniden üretilebilir sonuçlar
 set_seed(42)
 
 # Sıfır-Gizli Ağ başlat
@@ -206,7 +210,7 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
     In: -1.0 -> Out: -0.9998
     ```
     </details>
-*   **Script:** `PoC/convergence_identity.py`
+*   **Script:** `examples/convergence_identity.py`
 *   **Çıkarım:** Mutlak minimum karmaşıklıkla temel sinyal iletimini ve `StepNorm` kararlılığını kanıtlar.
 
 ### B. İmkânsız XOR (Kaos Kapısı)
@@ -227,7 +231,7 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
     </details>
 *   **Mimari:** **3 Nöron** (2 Giriş, 1 Çıkış). **0 Gizli Nöron**. Toplam **9 Parametre**.
 *   **Düşünme Süresi:** **5 Adım**.
-*   **Script:** `PoC/convergence_gates.py`
+*   **Script:** `examples/convergence_gates.py`
 *   **Çıkarım:** OdyssNet **Zamanı Gizli Katman Olarak** kullanır. Girişi yalnızca 5 zaman adımına katlayarak tek bir fiziksel katmanda doğrusal olmayan bir karar sınırı oluşturur; 3 kaos-bağlantılı nöronun XOR'u çözebileceğini kanıtlar.
 
 ### C. MNIST Maratonu (Görsel Zeka)
@@ -244,7 +248,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch 100: Loss 0.0019 | Test Acc 97.50% | FPS: 1127.9
     ```
     </details>
-*   **Script:** `PoC/convergence_mnist.py`
+*   **Script:** `examples/convergence_mnist.py`
 *   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%97.5) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
@@ -262,7 +266,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch 100: Loss 0.0021 | Acc 97.80% | Revived: 240/629642 (0.04%)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_revive.py`
+*   **Script:** `examples/advanced/convergence_mnist_revive.py`
 *   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır ve %97.8 doğruluk elde eder.
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
@@ -276,7 +280,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch 100: Loss 0.0058 | Test Acc 90.20%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_tiny.py`
+*   **Script:** `examples/advanced/convergence_mnist_tiny.py`
 *   **Çıkarım:** Bir önyükleyiciden daha küçük parametre sayılarıyla bile sistem sağlam özellikler öğrenir.
 
 #### 4. Ölçekli Test (Orta Kısıtlar)
@@ -290,7 +294,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch 100: Loss 0.0094 | Test Acc 97.00%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_scaled.py`
+*   **Script:** `examples/advanced/convergence_mnist_scaled.py`
 
 ### D. Gömülü Meydan Okuma (8k Param)
 *   **Hedef:** Ayrışık projeksiyon kullanarak tam MNIST (784 Piksel).
@@ -307,7 +311,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch 100: Loss 0.3141 | Test Acc 94.38%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_embed.py`
+*   **Script:** `examples/advanced/convergence_mnist_embed.py`
 *   **Çıkarım:** 784 pikseli işlemek için 784 aktif nörona ihtiyaç duymadığımızı kanıtlar. **Asimetrik kelime dağarcığı projeksiyonu** kullanarak görsel bilgiyi yalnızca 10 nöronluk küçük bir "Düşünme Çekirdeğine" sıkıştırabiliriz; bu çekirdek daha sonra zamansal rezonans aracılığıyla sınıflandırmayı çözer. Standart modellerden 10 kat daha parametre-verimli.
 
 ### E. 480 Parametrelik Dünya Rekoru (Elit Zeka Yoğunluğu)
@@ -327,7 +331,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_record.py`
+*   **Script:** `examples/advanced/convergence_mnist_record.py`
 *   **Çıkarım:** **Parametre başına %0.188 doğruluk** (90.14% / 480 parametre) elde ediyor. Bu model **LeNet-5'ten 110 kat daha verimli**. Zamansal düşünme adımlarından yararlanarak yüksek seviyeli zekanın mikroskobik bir parametrik alana sıkıştırılabileceğini gösteriyor. Modern yapay zekadaki **Entropi Sıkıştırma Limitlerine** en yakın şey budur.
 
 ### F. Ters Üreteç (484-Param Görsel Sentezi)
@@ -343,11 +347,11 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <details>
     <summary>Üretilmiş Görselleri Gör (Eğitim İlerleme)</summary>
 
-    ![MNIST Ters Üretim](PoC/experiments/img/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Ters Üretim](examples/advanced/img/convergence_mnist_reverse_record_summary.png)
 
     Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamının görsel desenine başarıyla eşlemeyi öğrendi. Çıkış, tüm 10 rakamın öğrenilmiş dinamiklerden temiz bir şekilde rekonstruksiyon ettiğini gösteriyor.
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_reverse_record.py`
+*   **Script:** `examples/advanced/convergence_mnist_reverse_record.py`
 *   **Çıkarım:** OdyssNet'in **çift yönlü eşlemeleri** çözebildiğini kanıtlar. Burada kullanılan 484 parametreli ters-üreteç mimarisi, yukarıda anlatılan 480 parametreli sınıflandırıcıdan farklı bir kurulumdur; ancak her ikisi de aynı OdyssNet dinamik prensiplerini paylaşır. Bu üreteç, desen depolamasını sıralı sentez ile birleştirerek üretimi çözebilir. Bu, zamansal dinamiklerin mikroskobik parametre alanında tam görsel desenleri kodlayabileceğini gösteriyor. 480 parametreli sınıflandırıcı ile birleştirildiğinde, **toplam ~1KB parametre içeren tam çift yönlü MNIST modeli** elde ettik—ultra-verimli nöral bilişim için bir kapı açar.
 
 ### G. Sinüs Dalgası Üreticisi (Dinamik Rezonans)
@@ -371,7 +375,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
       t=26: Hedef -0.7620 | OdyssNet -0.7915
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_sine_wave.py`
+*   **Script:** `examples/advanced/convergence_sine_wave.py`
 *   **Çıkarım:** OdyssNet bir **Programlanabilir Osilatördür**. Bu, tek bir tohumdan sonsuz benzersiz zamansal yörüngeler üretebileceğini doğrular.
 
 ### H. Gecikmeli Toplayıcı (Bellek & Mantık)
@@ -388,7 +392,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     -0.4 + -0.4 = -0.80 | OdyssNet: -0.8014 (Fark: 0.0014)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_adder.py`
+*   **Script:** `examples/advanced/convergence_adder.py`
 *   **Çıkarım:** **Kısa Süreli Belleği** doğrular. Ağ, kaotik durumunda $A$ değişkenini tutar, $B$'yi bekler ve toplamı çıkarmak için doğrusal olmayan entegrasyon (yaklaşık aritmetik) gerçekleştirir. Bu, OdyssNet'in **Video benzeri** veri akışlarını işleme yeteneğini gösteriyor. "Zihinsel Matematiğe" benzer.
 
 ### I. Mandal (İrade)
@@ -407,7 +411,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     t=19 | Out: 1.0291 | AÇIK  🟢
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_latch.py`
+*   **Script:** `examples/advanced/convergence_latch.py`
 *   **Çıkarım:** **Karar Sürdürmeyi** gösteriyor. OdyssNet bir seçim yapabilir ve buna bağlı kalabilir, çürümeye direnir.
 
 ### J. Kronometre (İç Saat)
@@ -431,7 +435,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Sonuç: t=20'de zirve (Hata: 0)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_stopwatch.py`
+*   **Script:** `examples/advanced/convergence_stopwatch.py`
 *   **Çıkarım:** **Ritim & Zaman Algısını** gösteriyor. OdyssNet yalnızca veri işlemiyor; zamanı *deneyimliyor*.
 
 ### K. Düşünen Dedektif (Bağlam & Akıl Yürütme)
@@ -452,7 +456,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     19     | .     | 0.9919 🚨 | (Düşünüyor...)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_detective_thinking.py`
+*   **Script:** `examples/advanced/convergence_detective_thinking.py`
 *   **Çıkarım:** **Zekanın Zamana İhtiyaç Duyduğunu** kanıtlıyor. Sessiz adımlar sırasında bilgiyi "sindirmesine" izin verildiğinde, OdyssNet salt reaktif ağların çözemeyeceği karmaşık zamansal mantığı (Zaman Boyunca XOR) çözüyor. Bu, LLM yaklaşımımızın temelidir.
 
 ### L. Beceri Transferi (Toplama -> Çarpma Transplantı)
@@ -474,7 +478,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     a=-0.80, b=-0.70, hedef=+0.5600 | transferred=+0.5804 | scratch=+0.5182
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_skill_transfer.py`
+*   **Script:** `examples/advanced/convergence_skill_transfer.py`
 *   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
 
 ## 🔮 Vizyon: Silikonun Ruhu (OdyssNet-1B)
@@ -489,6 +493,12 @@ Uzayı Zamanla takas ederek sıfır gizli katmanla görmeyi çözebilirsek, bu y
 > "Petabaytlarca VRAM'e ihtiyacımız yok. Sadece Zamana ihtiyacımız var."
 
 Yeterli zaman "düşünmek" ve "nefes almak" için verilen kaotik bir nöron ormanının devasa endüstriyel fabrikaları geride bırakabileceğini kanıtladık. Uzayı Zamanla takas ederek Ruhu buluyoruz.
+
+---
+
+## Katkıda Bulunma
+
+Yeni bir örnek veya deney eklemek mi istiyorsunuz? Standartlar ve en iyi uygulamalar için [CONTRIBUTING.md](CONTRIBUTING.md) dosyasına bakın. Tam kütüphane API referansı için [odyssnet/LIBRARY.md](odyssnet/LIBRARY.md) dosyasına bakın.
 
 ---
 

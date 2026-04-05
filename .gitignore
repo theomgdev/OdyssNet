@@ -1,26 +1,31 @@
 # Python / PyTorch
-tmp
-*_temp.py
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+*.egg-info/
+*.egg
+dist/
+build/
 env/
 venv/
 .env
+*_temp.py
 
 # Data
 data/
 *.dataset
 
-# VS Code
+# IDE
 .vscode/
+.idea/
 
 # OdyssNet artifacts
 *.pth
 *.pt
 *.checkpoints
+ckpt/
 runs/
 logs/
 out_*/

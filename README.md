@@ -23,7 +23,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **90.14% MNIST accuracy** with only **480 parameters** (110x more efficient than LeNet-5).
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
-- Start with [PoC experiments](PoC) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
+- Start with [examples](examples) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
 ---
 
@@ -75,6 +75,10 @@ OdyssNet is designed as a modular PyTorch library.
 ### Installation
 
 ```bash
+# Recommended: install in development mode
+pip install -e .
+
+# Or install all dependencies (including optional LLM/dev extras)
 pip install -r requirements.txt
 ```
 
@@ -87,7 +91,7 @@ pip install -r requirements.txt
 import torch
 from odyssnet import OdyssNet, OdyssNetTrainer, set_seed
 
-# Reproducible results for all PoC/experiments
+# Reproducible results for all examples
 set_seed(42)
 
 # Initialize a Zero-Hidden Network
@@ -206,7 +210,7 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
     In: -1.0 -> Out: -0.9998
     ```
     </details>
-*   **Script:** `PoC/convergence_identity.py`
+*   **Script:** `examples/convergence_identity.py`
 *   **Insight:** Proves the basic signal transmission and `StepNorm` stability with the absolute minimum complexity.
 
 ### B. The Impossible XOR (The Chaos Gate)
@@ -227,7 +231,7 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
     </details>
 *   **Architecture:** **3 Neurons** (2 Input, 1 Output). **0 Hidden Neurons**. Total **9 Parameters**.
 *   **Thinking Time:** **5 Steps**.
-*   **Script:** `PoC/convergence_gates.py`
+*   **Script:** `examples/convergence_gates.py`
 *   **Insight:** OdyssNet uses **Time as a Hidden Layer**. By folding the input over just 5 time steps, it creates a non-linear decision boundary in a single physical layer, proving that 3 chaos-coupled neurons can solve XOR.
 
 ### C. The MNIST Marathon (Visual Intelligence)
@@ -244,7 +248,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch 100: Loss 0.0019 | Test Acc 97.50% | FPS: 1127.9
     ```
     </details>
-*   **Script:** `PoC/convergence_mnist.py`
+*   **Script:** `examples/convergence_mnist.py`
 *   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (97.5%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
@@ -262,7 +266,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch 100: Loss 0.0021 | Acc 97.80% | Revived: 240/629642 (0.04%)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_revive.py`
+*   **Script:** `examples/advanced/convergence_mnist_revive.py`
 *   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation, achieving 97.8% accuracy.
 
 #### 3. The Tiny Challenge (Extreme Constraints)
@@ -276,7 +280,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch 100: Loss 0.0058 | Test Acc 90.20%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_tiny.py`
+*   **Script:** `examples/advanced/convergence_mnist_tiny.py`
 *   **Insight:** Even with parameter counts smaller than a bootloader, the system learns robust features.
 
 #### 4. The Scaled Test (Medium Constraints)
@@ -290,7 +294,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch 100: Loss 0.0094 | Test Acc 97.00%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_scaled.py`
+*   **Script:** `examples/advanced/convergence_mnist_scaled.py`
 
 ### D. The Embedded Challenge (8k Params)
 *   **Target:** Full MNIST (784 Pixels) using decoupled projection.
@@ -307,7 +311,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch 100: Loss 0.3141 | Test Acc 94.38%
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_embed.py`
+*   **Script:** `examples/advanced/convergence_mnist_embed.py`
 *   **Insight:** Proves that we don't need 784 active neurons to process 784 pixels. By using an **asymmetric vocab projection**, we can squeeze the visual information into a tiny "Thinking Core" of just 10 neurons, which then solves the classification through temporal resonance. This is 10x more parameter-efficient than standard models.
 
 ### E. The 480-Parameter World Record (Elite Intelligence Density)
@@ -327,7 +331,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_record.py`
+*   **Script:** `examples/advanced/convergence_mnist_record.py`
 *   **Insight:** Achieves **0.188% accuracy per parameter** (90.14% / 480 params). This model is **110x more efficient than LeNet-5**. It demonstrates that high-level intelligence can be compressed into a microscopic parametric space by leveraging temporal thinking steps. It is the closest thing to **Entropic Compression Limits** in modern AI.
 
 ### F. The Inverse Generator (484-Param Image Synthesis)
@@ -343,11 +347,11 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <details>
     <summary>See Generated Images (Training Progression)</summary>
 
-    ![MNIST Reverse Generation](PoC/experiments/img/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Reverse Generation](examples/advanced/img/convergence_mnist_reverse_record_summary.png)
 
     The network successfully learned to map each scalar input (0.0, 0.1, ..., 0.9) to its corresponding digit's visual pattern. Output shows all 10 digits cleanly reconstructed from the learned dynamics.
     </details>
-*   **Script:** `PoC/experiments/convergence_mnist_reverse_record.py`
+*   **Script:** `examples/advanced/convergence_mnist_reverse_record.py`
 *   **Insight:** Proves that OdyssNet can solve **bidirectional mappings**. This 484-parameter generator, paired with the separate 480-parameter classifier architecture, shows that OdyssNet can handle both classification and generation—combining pattern storage with sequential synthesis. This demonstrates that temporal dynamics can encode complete visual patterns in microscopic parameter space. Together, the 480-parameter classifier and 484-parameter generator form a **complete bidirectional MNIST model with ~1KB of parameters total**—a gateway to ultra-efficient neural computing.
 
 ### G. The Sine Wave Generator (Dynamic Resonance)
@@ -371,7 +375,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
       t=26: Target -0.7620 | OdyssNet -0.7915
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_sine_wave.py`
+*   **Script:** `examples/advanced/convergence_sine_wave.py`
 *   **Insight:** OdyssNet is a **Programmable Oscillator**. This confirms it can generate infinite unique temporal trajectories from a single seed.
 
 ### H. The Delayed Adder (Memory & Logic)
@@ -388,7 +392,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     -0.4 + -0.4 = -0.80 | OdyssNet: -0.8014 (Diff: 0.0014)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_adder.py`
+*   **Script:** `examples/advanced/convergence_adder.py`
 *   **Insight:** Validates **Short-Term Memory**. The network holds variable $A$ in its chaotic state, waits for $B$, and performs non-linear integration (approximate arithmetic) to output the sum. This demonstrates OdyssNet's ability to process **Video-like** data streams. Similar to "Mental Math".
 
 ### I. The Latch (Willpower)
@@ -407,7 +411,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     t=19 | Out: 1.0291 | ON  🟢
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_latch.py`
+*   **Script:** `examples/advanced/convergence_latch.py`
 *   **Insight:** Demonstrates **Decision Maintaining**. OdyssNet can make a choice and stick to it, resisting decay.
 
 ### J. The Stopwatch (Internal Clock)
@@ -431,7 +435,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Result: Peak at t=20 (Error: 0)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_stopwatch.py`
+*   **Script:** `examples/advanced/convergence_stopwatch.py`
 *   **Insight:** Demonstrates **Rhythm & Time Perception**. OdyssNet doesn't just process data; it *experiences* time.
 
 ### K. The Thinking Detective (Context & Reasoning)
@@ -452,7 +456,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     19    | .     | 0.9919 🚨 | (Thinking...)
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_detective_thinking.py`
+*   **Script:** `examples/advanced/convergence_detective_thinking.py`
 *   **Insight:** Proves that **Intelligence requires Time**. When allowed to "digest" information during silent steps, OdyssNet solves complex temporal logic (XOR over Time) that purely reactive networks cannot. This is the foundation for our LLM approach.
 
 ### L. Skill Transfer (Add -> Multiply Transplant)
@@ -474,7 +478,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     a=-0.80, b=-0.70, target=+0.5600 | transferred=+0.5804 | scratch=+0.5182
     ```
     </details>
-*   **Script:** `PoC/experiments/convergence_skill_transfer.py`
+*   **Script:** `examples/advanced/convergence_skill_transfer.py`
 *   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
 
 ## Vision: The Path to OdyssNet-1B
@@ -489,6 +493,12 @@ If we can solve vision with Zero Hidden Layers by trading Space for Time, this a
 > "We don't need petabytes of VRAM. We just need Time."
 
 We have proven that a chaotic forest of neurons, given enough time to "think" and "breathe," can outperform massive industrial factories. By trading Space for Time, we find the Soul.
+
+---
+
+## Contributing
+
+Want to add a new example or experiment? See [CONTRIBUTING.md](CONTRIBUTING.md) for standards and best practices. For the full library API reference, see [odyssnet/LIBRARY.md](odyssnet/LIBRARY.md).
 
 ---
 

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odyssnet"
+version = "2.2.0"
+description = "Temporal Depth replaces Spatial Depth — zero-hidden-layer neural networks via trainable chaos dynamics"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Cahit Karahan"},
+]
+keywords = ["deep-learning", "temporal-depth", "recurrent-networks", "chaos", "pytorch"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.4.0",
+    "numpy",
+    "matplotlib",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "scikit-learn",
+]
+llm = [
+    "datasets",
+    "tokenizers",
+    "tiktoken",
+    "pandas",
+    "requests",
+]
+all = [
+    "odyssnet[dev,llm]",
+    "bitsandbytes",
+]
+
+[tool.setuptools.packages.find]
+include = ["odyssnet*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -480,7 +480,7 @@ trainer.fit(x, y, epochs=100)
 
 **Best Practice:**
 *   Call `set_seed()` **at the start of your script**, before any random operations.
-*   Use consistent seed values (e.g., 42) for reproducible PoC and experiment validation.
+*   Use consistent seed values (e.g., 42) for reproducible example and experiment validation.
 *   Different seeds can be used for ensemble training or robustness testing.
 
 ### 2. Neurogenesis (`odyssnet.utils.neurogenesis`)
@@ -488,6 +488,32 @@ See **Neurogenesis** section above.
 
 ### 3. OdyssStore (`odyssnet.utils.odyssstore`)
 This module manages model serialization and the transdimensional weight transplantation feature described in the **Advanced Capabilities** section.
+
+### 4. TrainingHistory (`odyssnet.utils.history`)
+
+Lightweight metric accumulator with built-in multi-panel plotting. All example scripts use this to visualize training dynamics.
+
+```python
+from odyssnet import TrainingHistory
+
+history = TrainingHistory()
+
+for epoch in range(epochs):
+    loss = trainer.train_batch(x, y, thinking_steps=10)
+    history.record(loss=loss, lr=current_lr, accuracy=acc)
+
+# Interactive display
+history.plot(title="My Experiment")
+
+# Save to file
+history.plot(save_path="results/training.png", title="My Experiment")
+```
+
+**Methods:**
+*   `record(**kwargs)`: Record one or more named metrics for the current step. Values are converted to float.
+*   `get(key)`: Return the list of recorded values for a metric name.
+*   `metrics`: Property returning names of all recorded metrics.
+*   `plot(save_path=None, title="Training History")`: Generate a multi-subplot figure with one panel per metric. If `save_path` is given, saves to disk; otherwise shows interactively.
 
 ---
 
