@@ -502,7 +502,7 @@ Yeterli zaman "düşünmek" ve "nefes almak" için verilen kaotik bir nöron orm
 
 ## Katkıda Bulunma
 
-Yeni bir örnek veya deney eklemek mi istiyorsunuz? Standartlar ve en iyi uygulamalar için [CONTRIBUTING.md](CONTRIBUTING.md) dosyasına bakın. Tam kütüphane API referansı için [odyssnet/LIBRARY.md](odyssnet/LIBRARY.md) dosyasına bakın.
+Yeni bir örnek veya deney eklemek mi istiyorsunuz? Standartlar ve en iyi uygulamalar için [CONTRIBUTING.md](CONTRIBUTING.md) dosyasına bakın. Tam kütüphane API referansı için [docs/LIBRARY.md](docs/LIBRARY.md) dosyasına bakın.
 
 ---
 

@@ -502,7 +502,7 @@ We have proven that a chaotic forest of neurons, given enough time to "think" an
 
 ## Contributing
 
-Want to add a new example or experiment? See [CONTRIBUTING.md](CONTRIBUTING.md) for standards and best practices. For the full library API reference, see [odyssnet/LIBRARY.md](odyssnet/LIBRARY.md).
+Want to add a new example or experiment? See [CONTRIBUTING.md](CONTRIBUTING.md) for standards and best practices. For the full library API reference, see [docs/LIBRARY.md](docs/LIBRARY.md).
 
 ---
 

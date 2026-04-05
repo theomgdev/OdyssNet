@@ -355,7 +355,7 @@ When modifying the library itself (not examples), follow these additional rules:
 - Run `python -m pytest tests/` or just `pytest tests/`(but not recommended as it will not see your env setup) after every change to confirm the suite stays green.
 
 ### Documentation
-- Every public API change must be reflected in the relevant markdown files (`odyssnet/LIBRARY.md`, `CONTRIBUTING.md`).
+- Every public API change must be reflected in the relevant markdown files (`docs/LIBRARY.md`, `CONTRIBUTING.md`).
 - Document what the system *is*, not what it *was*. Version history belongs in `CHANGELOG.md` only.
 
 ### Code Style
@@ -373,7 +373,7 @@ When modifying the library itself (not examples), follow these additional rules:
 
 ### Library changes (`odyssnet/`)
 - [ ] Corresponding test added/updated under `tests/`
-- [ ] Documentation updated in relevant markdown files (LIBRARY.md, CONTRIBUTING.md)
+- [ ] Documentation updated in relevant markdown files (docs/LIBRARY.md, CONTRIBUTING.md)
 
 ### New/modified example scripts (`examples/`)
 1.  [ ] **Does your script call `set_seed(42)` at the START of `main()`?** (MANDATORY for reproducibility)

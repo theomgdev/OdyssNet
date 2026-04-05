@@ -1,5 +1,19 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - 'odyssnet/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements.txt'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'odyssnet/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements.txt'
+      - '.github/workflows/ci.yml'
 jobs:
   test:
     runs-on: ubuntu-latest
