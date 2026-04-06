@@ -92,7 +92,7 @@ def main():
 
     trainer = OdyssNetTrainer(
         model,
-        device=DEVICE, lr=5e-3,
+        device=DEVICE, lr=1e-4,
     )
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)

@@ -170,7 +170,7 @@ def main():
     
     trainer = OdyssNetTrainer(
         model,
-        device=DEVICE, lr=2e-3,
+        device=DEVICE, lr=1e-4,
         loss_fn=nn.MSELoss()
     )
 

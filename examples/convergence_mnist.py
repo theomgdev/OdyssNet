@@ -46,7 +46,7 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
 
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
 

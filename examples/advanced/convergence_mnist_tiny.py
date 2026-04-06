@@ -62,7 +62,7 @@ def main():
     test_subset = Subset(test_dataset, range(1000))
     test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     
