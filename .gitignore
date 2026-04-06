@@ -30,6 +30,7 @@ runs/
 logs/
 out_*/
 out/
+tmp/
 
 # Tokenizers
 *_tokenizer_*.json
