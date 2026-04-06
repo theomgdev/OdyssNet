@@ -5,13 +5,6 @@
 [![CI](https://github.com/theomgdev/odyssnet/actions/workflows/ci.yml/badge.svg)](https://github.com/theomgdev/odyssnet/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Development Status](https://img.shields.io/badge/status-4--beta-blue.svg?style=flat-square)](https://pypi.org/project/odyssnet/)
-[![GitHub last commit](https://img.shields.io/github/last-commit/theomgdev/odyssnet?style=flat-square)](https://github.com/theomgdev/odyssnet/commits/main)
-[![Commit Activity](https://img.shields.io/github/commit-activity/w/theomgdev/odyssnet?style=flat-square)](https://github.com/theomgdev/odyssnet/graphs/commit-activity)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=flat-square)](https://GitHub.com/theomgdev/odyssnet/graphs/commit-activity)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg?style=flat-square)](https://github.com/psf/black)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
 Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of each other) to solve complexity. OdyssNet discards this orthodoxy, proving that **Temporal Depth** (chaos evolving over time) is a vastly more efficient substitute.
 
