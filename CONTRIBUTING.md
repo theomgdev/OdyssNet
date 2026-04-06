@@ -344,6 +344,211 @@ model = OdyssNet(..., debug=True)
 
 With `debug=True` the model checks every critical forward-pass operation (linear recurrence, memory feedback, activation, StepNorm, Hebbian correlation and accumulation) and raises a `RuntimeError` at the first operation that produces a non-finite value, with the operation name and step index. `debug=True` also automatically enables `torch.autograd.set_detect_anomaly(True)`, so backward-pass NaN is caught with a full stack trace at no extra setup cost. Overhead is zero when `debug=False`.
 
+### Training Not Converging
+
+If your model trains but doesn't converge or gets stuck:
+
+#### 1. Use TrainingHistory for Visual Diagnosis
+
+Track and visualize all key metrics to identify patterns:
+
+```python
+from odyssnet import TrainingHistory
+
+history = TrainingHistory()
+
+for epoch in range(epochs):
+    loss = trainer.train_batch(x, y, thinking_steps=10)
+    acc = evaluate_accuracy(...)
+    lr = trainer.optimizer.param_groups[0]['lr'] if hasattr(trainer.optimizer, 'param_groups') else trainer.initial_lr
+
+    history.record(loss=loss, accuracy=acc, lr=lr)
+
+# Visual inspection reveals patterns
+history.plot(title="Training Diagnosis")
+# Or save for later analysis
+history.plot(save_path="diagnosis/training.png", title="Debug Run")
+```
+
+**What to look for:**
+- **Flat loss:** May need more thinking steps, different initialization, or learning rate adjustment
+- **Oscillating loss:** Reduce learning rate or enable gradient persistence
+- **Sudden spikes:** Check for batch corruption or use anomaly_hook to catch them
+
+#### 2. Use trainer.get_diagnostics() for Runtime Monitoring
+
+Monitor training health in real-time:
+
+```python
+for epoch in range(epochs):
+    loss = trainer.train_batch(x, y, thinking_steps=10)
+
+    # Get comprehensive diagnostics
+    diag = trainer.get_diagnostics()
+
+    if epoch % 10 == 0:
+        print(f"Epoch {epoch}")
+        print(f"  Step count: {diag['step_count']}")
+        print(f"  Last loss: {diag['last_loss']:.6f}")
+        print(f"  Using ChaosGrad: {diag['using_chaos_grad']}")
+
+        if diag['using_chaos_grad']:
+            # ChaosGrad-specific metrics
+            opt_diag = diag['optimizer']
+            print(f"  Global step: {opt_diag['global_step']}")
+            print(f"  Frustration: {opt_diag['frustration']:.4f}")
+            print(f"  Best loss: {opt_diag['best_loss']:.6f}")
+            print(f"  Avg effective LR: {opt_diag['avg_effective_lr']:.4f}")
+            print(f"  Avg init LR: {opt_diag['avg_init_lr']:.6f}")
+```
+
+**Key metrics to monitor:**
+- **frustration:** High values (>100) indicate the optimizer is struggling; may trigger plateau escape
+- **avg_effective_lr:** Values much less than 1.0 suggest the optimizer has reduced learning rates due to difficult landscape
+- **best_loss:** If this hasn't improved in many steps, consider manual intervention
+
+#### 3. Use optimizer.get_diagnostics() for Deep Analysis
+
+For ChaosGrad-specific debugging:
+
+```python
+if trainer._using_chaos_grad:
+    from odyssnet import ChaosGrad
+    chaos_opt = trainer.optimizer
+
+    opt_diag = chaos_opt.get_diagnostics()
+
+    print(f"Optimizer Health:")
+    print(f"  Global step: {opt_diag['global_step']}")
+    print(f"  Frustration level: {opt_diag['frustration']}")
+    print(f"  Best loss seen: {opt_diag['best_loss']}")
+    print(f"  Avg LR drift: {opt_diag['avg_effective_lr']:.4f}")
+
+    # avg_effective_lr interpretation:
+    # > 1.0 : Training is going well, LRs increased from cold start
+    # ≈ 1.0 : Stable, no drift from initialization
+    # < 1.0 : Struggling, optimizer reduced LRs to navigate difficult terrain
+```
+
+#### 4. Use anomaly_hook for Automated Intervention
+
+Set up intelligent automated responses to training anomalies:
+
+```python
+def handle_anomaly(anomaly_type, loss_val):
+    """Called automatically on training anomalies."""
+
+    if anomaly_type == "spike":
+        # Violent loss surge (possible gradient explosion)
+        print(f"⚠️  SPIKE detected! Loss: {loss_val:.4f}")
+        # Could reduce LR, reload checkpoint, etc.
+
+    elif anomaly_type == "plateau":
+        # Loss stagnated over a window
+        print(f"🔄 PLATEAU detected. Triggering escape...")
+        trainer.trigger_plateau_escape()
+
+    elif anomaly_type == "increase":
+        # Loss increased from previous step (happens every time loss goes up)
+        # Useful for custom patience counters or early stopping
+        global patience_counter
+        patience_counter += 1
+        if patience_counter > 50:
+            print(f"⛔ 50 consecutive increases. Early stopping.")
+            raise KeyboardInterrupt
+
+# Initialize trainer with hook
+patience_counter = 0
+trainer = OdyssNetTrainer(
+    model,
+    lr=1e-3,
+    anomaly_hook=handle_anomaly
+)
+
+# Now train — anomalies trigger automatic responses
+for epoch in range(1000):
+    loss = trainer.train_batch(x, y, thinking_steps=10)
+```
+
+**Anomaly types:**
+- **"spike":** Sudden violent surge in loss (exploding gradient)
+- **"plateau":** Loss stagnated and barely moving over a window
+- **"increase":** Loss strictly greater than previous step (fired every time, even 0.0001 increase)
+
+### Loss Oscillating or Unstable
+
+If loss oscillates or training is unstable:
+
+1. **Enable gradient persistence** for smoother optimization:
+   ```python
+   trainer = OdyssNetTrainer(model, lr=1e-3, gradient_persistence=0.1)
+   ```
+
+2. **Reduce learning rate:**
+   ```python
+   trainer = OdyssNetTrainer(model, lr=1e-4)  # Lower genesis LR
+   ```
+
+3. **Try different initialization** if using tiny networks:
+   ```python
+   model = OdyssNet(..., weight_init='xavier_uniform', activation='gelu')
+   ```
+
+### Model Not Learning (Loss Stuck)
+
+If loss doesn't decrease at all:
+
+1. **Verify data preprocessing:** Check that inputs/targets are properly normalized and on correct device
+2. **Increase thinking steps:** Model may need more temporal depth
+   ```python
+   trainer.train_batch(x, y, thinking_steps=20)  # Was 10
+   ```
+3. **Check initialization:** For very small networks (<10 neurons), try:
+   ```python
+   model = OdyssNet(..., weight_init='xavier_uniform', activation='gelu')
+   ```
+4. **Trigger manual plateau escape:**
+   ```python
+   if epoch > 50 and loss > initial_loss:
+       trainer.trigger_plateau_escape()
+   ```
+
+### Performance Issues
+
+If training is too slow:
+
+1. **Enable TF32 on Ampere+ GPUs:**
+   ```python
+   import torch
+   torch.set_float32_matmul_precision('high')
+   ```
+
+2. **Compile the model** (PyTorch 2.0+):
+   ```python
+   model.compile()
+   ```
+
+3. **Use gradient accumulation** instead of larger batches:
+   ```python
+   # Simulates batch_size=128 with batch_size=32
+   trainer.train_batch(x, y, thinking_steps=10, gradient_accumulation_steps=4)
+   ```
+
+### Memory Issues
+
+If running out of VRAM:
+
+1. **Reduce batch size** and use gradient accumulation
+2. **Enable gradient checkpointing:**
+   ```python
+   model = OdyssNet(..., gradient_checkpointing=True)
+   ```
+3. **Use vocab projection** for high-dimensional inputs:
+   ```python
+   # Instead of num_neurons=784 for MNIST
+   model = OdyssNet(num_neurons=10, vocab_size=[784, 10])
+   ```
+
 ## 🔧 Library Contributions (`odyssnet/`)
 
 When modifying the library itself (not examples), follow these additional rules:
