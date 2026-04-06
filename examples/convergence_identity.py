@@ -23,7 +23,7 @@ def main():
         pulse_mode=True,
         device=DEVICE
     )
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=0.01)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
 
     # Data
     inputs_val = torch.randint(0, 2, (100, 1)).float() * 2 - 1

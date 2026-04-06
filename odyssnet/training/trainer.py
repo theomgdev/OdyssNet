@@ -3,12 +3,11 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import math
-from typing import Callable, cast
+from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
 import os
 
-from .chaos_optimizer import ChaosGrad
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
@@ -21,9 +20,9 @@ class OdyssNetTrainer:
         Args:
             model (nn.Module): The OdyssNet model to train.
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
-                If None, ChaosGrad is used automatically with lr as genesis_lr.
+                If None, AdamW is used as default.
             loss_fn (callable): Custom loss function (Optional).
-            lr (float): Genesis learning rate for ChaosGrad. Default: 1e-3.
+            lr (float): Learning rate for default AdamW optimizer. Default: 1e-3.
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
@@ -38,7 +37,6 @@ class OdyssNetTrainer:
         self.initial_lr = lr
 
         # --- Optimizer Initialization ---
-        self._using_chaos_grad = False
         self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
         self._start_time_pred = None
         self._loss_time_buffer = []
@@ -46,11 +44,8 @@ class OdyssNetTrainer:
         if optimizer:
             # User explicitly provided an optimizer — use it directly.
             self.optimizer = optimizer
-            if isinstance(optimizer, ChaosGrad):
-                self._using_chaos_grad = True
         else:
-            # ChaosGrad is the native OdyssNet optimizer.
-            self._init_chaos_grad(model, lr)
+            self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()
 
@@ -59,15 +54,7 @@ class OdyssNetTrainer:
         self._last_loss = None
         self._acc_counter = 0
         self._persistent_grads = {}
-
-    def _init_chaos_grad(self, model, lr):
-        """Initialize ChaosGrad with classified parameter groups."""
-        param_groups = ChaosGrad.classify_params(model)
-        self.optimizer = ChaosGrad(param_groups, lr=lr)
-        self._using_chaos_grad = True
-
-        group_info = {g.get('group_name', '?'): len(g['params']) for g in param_groups}
-        print(f"OdyssNetTrainer: ChaosGrad initialized. Groups: {group_info}")
+        self._core_weight = getattr(self.model, 'W', None)
 
     def _ensure_scaler(self):
         """Lazily initialize AMP scaler in a version-compatible way."""
@@ -275,14 +262,20 @@ class OdyssNetTrainer:
             self._acc_counter = 0
             self._step_count += 1
 
+            # Enforce zero diagonal on chaos core weight matrix.
+            # Self-connections are handled by memory_feedback, not W.
+            with torch.no_grad():
+                core_weight = self._core_weight
+                current_weight = getattr(self.model, 'W', None)
+                if core_weight is not current_weight:
+                    core_weight = current_weight
+                    self._core_weight = current_weight
+                if isinstance(core_weight, torch.Tensor) and core_weight.dim() == 2 and core_weight.shape[0] == core_weight.shape[1]:
+                    core_weight.fill_diagonal_(0.0)
+
         # Return loss for logging
         loss_val = loss.item() * gradient_accumulation_steps
         self._last_loss = loss_val
-
-        # Report loss to ChaosGrad for plateau detection
-        if self._using_chaos_grad and step_now:
-            chaos_opt = cast(ChaosGrad, self.optimizer)
-            chaos_opt.report_loss(loss_val)
 
         # Predictive tracking formulation natively without blocking performance
         current_time = time.time()
@@ -439,19 +432,10 @@ class OdyssNetTrainer:
             amount,
             verbose,
         )
+        self._core_weight = getattr(self.model, 'W', None)
         self._clear_persistent_grads()
 
-        if self._using_chaos_grad and verbose:
-            print("   ChaosGrad: Optimizer state preserved after neurogenesis.")
-
     # --- Diagnostic Methods ---
-
-    def trigger_plateau_escape(self):
-        """Manually triggers plateau escape in ChaosGrad."""
-        if self._using_chaos_grad:
-            chaos_opt = cast(ChaosGrad, self.optimizer)
-            chaos_opt.trigger_plateau_escape()
-            print("Manual plateau escape triggered!")
 
     def get_diagnostics(self, debug=False):
         """
@@ -466,18 +450,15 @@ class OdyssNetTrainer:
             dict: Diagnostic information including:
                 - step_count: Number of optimization steps taken
                 - last_loss: Most recent loss value
-                - using_chaos_grad: Whether ChaosGrad optimizer is being used
                 - current_lr: Current learning rate
                 - gradient_persistence: Gradient persistence coefficient
                 - persistent_grads_active: Number of active persistent gradients (if debug=True)
                 - anomaly_tracking: Anomaly detection state (if debug=True)
                 - scaler_state: AMP scaler information (if debug=True)
-                - optimizer: Nested optimizer diagnostics (if using ChaosGrad)
         """
         diag = {
             'step_count': self._step_count,
             'last_loss': self._last_loss,
-            'using_chaos_grad': self._using_chaos_grad,
             'current_lr': self.optimizer.param_groups[0]['lr'] if getattr(self, 'optimizer', None) and getattr(self.optimizer, 'param_groups', None) else 0,
             'gradient_persistence': self.gradient_persistence,
         }
@@ -519,10 +500,6 @@ class OdyssNetTrainer:
             grad_stats = self._compute_gradient_stats()
             if grad_stats:
                 diag['gradient_stats'] = grad_stats
-
-        if self._using_chaos_grad:
-            chaos_opt = cast(ChaosGrad, self.optimizer)
-            diag['optimizer'] = chaos_opt.get_diagnostics(debug=debug)
 
         return diag
 

@@ -25,7 +25,7 @@ def main():
         device=DEVICE
     )
 
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=0.01)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
 
     # XOR Data
     data = [

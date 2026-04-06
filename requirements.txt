@@ -1,7 +1,6 @@
 torch>=2.4.0 --index-url https://download.pytorch.org/whl/cu118
 numpy
 datasets
-bitsandbytes
 matplotlib
 pandas
 requests

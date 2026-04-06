@@ -136,7 +136,7 @@ except Exception as e:
 
 | Line | Current | Action |
 |------|---------|--------|
-| 74 | `# micro_quiet_8bit init for new connections` | **Replace** with `# micro_quiet init for new connections` |
+| 74 | `# micro_quiet_8bit init for new connections` | **Replace** with `# micro_quiet_warm init for new connections` |
 
 ### Verification
 

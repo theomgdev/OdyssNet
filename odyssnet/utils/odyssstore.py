@@ -94,7 +94,7 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
     return checkpoint
 
 
-def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_new='micro_quiet_8bit'):
+def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_new='micro_quiet_warm'):
     """
     Weight Transplantation: Transfer learned weights from a checkpoint to a model,
     even if the architectures (num_neurons) don't match.
@@ -107,7 +107,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     How it works:
     - For each parameter tensor, the overlapping region between source and target shapes is copied.
     - Core weight matrices (e.g., W and selected embed/proj/output_decoder weights) have their
-      non-overlapping regions re-initialized using the `init_new` strategy (default: 'micro_quiet_8bit').
+      non-overlapping regions re-initialized using the `init_new` strategy (default: 'micro_quiet_warm').
     - Biases and normalization parameters keep the initialization from the target model and are
       not re-initialized with `init_new`.
     
@@ -117,7 +117,7 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
         device (str): Device to load tensors to.
         verbose (bool): If True, prints transplant statistics.
         init_new (str): Weight init strategy for new (non-overlapping) regions of the core weights.
-            Default 'micro_quiet_8bit' — stays silent while existing weights dominate,
+            Default 'micro_quiet_warm' — stays silent while existing weights dominate,
             safe for fp16 AMP and 8-bit optimizers.
     
     Returns:

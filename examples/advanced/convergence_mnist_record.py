@@ -6,9 +6,6 @@ import os
 import time
 import warnings
 
-# Disable BNB for this experiment to rule out quantization noise and use pure dynamics
-os.environ["NO_BNB"] = "1"
-
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 
@@ -61,7 +58,7 @@ def main():
         device=DEVICE,
         vocab_size=[49, 10],   # [49 pixels -> 4 neurons, 10 neurons -> decoder]
         vocab_mode='continuous',
-        weight_init='micro_quiet_8bit'
+        weight_init='micro_quiet_warm'
     )
 
     # Speed up core with torch.compile if on PyTorch 2.0+
@@ -95,7 +92,7 @@ def main():
 
     trainer = OdyssNetTrainer(
         model,
-        device=DEVICE, lr=5e-3,
+        device=DEVICE, lr=1e-4,
     )
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)

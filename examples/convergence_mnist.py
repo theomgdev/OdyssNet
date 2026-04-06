@@ -46,7 +46,7 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
 
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
 
@@ -112,7 +112,7 @@ def main():
         fps = ((epoch + 1) * len(train_dataset)) / elapsed
 
         diag = trainer.get_diagnostics()
-        lr = diag.get('optimizer', {}).get('avg_effective_lr', 0) * trainer.initial_lr if diag.get('using_chaos_grad') else diag.get('current_lr', 0)
+        lr = diag.get('current_lr', 0)
         history.record(loss=avg_loss, accuracy=acc, lr=lr)
 
         print(f"Epoch {epoch+1}: Loss {avg_loss:.4f} | Test Acc {acc:.2f}% | FPS: {fps:.1f}")

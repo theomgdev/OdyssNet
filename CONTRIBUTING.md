@@ -32,7 +32,6 @@ pytest tests/ # but not recommended as it will not see your env setup
 odyssnet/              # Library source code
   core/network.py      # OdyssNet model
   training/trainer.py  # OdyssNetTrainer
-  training/chaos_optimizer.py  # ChaosGrad optimizer
   utils/               # Data, checkpointing, neurogenesis, history
 tests/                 # Test suite (mirrors odyssnet/ structure)
 examples/              # Core validation scripts (identity, XOR, MNIST)
@@ -135,19 +134,6 @@ model = OdyssNet(..., activation='tanh', weight_init='orthogonal')
 *   Gate parameter initialization uses the 4th `weight_init` slot. Default layout is `['quiet', 'resonant', 'quiet', 'zero']`.
 *   Activation layout supports 1-4 entries with default `['none', 'tanh', 'tanh', 'none']`; 4th slot is reserved for config symmetry.
 
-### Gate Optimizer Contract (ChaosGrad)
-When `gate` parameters exist, ChaosGrad handles them in a dedicated `gates` group.
-*   `gate_lr_mult`: Independent LR multiplier for gate params.
-*   `gate_decay`: Independent weight decay for gate params.
-*   Default behavior keeps gates stable (`gate_decay=0.0`) and matches base group speed (`gate_lr_mult=1.0`).
-*   Recommended start for stronger gate adaptation: `gate_lr_mult=1.1` to `1.3`, `gate_decay=0.0`.
-
-### Hebbian Optimizer Contract (ChaosGrad)
-When `hebb_type` is set, ChaosGrad places `hebb_factor` and `hebb_decay` in a dedicated `hebbian` group.
-*   `hebbian_lr_mult`: Independent LR multiplier for Hebbian logits. Default is `2.0` — plasticity scalars benefit from faster updates than the core weights.
-*   **Weight decay is always `0.0`** for this group regardless of the global `weight_decay` setting. The logits are unbounded by design; regularizing them would corrupt the learned plasticity rate.
-*   Recommended start: leave default (`hebbian_lr_mult=2.0`). Increase to `3.0–4.0` only if Hebbian correlations converge too slowly.
-
 ### D. Associative Memory (Database / Key-Value)
 For tasks requiring precise storage and retrieval of values over time (e.g., Neural Database):
 *   **Structure:** High neuron count (256+) to provide storage space for memories.
@@ -209,19 +195,13 @@ model = OdyssNet(
 # Quick experiment — global plasticity
 model = OdyssNet(..., hebb_type='global')
 
-# ChaosGrad is the default optimizer — just set lr
+# AdamW is the default optimizer — just set lr
 trainer = OdyssNetTrainer(model, lr=3e-4)
 ```
 
 ---
 
 ## ⚡ Hardware Optimization
-
-### 1. ChaosGrad Optimizer
-OdyssNet v2.2 uses **ChaosGrad** as the default optimizer. ChaosGrad is a zero-hyperparameter optimizer: it autonomously adapts per-parameter learning rate, momentum, weight decay, and gradient centralization at each step using Analytic Hypergradient Descent. No configuration is required — just pass `lr` (genesis learning rate) to `OdyssNetTrainer`.
-*   **Default:** ChaosGrad with `lr=1e-3`.
-*   **Feed frustration signal:** Call `trainer.optimizer.report_loss(loss)` each step to drive the Frustration Accumulator.
-*   **Custom optimizer:** Pass `optimizer=` to `OdyssNetTrainer` to bypass ChaosGrad.
 
 ### 2. TensorFloat-32 (TF32)
 Always enable TF32 on Ampere+ GPUs for free speedup.
@@ -257,13 +237,12 @@ if loss > prev_loss:
 ## 🩺 Diagnostics and Anomaly Interventions
 
 Experiments that run for a long time should handle training stagnation or spikes intelligently without manual restarts.
-You can pass an `anomaly_hook` to the `OdyssNetTrainer` to automate recovery (e.g., triggering plateau escapes).
+You can pass an `anomaly_hook` to the `OdyssNetTrainer` to automate recovery and logging.
 
 ```python
 def my_hook(anomaly_type, loss_val):
     if anomaly_type == "plateau":
         print("Triggering plateau escape!")
-        trainer.trigger_plateau_escape()
 
 trainer = OdyssNetTrainer(model, anomaly_hook=my_hook)
 ```
@@ -390,16 +369,6 @@ for epoch in range(epochs):
         print(f"Epoch {epoch}")
         print(f"  Step count: {diag['step_count']}")
         print(f"  Last loss: {diag['last_loss']:.6f}")
-        print(f"  Using ChaosGrad: {diag['using_chaos_grad']}")
-
-        if diag['using_chaos_grad']:
-            # ChaosGrad-specific metrics
-            opt_diag = diag['optimizer']
-            print(f"  Global step: {opt_diag['global_step']}")
-            print(f"  Frustration: {opt_diag['frustration']:.4f}")
-            print(f"  Best loss: {opt_diag['best_loss']:.6f}")
-            print(f"  Avg effective LR: {opt_diag['avg_effective_lr']:.4f}")
-            print(f"  Avg init LR: {opt_diag['avg_init_lr']:.6f}")
 
 # For detailed debugging, use debug=True
 if need_detailed_analysis:
@@ -409,57 +378,15 @@ if need_detailed_analysis:
 ```
 
 **Key metrics to monitor:**
-- **frustration:** High values (>100) indicate the optimizer is struggling; may trigger plateau escape
-- **avg_effective_lr:** Values much less than 1.0 suggest the optimizer has reduced learning rates due to difficult landscape
-- **best_loss:** If this hasn't improved in many steps, consider manual intervention
+- **last_loss trend:** Sustained increase suggests instability
+- **gradient_stats:** Large norm swings can indicate optimization difficulty
+- **step_count progression:** Confirms stable optimizer stepping cadence
 
 **Debug mode additions:**
 - **gradient_stats:** Per-parameter gradient norms and means (min/max/std)
 - **persistent_grads_active:** Number of parameters with persistent gradients
 - **anomaly_tracking:** EWMA, variance, and plateau detection state
 - **loss_tracking:** Recent losses and buffer statistics
-
-#### 3. Use optimizer.get_diagnostics() for Deep Analysis
-
-For ChaosGrad-specific debugging:
-
-```python
-if trainer._using_chaos_grad:
-    from odyssnet import ChaosGrad
-    chaos_opt = trainer.optimizer
-
-    # Basic diagnostics
-    opt_diag = chaos_opt.get_diagnostics()
-
-    print(f"Optimizer Health:")
-    print(f"  Global step: {opt_diag['global_step']}")
-    print(f"  Frustration level: {opt_diag['frustration']}")
-    print(f"  Best loss seen: {opt_diag['best_loss']}")
-
-    # Detailed per-parameter analysis
-    opt_diag_debug = chaos_opt.get_diagnostics(debug=True)
-
-    print(f"\nPer-parameter stats:")
-    print(f"  Avg beta: {opt_diag_debug['avg_beta']:.4f}")
-    print(f"  Avg alpha: {opt_diag_debug['avg_alpha']:.4f}")
-    print(f"  Avg decay: {opt_diag_debug['avg_decay']:.6f}")
-
-    # Per-group breakdown
-    for group in opt_diag_debug['param_groups']:
-        print(f"\n  Group: {group['group_name']}")
-        print(f"    Params: {group['param_count']}")
-        print(f"    Avg effective LR: {group['avg_effective_lr']:.4f}")
-
-    # Per-parameter statistics
-    stats = opt_diag_debug['per_param_stats']
-    print(f"\nEffective LR range: [{stats['effective_lr']['min']:.4f}, {stats['effective_lr']['max']:.4f}]")
-    print(f"Beta range: [{stats['beta']['min']:.4f}, {stats['beta']['max']:.4f}]")
-
-    # avg_effective_lr interpretation:
-    # > 1.0 : Training is going well, LRs increased from cold start
-    # ≈ 1.0 : Stable, no drift from initialization
-    # < 1.0 : Struggling, optimizer reduced LRs to navigate difficult terrain
-```
 
 #### 4. Use anomaly_hook for Automated Intervention
 
@@ -477,7 +404,6 @@ def handle_anomaly(anomaly_type, loss_val):
     elif anomaly_type == "plateau":
         # Loss stagnated over a window
         print(f"🔄 PLATEAU detected. Triggering escape...")
-        trainer.trigger_plateau_escape()
 
     elif anomaly_type == "increase":
         # Loss increased from previous step (happens every time loss goes up)
@@ -538,11 +464,7 @@ If loss doesn't decrease at all:
    ```python
    model = OdyssNet(..., weight_init='xavier_uniform', activation='gelu')
    ```
-4. **Trigger manual plateau escape:**
-   ```python
-   if epoch > 50 and loss > initial_loss:
-       trainer.trigger_plateau_escape()
-   ```
+4. **Use anomaly_hook and adjust lr/steps dynamically based on diagnostics.**
 
 ### Performance Issues
 

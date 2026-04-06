@@ -9,7 +9,7 @@ Covers:
 - expand: network state tensor expanded
 - expand: input/output IDs unchanged
 - expand: a new valid optimizer is returned
-- expand: with ChaosGrad optimizer (state transfer)
+- expand: optimizer state transfer
 - expand: gate parameters expanded correctly
 - expand: multiple sequential expansions
 """
@@ -18,11 +18,9 @@ import pytest
 import torch
 import os
 
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet
 from odyssnet.utils.neurogenesis import Neurogenesis
-from odyssnet.training.chaos_optimizer import ChaosGrad
 
 
 # ---------------------------------------------------------------------------
@@ -40,8 +38,7 @@ def _adamw(model, lr=1e-3):
 
 
 def _chaosgrad(model, lr=1e-3):
-    groups = ChaosGrad.classify_params(model)
-    return ChaosGrad(groups, lr=lr)
+    return torch.optim.AdamW(model.parameters(), lr=lr)
 
 
 # ===========================================================================
@@ -204,17 +201,17 @@ class TestOptimizerReturn:
 
 
 # ===========================================================================
-# ChaosGrad Optimizer Expansion
+# Optimizer Expansion
 # ===========================================================================
 
-class TestChaosGradExpansion:
-    def test_expand_with_chaosgrad_returns_chaosgrad(self):
+class TestOptimizerExpansion:
+    def test_expand_with_adamw_returns_adamw(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
-        assert isinstance(new_opt, ChaosGrad)
+        assert isinstance(new_opt, torch.optim.AdamW)
 
-    def test_expand_with_chaosgrad_model_can_train(self):
+    def test_expand_with_adamw_model_can_train(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
@@ -355,11 +352,11 @@ class TestHebbianExpansion:
         assert 'hebb_factor' in names
         assert 'hebb_decay' in names
 
-    def test_chaosgrad_expand_with_hebbian(self):
+    def test_adamw_expand_with_hebbian(self):
         model = _model(n=4, hebb_type="global")
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
-        assert isinstance(new_opt, ChaosGrad)
+        assert isinstance(new_opt, torch.optim.AdamW)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=3)
         out.sum().backward()
@@ -525,11 +522,11 @@ class TestSynapseHebbExpansion:
         new_opt.step()
         new_opt.zero_grad()
 
-    def test_chaosgrad_expand_with_synapse(self):
+    def test_adamw_expand_with_synapse(self):
         model = _model(n=4, hebb_type="synapse")
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
-        assert isinstance(new_opt, ChaosGrad)
+        assert isinstance(new_opt, torch.optim.AdamW)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=3)
         out.sum().backward()

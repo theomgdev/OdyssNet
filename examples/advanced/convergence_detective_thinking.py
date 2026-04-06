@@ -76,7 +76,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     
     print(f"Logic Steps: {LOGIC_LEN} | Thinking Gap: {GAP} | Total Physical Steps: {SEQ_LEN}")
 

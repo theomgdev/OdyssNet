@@ -42,7 +42,7 @@ def main():
     total_params = model.get_num_params()
     print(f"Total Params: {total_params}")
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-2)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
     trainer.loss_fn = loss_fn
     
