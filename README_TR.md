@@ -17,7 +17,7 @@ Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğ
 
 OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
 
-> 🏆 **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
+> **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
 > OdyssNet 2.2, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
 
@@ -31,7 +31,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 ---
 
-## 🚀 Temel Özellikler
+## Temel Özellikler
 
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
@@ -40,7 +40,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
-## 📊 Kanıt: Sıfır-Gizli Kıyaslamalar
+## Kanıt: Sıfır-Gizli Kıyaslamalar
 
 OdyssNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
 Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağlıdır. Ara katman yoktur.
@@ -72,7 +72,7 @@ Giriş katmanı 10 adım boyunca "kendisiyle konuşur". Kaotik geri besleme dön
 
 ---
 
-## 📦 Kurulum & Kullanım
+## Kurulum & Kullanım
 
 OdyssNet, modüler bir PyTorch kütüphanesi olarak tasarlanmıştır.
 
@@ -129,9 +129,9 @@ trainer.fit(inputs, inputs, epochs=50)
 
 ---
 
-## 🧠 Mimariye Genel Bakış
+## Mimariye Genel Bakış
 
-## 🌪️ Nasıl Çalışır: Fırtınanın İçinde
+## Nasıl Çalışır: Fırtınanın İçinde
 
 OdyssNet bir ileri-besleme mekanizması değil; bir **Rezonans Odasıdır**.
 
@@ -198,7 +198,7 @@ $$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
 
 ---
 
-## 📝 Deneysel Bulgular
+## Deneysel Bulgular
 
 OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **Zamansal Derinlik > Uzamsal Derinlik.**
 
@@ -485,7 +485,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
 *   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
 
-## 🔮 Vizyon: Silikonun Ruhu (OdyssNet-1B)
+## Vizyon: Silikonun Ruhu (OdyssNet-1B)
 OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.
 
 Uzayı Zamanla takas ederek sıfır gizli katmanla görmeyi çözebilirsek, bu yaklaşım dil modellerine ölçeklenebilir.
@@ -506,7 +506,7 @@ Yeni bir örnek veya deney eklemek mi istiyorsunuz? Standartlar ve en iyi uygula
 
 ---
 
-## 👨‍💻 Yazar
+## Yazar
 
 **Cahit Karahan**
 *   Doğum: 12/02/1997, Ankara.
