@@ -44,7 +44,6 @@ llm = [
 ]
 all = [
     "odyssnet[dev,llm]",
-    "bitsandbytes",
 ]
 
 [tool.setuptools.packages.find]

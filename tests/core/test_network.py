@@ -91,7 +91,7 @@ class TestInitialisation:
 INIT_STRATEGIES = [
     "quiet",
     "micro_quiet",
-    "micro_quiet_8bit",   # used by mnist_record, mnist_reverse_record
+    "micro_quiet_warm",   # used by mnist_record, mnist_reverse_record
     "classic",
     "xavier_uniform",
     "orthogonal",
@@ -395,7 +395,7 @@ class TestVocabMode:
             vocab_size=[1, 49],
             vocab_mode="continuous",
             activation=["tanh", "tanh", "tanh"],
-            weight_init="micro_quiet_8bit",
+            weight_init="micro_quiet_warm",
         )
         x = torch.randn(4, 1, 1)   # (batch, 1 step, 1 feature)
         out, h = model(x, steps=21)

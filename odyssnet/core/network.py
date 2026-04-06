@@ -302,7 +302,7 @@ class OdyssNet(nn.Module):
                 nn.init.normal_(tensor, mean=0.0, std=0.02)
             elif strategy == 'micro_quiet':
                 nn.init.normal_(tensor, mean=0.0, std=1e-6)
-            elif strategy == 'micro_quiet_8bit':
+            elif strategy == 'micro_quiet_warm':
                 nn.init.normal_(tensor, mean=0.0, std=1e-3)
             elif strategy == 'classic':
                 nn.init.normal_(tensor)

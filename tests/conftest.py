@@ -6,11 +6,8 @@ import pytest
 import torch
 import os
 
-# Suppress bitsandbytes during tests
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
-from odyssnet.training.chaos_optimizer import ChaosGrad
 
 # ---------------------------------------------------------------------------
 # Model fixtures
@@ -56,13 +53,7 @@ def xor_model():
 
 @pytest.fixture
 def basic_trainer(tiny_model):
-    """Trainer with standard AdamW (no bitsandbytes)."""
-    return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-3)
-
-
-@pytest.fixture
-def chaos_trainer(tiny_model):
-    """Trainer using ChaosGrad (default optimizer)."""
+    """Trainer with default AdamW."""
     return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-3)
 
 
@@ -74,13 +65,6 @@ def chaos_trainer(tiny_model):
 def dummy_optimizer(tiny_model):
     """Plain AdamW for optimizer tests."""
     return torch.optim.AdamW(tiny_model.parameters(), lr=1e-3)
-
-
-@pytest.fixture
-def chaos_optimizer(tiny_model):
-    """ChaosGrad instance with classified parameter groups."""
-    groups = ChaosGrad.classify_params(tiny_model)
-    return ChaosGrad(groups, lr=1e-3)
 
 
 # ---------------------------------------------------------------------------

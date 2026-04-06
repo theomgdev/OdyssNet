@@ -4,6 +4,19 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.0] — 2026-04-06
+
+### Removed
+- Removed `ChaosGrad` optimizer — replaced with standard `AdamW` as default.
+- Removed `bitsandbytes` dependency and all `NO_BNB` environment variable usage.
+- Removed `trigger_plateau_escape()` from trainer (was ChaosGrad-specific).
+- Renamed `micro_quiet_8bit` init strategy to `micro_quiet_warm`.
+
+### Changed
+- Default optimizer is now `torch.optim.AdamW(lr=1e-3, weight_decay=0.01)`.
+- Diagonal zeroing of chaos core `W` matrix is now enforced by the trainer.
+- `get_diagnostics()` simplified — removed ChaosGrad-specific metrics.
+
 ## [2.2.0] - 2026-04-06
 
 ### Added

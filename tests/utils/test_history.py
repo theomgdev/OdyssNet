@@ -9,7 +9,6 @@ import pytest
 import os
 import tempfile
 
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet.utils.history import TrainingHistory
 

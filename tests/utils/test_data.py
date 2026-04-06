@@ -13,7 +13,6 @@ import numpy as np
 import torch
 import os
 
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet.utils.data import set_seed, prepare_input, to_tensor
 

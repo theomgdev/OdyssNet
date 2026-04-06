@@ -71,7 +71,7 @@ class Neurogenesis:
         new_W = torch.zeros(new_n, new_n, device=device)
         new_W[:old_n, :old_n] = model.W.data
         
-        # micro_quiet_8bit init for new connections
+        # micro_quiet init for new connections
         noise_std = 1e-3
         new_W[:old_n, old_n:] = torch.randn(old_n, amount, device=device) * noise_std
         new_W[old_n:, :old_n] = torch.randn(amount, old_n, device=device) * noise_std
@@ -216,20 +216,13 @@ class Neurogenesis:
             return group.get(name, default)
 
         try:
-            from ..training.chaos_optimizer import ChaosGrad
-            if isinstance(old_opt, ChaosGrad):
-                genesis_lr = old_opt.defaults.get('lr', 1e-3)
-                param_groups = ChaosGrad.classify_params(model)
-                new_opt = ChaosGrad(param_groups, lr=genesis_lr)
-            else:
-                new_opt = optimizer_cls(
-                    model.parameters(),
-                    lr=get_arg('lr', 0.001),
-                    weight_decay=get_arg('weight_decay', 0),
-                    betas=get_arg('betas', (0.9, 0.999)),
-                    eps=get_arg('eps', 1e-8)
-                )
-
+            new_opt = optimizer_cls(
+                model.parameters(),
+                lr=get_arg('lr', 0.001),
+                weight_decay=get_arg('weight_decay', 0),
+                betas=get_arg('betas', (0.9, 0.999)),
+                eps=get_arg('eps', 1e-8)
+            )
         except Exception as e:
             print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
             new_opt = torch.optim.AdamW(model.parameters(), lr=group.get('lr', 0.001))

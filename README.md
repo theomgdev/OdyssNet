@@ -158,7 +158,7 @@ By "thinking" for 15 steps, OdyssNet simulates a 15-layer deep network using **o
 Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to form stable **Attractors**.
 *   **StepNorm** acts as gravity, keeping energy bounded.
 *   **Tanh** filters meaningful signals while maintaining signal symmetry.
-*   **ChaosGrad Optimizer**: Treats internal connections intelligently by isolating the **Memory Feedback** (neuron self-connections) from the **Chaos Core** (cross-connections), handles **Gate Parameters** as a dedicated group with independent `gate_lr_mult` and `gate_decay`, and places **Hebbian logits** (`hebb_factor`, `hebb_decay`) in their own zero-decay group so plasticity speed can be tuned separately.
+*   **AdamW Optimizer**: Uses standard, stable optimization while preserving OdyssNet's temporal dynamics and recurrent learning behavior.
 *   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, temporal correlations $h_t \otimes h_{t-1}$ are accumulated each step and injected as $W_\text{eff} = W + (f_h \odot C_t)$ — where `hebb_factor` can be a global scalar, a per-neuron vector, or a full per-synapse matrix. All variants are learnable, letting the network discover how plastic each pathway should be.
 *   **The Latch Experiment** proved OdyssNet can create a stable attractor to hold a decision forever against noise.
 

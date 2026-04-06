@@ -2,7 +2,7 @@
 Unit tests for odyssnet.training.trainer.OdyssNetTrainer.
 
 Covers:
-- Initialisation (optimizer auto-selection, chaos config)
+- Initialisation (optimizer auto-selection, optimizer selection)
 - train_batch (basic step, loss returned, params updated)
 - predict (shapes, eval mode)
 - evaluate (returns scalar loss)
@@ -14,7 +14,7 @@ Covers:
 - regenerate_synapses
 - expand (neurogenesis)
 - Anomaly hook callbacks
-- get_diagnostics / trigger_plateau_escape
+- get_diagnostics
 - state_dict / load_state_dict round-trip
 """
 
@@ -22,10 +22,8 @@ import pytest
 import torch
 import os
 
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet, OdyssNetTrainer
-from odyssnet.training.chaos_optimizer import ChaosGrad
 
 
 # ---------------------------------------------------------------------------
@@ -62,17 +60,15 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
-    def test_default_optimizer_is_chaos_grad(self):
+    def test_default_optimizer_is_adamw(self):
         t = _trainer()
-        assert isinstance(t.optimizer, ChaosGrad)
-        assert t._using_chaos_grad is True
+        assert isinstance(t.optimizer, torch.optim.AdamW)
 
-    def test_custom_optimizer_bypasses_chaos_grad(self):
+    def test_custom_optimizer_bypasses_default_optimizer(self):
         model = _model()
         custom_opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
         t = OdyssNetTrainer(model, optimizer=custom_opt, device="cpu")
         assert isinstance(t.optimizer, torch.optim.AdamW)
-        assert t._using_chaos_grad is False
 
     def test_custom_optimizer_used_directly(self):
         model = _model()
@@ -414,7 +410,6 @@ class TestDiagnostics:
         diag = t.get_diagnostics()
         assert "step_count" in diag
         assert "last_loss" in diag
-        assert "using_chaos_grad" in diag
         assert "current_lr" in diag
         assert "gradient_persistence" in diag
 
@@ -430,15 +425,6 @@ class TestDiagnostics:
         assert "persistent_grads_active" in diag
         assert "loss_tracking" in diag
         assert "scaler_state" in diag
-
-        # Check optimizer debug info is passed through
-        if diag['using_chaos_grad']:
-            assert "optimizer" in diag
-            opt_diag = diag['optimizer']
-            # Debug fields should be in optimizer diagnostics
-            assert "avg_beta" in opt_diag
-            assert "avg_alpha" in opt_diag
-            assert "param_groups" in opt_diag
 
     def test_get_diagnostics_default_no_debug_fields(self):
         model = _model()
@@ -464,12 +450,6 @@ class TestDiagnostics:
 
         assert diag['gradient_persistence'] == 0.5
         assert "persistent_grads_active" in diag
-
-    def test_trigger_plateau_escape_runs_without_error(self):
-        model = _model()
-        t = _trainer(model)
-        t.trigger_plateau_escape()  # should not raise
-
 
 # ===========================================================================
 # State Dict Round-Trip

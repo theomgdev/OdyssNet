@@ -6,7 +6,7 @@ OdyssNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural
 
 The library is organized into three primary modules:
 1.  **`odyssnet.core.network`**: The recurrent core architecture and update dynamics.
-2.  **`odyssnet.training.trainer`**: Optimization engine with 8-bit support and bio-inspired regularization.
+2.  **`odyssnet.training.trainer`**: Optimization engine with AdamW and bio-inspired regularization.
 3.  **`odyssnet.utils`**: Data utilities, model persistence (`odyssstore`), and dynamic expansion (`neurogenesis`).
 
 ---
@@ -82,7 +82,7 @@ model = OdyssNet(
     *   The Hebbian state is persisted across forward calls via registered buffers (`hebb_state_W`, `hebb_state_mem`) and is cleared by `reset_state()`.
     *   Both `hebb_factor` and `hebb_decay` are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
     *   **Memory cost**: `"global"` adds negligible overhead; `"neuron"` adds $O(N)$; `"synapse"` triples total parameter count to $3N^2$.
-    *   See [ChaosGrad — Parameter Groups](#parameter-groups) for how the optimizer treats these parameters.
+    *   
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
     *   `None`: Default configuration with memory identity gate enabled, others disabled.
     *   `str` (e.g., `'sigmoid'`): Applies the same gate activation to all three branches `[encoder_decoder, core, memory]`.
@@ -196,14 +196,14 @@ Runs the dynamic system.
 
 ## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **ChaosGrad** is the default and only built-in optimizer — no configuration dictionary is required.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **AdamW** is the default optimizer.
 
 ### Initialization
 
 ```python
 from odyssnet import OdyssNetTrainer
 
-# ChaosGrad is the default — just pass a genesis lr
+# AdamW is the default — just pass lr
 trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda')
 
 # With optional features
@@ -216,13 +216,13 @@ trainer = OdyssNetTrainer(
     anomaly_hook=my_hook
 )
 
-# Custom optimizer (bypasses ChaosGrad)
+# Custom optimizer (overrides default AdamW)
 import torch
 trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3))
 ```
 
 **Parameters:**
-*   `lr` (float): Genesis learning rate for ChaosGrad. This is the single mathematical starting point from which all per-parameter learning rates autonomously adapt. Default: `1e-3`.
+*   `lr` (float): Learning rate for default AdamW optimizer. Default: `1e-3`.
 *   `gradient_persistence` (float): **Ghost Gradients / Persistence**.
     *   `0.0`: Standard behavior (`zero_grad()` after every step).
     *   `> 0.0` (e.g., `0.1`): Keeps a percentage of the previous step's gradient. This creates a "momentum" over time, effectively simulating a larger batch size or longer temporal context. Useful for difficult convergence landscapes.
@@ -234,7 +234,7 @@ trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(),
     *   `"spike"`: A sudden, violent surge in loss (e.g., exploded gradient).
     *   `"increase"`: Triggered *every single time* the current step's loss is strictly greater than the previous step's loss (even by 0.0001). Perfect for custom patience counters or algorithmic early stopping.
     *   `"plateau"`: The loss has stagnated and is barely moving over a window.
-    *   **Usage**: Allows for smart interventions (like calling `trigger_plateau_escape()` when stuck).
+    *   **Usage**: Allows for smart interventions (like custom logging or early stopping when stuck).
 
 ### Key Methods
 
@@ -269,9 +269,6 @@ Triggers **Darwinian Regeneration**. Instead of pruning weak weights, this metho
 *   **Purpose**: Allows the network to escape local minima and constantly explore new pathways. Transforms "dead" capacity into "fresh" capacity.
 *   **Returns**: `(revived_count, total_synapses)`
 
-#### `trainer.trigger_plateau_escape()`
-Manually triggers the plateau escape (frustration burst) in ChaosGrad. Can be tied with the `anomaly_hook`.
-
 #### `trainer.get_diagnostics(debug=False)`
 Returns comprehensive training diagnostics.
 
@@ -282,7 +279,6 @@ Returns comprehensive training diagnostics.
 A dictionary containing:
 *   `step_count`: Number of optimization steps taken
 *   `last_loss`: Most recent loss value
-*   `using_chaos_grad`: Whether ChaosGrad optimizer is being used
 *   `current_lr`: Current learning rate
 *   `gradient_persistence`: Gradient persistence coefficient
 *   `persistent_grads_active`: Number of active persistent gradients (debug mode only)
@@ -290,80 +286,6 @@ A dictionary containing:
 *   `loss_tracking`: Loss buffer statistics (debug mode only)
 *   `scaler_state`: AMP scaler information (debug mode only)
 *   `gradient_stats`: Gradient norms and means across parameters (debug mode only)
-*   `optimizer`: Nested optimizer diagnostics (when using ChaosGrad, respects debug parameter)
-
----
-
-## ChaosGrad Optimizer (`odyssnet.training.chaos_optimizer`)
-
-A zero-hyperparameter optimizer that autonomously adapts every learning mechanism via
-Analytic Hypergradient Descent. All meta-parameters — learning rate multiplier, momentum
-beta, weight decay, and gradient centralization — emerge from the intrinsic geometry of the
-loss landscape at each step. No configuration dictionary required.
-
-### Autonomous Mechanisms
-
-| Mechanism | Formula | What it replaces |
-| :--- | :--- | :--- |
-| **Cold-start LR** | `per_lr₀ = min(1/g_rms, 2√numel)` — normalized first step; size cap protects small tensors | manual per-group lr tuning |
-| **Per-param LR** | conf-weighted drive + restore(→`init_lr`) + derived coupling(LR×β step bound) | `lr_mult`, `adaptive_lr_clip` |
-| **Per-param Momentum** | conf-weighted drive + restore(→0.9) + derived coupling(β×LR) | static `betas` |
-| **Per-param Decay** | conf-weighted drive + restore(→`seed/per_lr`); lr×decay product preserved | global `weight_decay` |
-| **Centralization Gate** | conf-weighted drive + restore(→0.5) | boolean `grad_centralization` |
-| **Frustration Accumulator** | loss stagnation → burst scaled to `genesis_lr × init_lr`; meta-param reset toward `init_lr` | integer `plateau_patience` |
-
-### Hebbian Bypass Rule
-Hebbian logits (`hebb_factor`, `hebb_decay`) are raw unbounded scalars governing temporal
-working memory. The autonomous decay mechanism is **unconditionally bypassed** for these
-parameters — their `per_param_decay` is permanently fixed at `0.0`.
-
-### Parameter Groups
-ChaosGrad still classifies parameters to seed initial decay values correctly:
-
-| Group | Initial Decay Seed |
-| :--- | :--- |
-| **chaos_core** (W matrix) | 0.01 |
-| **memory_feedback** | 0.0 |
-| **projections** | 0.01 |
-| **gates** | 0.0 |
-| **hebbian** | 0.0 (bypass enforced) |
-| **lightweight** | 0.0 |
-
-### Optimizer State per Parameter
-```
-step            (int)        — update count
-prev_grad       (bfloat16)   — previous gradient (VRAM-compressed)
-momentum        (float32)    — gradient accumulator
-init_lr         (float)      — calibrated starting LR = 1/g_rms at T=0, capped by 2√numel (fixed)
-per_param_lr    (float)      — autonomous LR multiplier, init = init_lr
-per_param_decay (float)      — autonomous weight decay rate
-per_param_beta  (float)      — autonomous momentum coefficient, init 0.9
-per_param_alpha (float)      — autonomous centralization gate, init 0.5
-```
-
-### Usage
-
-```python
-from odyssnet import ChaosGrad
-
-# Single parameter — the genesis lr
-param_groups = ChaosGrad.classify_params(model)
-optimizer = ChaosGrad(param_groups, lr=1e-3)
-
-# Feed loss to Frustration Accumulator (optional but recommended)
-optimizer.report_loss(loss_value)
-
-# Manual escape from local minima
-optimizer.trigger_plateau_escape()
-
-# Diagnostics
-diag = optimizer.get_diagnostics(debug=False)
-# Basic mode returns: global_step, frustration, best_loss, avg_effective_lr, avg_init_lr
-# Debug mode (debug=True) additionally returns:
-#   - avg_beta, avg_alpha, avg_decay: Mean per-parameter hyperparameters
-#   - param_groups: Per-group statistics breakdown
-#   - per_param_stats: Detailed min/max/std statistics for effective_lr, beta, alpha, decay, and step counts
-```
 
 ---
 

@@ -31,7 +31,6 @@ import re
 
 # --- Environment Setup ---
 import warnings
-os.environ["NO_BNB"] = "1"  # Disable bitsandbytes for pure dynamics
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(SCRIPT_DIR, '..', 'data')
@@ -139,7 +138,7 @@ def main():
     #   - Output vocab: 49 values (7×7 pixel patch decoded from all 6 output neurons per step)
     # Runtime uses 21 internal steps: first 5 warmup-only, last 16 supervised outputs.
     # Supervised output: 16 patches × 49 pixels = 784 pixels (28×28 image)
-    # micro_quiet_8bit is kept intentionally for this tiny-core stability profile.
+    # micro_quiet_warm is kept intentionally for this tiny-core stability profile.
     model = OdyssNet(
         num_neurons=NUM_NEURONS,
         input_ids=input_ids,
@@ -148,7 +147,7 @@ def main():
         vocab_size=[1, 49],   # 1 scalar input -> 49 pixel outputs
         vocab_mode='continuous',
         activation=['tanh', 'tanh', 'tanh'],
-        weight_init='micro_quiet_8bit'
+        weight_init='micro_quiet_warm'
     )
     model = model.compile()
     

@@ -12,7 +12,6 @@ import pytest
 import torch
 import os
 
-os.environ.setdefault("NO_BNB", "1")
 
 from odyssnet import OdyssNet
 from odyssnet.utils.odyssstore import (
@@ -92,7 +91,6 @@ class TestSaveCheckpoint:
     def test_trainer_state_saved_and_restored(self, tmp_path):
         # convergence_skill_transfer.py passes trainer_state=trainer.state_dict()
         # to save_checkpoint, then load_checkpoint restores it via trainer=.
-        os.environ["NO_BNB"] = "1"
         from odyssnet import OdyssNetTrainer
 
         model = _model()
@@ -185,7 +183,6 @@ class TestLoadCheckpoint:
     def test_load_checkpoint_restores_trainer_state(self, tmp_path):
         # experiment_llm.py passes trainer= to load_checkpoint so that the
         # trainer's step_count, scaler state etc. are fully restored.
-        os.environ["NO_BNB"] = "1"
         from odyssnet import OdyssNetTrainer
 
         model = _model()
