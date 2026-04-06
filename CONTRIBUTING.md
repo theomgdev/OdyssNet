@@ -383,7 +383,7 @@ Monitor training health in real-time:
 for epoch in range(epochs):
     loss = trainer.train_batch(x, y, thinking_steps=10)
 
-    # Get comprehensive diagnostics
+    # Get comprehensive diagnostics (add debug=True for detailed stats)
     diag = trainer.get_diagnostics()
 
     if epoch % 10 == 0:
@@ -400,12 +400,24 @@ for epoch in range(epochs):
             print(f"  Best loss: {opt_diag['best_loss']:.6f}")
             print(f"  Avg effective LR: {opt_diag['avg_effective_lr']:.4f}")
             print(f"  Avg init LR: {opt_diag['avg_init_lr']:.6f}")
+
+# For detailed debugging, use debug=True
+if need_detailed_analysis:
+    diag = trainer.get_diagnostics(debug=True)
+    # Now includes gradient_stats, persistent_grads_active, anomaly_tracking,
+    # loss_tracking, scaler_state, and detailed optimizer per-param stats
 ```
 
 **Key metrics to monitor:**
 - **frustration:** High values (>100) indicate the optimizer is struggling; may trigger plateau escape
 - **avg_effective_lr:** Values much less than 1.0 suggest the optimizer has reduced learning rates due to difficult landscape
 - **best_loss:** If this hasn't improved in many steps, consider manual intervention
+
+**Debug mode additions:**
+- **gradient_stats:** Per-parameter gradient norms and means (min/max/std)
+- **persistent_grads_active:** Number of parameters with persistent gradients
+- **anomaly_tracking:** EWMA, variance, and plateau detection state
+- **loss_tracking:** Recent losses and buffer statistics
 
 #### 3. Use optimizer.get_diagnostics() for Deep Analysis
 
@@ -416,13 +428,32 @@ if trainer._using_chaos_grad:
     from odyssnet import ChaosGrad
     chaos_opt = trainer.optimizer
 
+    # Basic diagnostics
     opt_diag = chaos_opt.get_diagnostics()
 
     print(f"Optimizer Health:")
     print(f"  Global step: {opt_diag['global_step']}")
     print(f"  Frustration level: {opt_diag['frustration']}")
     print(f"  Best loss seen: {opt_diag['best_loss']}")
-    print(f"  Avg LR drift: {opt_diag['avg_effective_lr']:.4f}")
+
+    # Detailed per-parameter analysis
+    opt_diag_debug = chaos_opt.get_diagnostics(debug=True)
+
+    print(f"\nPer-parameter stats:")
+    print(f"  Avg beta: {opt_diag_debug['avg_beta']:.4f}")
+    print(f"  Avg alpha: {opt_diag_debug['avg_alpha']:.4f}")
+    print(f"  Avg decay: {opt_diag_debug['avg_decay']:.6f}")
+
+    # Per-group breakdown
+    for group in opt_diag_debug['param_groups']:
+        print(f"\n  Group: {group['group_name']}")
+        print(f"    Params: {group['param_count']}")
+        print(f"    Avg effective LR: {group['avg_effective_lr']:.4f}")
+
+    # Per-parameter statistics
+    stats = opt_diag_debug['per_param_stats']
+    print(f"\nEffective LR range: [{stats['effective_lr']['min']:.4f}, {stats['effective_lr']['max']:.4f}]")
+    print(f"Beta range: [{stats['beta']['min']:.4f}, {stats['beta']['max']:.4f}]")
 
     # avg_effective_lr interpretation:
     # > 1.0 : Training is going well, LRs increased from cold start

@@ -460,6 +460,54 @@ class TestDiagnostics:
         assert diag['avg_effective_lr'] > 0.0
         assert diag['avg_init_lr'] > 0.0
 
+    def test_get_diagnostics_debug_mode(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        diag = opt.get_diagnostics(debug=True)
+
+        # Check that debug fields are present
+        assert "avg_beta" in diag
+        assert "avg_alpha" in diag
+        assert "avg_decay" in diag
+        assert "param_groups" in diag
+        assert "per_param_stats" in diag
+
+        # Check param_groups structure
+        assert isinstance(diag['param_groups'], list)
+        assert len(diag['param_groups']) > 0
+        for g in diag['param_groups']:
+            assert 'group_name' in g
+            assert 'param_count' in g
+            assert 'avg_effective_lr' in g
+            assert 'avg_beta' in g
+            assert 'avg_alpha' in g
+            assert 'avg_decay' in g
+
+        # Check per_param_stats structure
+        stats = diag['per_param_stats']
+        for key in ['effective_lr', 'beta', 'alpha', 'decay', 'steps']:
+            assert key in stats
+            assert 'min' in stats[key]
+            assert 'max' in stats[key]
+            if key != 'steps':
+                assert 'std' in stats[key]
+            else:
+                assert 'mean' in stats[key]
+
+    def test_get_diagnostics_default_no_debug_fields(self):
+        model = _small_model()
+        opt = _optimizer(model)
+        _run_step(model, opt)
+        diag = opt.get_diagnostics(debug=False)
+
+        # These should NOT be in the default output
+        assert "avg_beta" not in diag
+        assert "avg_alpha" not in diag
+        assert "avg_decay" not in diag
+        assert "param_groups" not in diag
+        assert "per_param_stats" not in diag
+
     def test_init_lr_stored_in_state(self):
         """init_lr is stored at cold start and reflects gradient scale (1/g_rms)."""
         model = _small_model()
