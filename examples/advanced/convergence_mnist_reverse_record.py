@@ -35,7 +35,7 @@ os.environ["NO_BNB"] = "1"  # Disable bitsandbytes for pure dynamics
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(SCRIPT_DIR, '..', 'data')
-SAMPLE_DIR = os.path.join(SCRIPT_DIR, '..', '..', 'tmp', 'reverse_record_samples')
+SAMPLE_DIR = os.path.join(SCRIPT_DIR, '..', '..', 'out', 'reverse_record_samples')
 SAVE_EVERY_EPOCHS = 5
 
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
