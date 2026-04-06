@@ -6,7 +6,7 @@ import os
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: TINY EXPERIMENT (7x7 Input)...")
+    print("OdyssNet: TINY EXPERIMENT (7x7 Input)...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 

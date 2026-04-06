@@ -2,7 +2,7 @@
 
 This document outlines the standards and best practices for contributing to the OdyssNet project — whether you are adding example scripts, improving the library, or fixing bugs.
 
-OdyssNet 2.2 relies on a highly modular library structure. To ensure long-term maintainability and performance, all contributions must adhere to these guidelines.
+OdyssNet relies on a highly modular library structure. To ensure long-term maintainability and performance, all contributions must adhere to these guidelines.
 
 ---
 

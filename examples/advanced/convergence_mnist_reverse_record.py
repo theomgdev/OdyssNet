@@ -111,7 +111,7 @@ def main():
     set_seed(42)
     
     print("=" * 70)
-    print("OdyssNet 2.2: INVERSE MNIST REVERSE RECORD (Generation Record)")
+    print("OdyssNet: INVERSE MNIST REVERSE RECORD (Generation Record)")
     print("=" * 70)
     print("Task: Generate 28×28 MNIST images from digit labels (0-9)")
     print("Direction: Digit (scalar) -> Image (784 pixels)")

@@ -7,7 +7,7 @@ import time
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: PURE MNIST CHALLENGE (28x28 Raw Input)...")
+    print("OdyssNet: PURE MNIST CHALLENGE (28x28 Raw Input)...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 

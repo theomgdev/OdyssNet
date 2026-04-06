@@ -1,4 +1,4 @@
-# OdyssNet 2.2: Zamansal Devrim
+# OdyssNet: Zamansal Devrim
 
 **OdyssNet, Zaman'ın nihai Gizli Katman olduğunun kanıtıdır.**
 
@@ -11,7 +11,7 @@ Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğ
 > **Sıfır-Gizli Atılım**
 >
 > 1969'da Minsky & Papert, gizli katmanı olmayan bir sinir ağının XOR gibi doğrusal olmayan problemleri çözemeyeceğini kanıtladı.
-> **OdyssNet 2.2 bu sınırı aştı.**
+> **OdyssNet bu sınırı aştı.**
 >
 > Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak OdyssNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
 
@@ -19,7 +19,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 > **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> OdyssNet 2.2, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+> OdyssNet, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
 
 ## TLDR
 
@@ -166,7 +166,7 @@ Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühen
 
 OdyssNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi temelden farklıdır.
 
-| Özellik | Standart RNN / LSTM | OdyssNet 2.2 |
+| Özellik | Standart RNN / LSTM | OdyssNet |
 | :--- | :--- | :--- |
 | **Giriş Akışı** | Sürekli Akış (örn. cümledeki kelimeler) | **Tek Nabız** ($t=0$'da İmpuls) |
 | **Amaç** | Dizi İşleme (Ayrıştırma) | **Derin Düşünme** (Sindirme) |
@@ -330,7 +330,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
 
     ```text
-    OdyssNet 2.2: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```

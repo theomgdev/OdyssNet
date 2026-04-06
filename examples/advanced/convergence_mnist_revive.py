@@ -7,7 +7,7 @@ import time
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
+    print("OdyssNet: DARWINIAN REGENERATION EXPERIMENT (The Phoenix Effect)...")
     print("Hypothesis: Reviving weak synapses with random initialization improves learning capacity.")
     set_seed(42)
     

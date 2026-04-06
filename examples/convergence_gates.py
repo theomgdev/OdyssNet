@@ -3,7 +3,7 @@ import torch.nn as nn
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: The Impossible XOR (Zero-Hidden)...")
+    print("OdyssNet: The Impossible XOR (Zero-Hidden)...")
     set_seed(42)
 
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'

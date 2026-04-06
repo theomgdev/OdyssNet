@@ -7,7 +7,7 @@ import time
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: EMBEDDED MNIST CHALLENGE (8k Params)")
+    print("OdyssNet: EMBEDDED MNIST CHALLENGE (8k Params)")
     print("Strategy: 784 Pixels -> Proj(10) -> RNN(10) -> Decode(10)")
     set_seed(42)
     

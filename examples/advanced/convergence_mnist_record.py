@@ -27,7 +27,7 @@ def _spiral_order_4x4():
 
 
 def main():
-    print("OdyssNet 2.2: MNIST RECORD CHALLENGE (Spiral-Fed 4x4 Patch Model)")
+    print("OdyssNet: MNIST RECORD CHALLENGE (Spiral-Fed 4x4 Patch Model)")
     print("Strategy: 16 Spiral Patches (7x7=49 pixels) -> Embed(4 Neurons) -> Core(10) -> Decoder(10 Classes)")
     set_seed(42)
 

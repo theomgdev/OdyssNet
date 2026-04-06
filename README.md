@@ -1,4 +1,4 @@
-# OdyssNet 2.2: The Temporal Revolution
+# OdyssNet: The Temporal Revolution
 
 **OdyssNet is the proof that Time is the ultimate Hidden Layer.**
 
@@ -11,7 +11,7 @@ Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of 
 > **The Zero-Hidden Breakthrough**
 >
 > In 1969, Minsky & Papert proved that a neural network without hidden layers cannot solve non-linear problems like XOR.
-> **OdyssNet 2.2 has broken this limit.**
+> **OdyssNet has broken this limit.**
 >
 > By treating the network as a **Trainable Dynamic System**, OdyssNet solves non-linear problems (XOR, MNIST) using **0 Hidden Layers**. It replaces spatial neurons with temporal thinking steps.
 
@@ -19,7 +19,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 > **WORLD RECORD: Parametric Intelligence Density**
 >
-> OdyssNet 2.2 achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> OdyssNet achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
 
 ## TL;DR
 
@@ -166,7 +166,7 @@ Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to f
 
 While OdyssNet looks like a Recurrent Neural Network (RNN) on paper, its philosophy is fundamentally different.
 
-| Feature | Standard RNN / LSTM | OdyssNet 2.2 |
+| Feature | Standard RNN / LSTM | OdyssNet |
 | :--- | :--- | :--- |
 | **Input Flow** | Continuous Stream (e.g., words in a sentence) | **Single Pulse** (Impulse at $t=0$) |
 | **Purpose** | Sequence Processing (Parsing) | **Deep Thinking** (Digestion) |
@@ -330,7 +330,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <summary>See the "Parametric Efficiency" Log</summary>
 
     ```text
-    OdyssNet 2.2: MNIST RECORD CHALLENGE (Elite 480-Param Model)
+    OdyssNet: MNIST RECORD CHALLENGE (Elite 480-Param Model)
     Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
     Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
     ```

@@ -2,7 +2,7 @@ import torch
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
-    print("OdyssNet 2.2: The Atomic Identity...")
+    print("OdyssNet: The Atomic Identity...")
     set_seed(42)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
