@@ -272,8 +272,25 @@ Triggers **Darwinian Regeneration**. Instead of pruning weak weights, this metho
 #### `trainer.trigger_plateau_escape()`
 Manually triggers the plateau escape (frustration burst) in ChaosGrad. Can be tied with the `anomaly_hook`.
 
-#### `trainer.get_diagnostics()`
-Returns training diagnostics including optimizer state.
+#### `trainer.get_diagnostics(debug=False)`
+Returns comprehensive training diagnostics.
+
+**Parameters:**
+*   `debug` (bool): If `True`, includes computationally intensive diagnostics such as gradient statistics, persistent gradient info, and detailed optimizer metrics. Default: `False`.
+
+**Returns:**
+A dictionary containing:
+*   `step_count`: Number of optimization steps taken
+*   `last_loss`: Most recent loss value
+*   `using_chaos_grad`: Whether ChaosGrad optimizer is being used
+*   `current_lr`: Current learning rate
+*   `gradient_persistence`: Gradient persistence coefficient
+*   `persistent_grads_active`: Number of active persistent gradients (debug mode only)
+*   `anomaly_tracking`: Anomaly detection state (debug mode only)
+*   `loss_tracking`: Loss buffer statistics (debug mode only)
+*   `scaler_state`: AMP scaler information (debug mode only)
+*   `gradient_stats`: Gradient norms and means across parameters (debug mode only)
+*   `optimizer`: Nested optimizer diagnostics (when using ChaosGrad, respects debug parameter)
 
 ---
 
@@ -340,8 +357,12 @@ optimizer.report_loss(loss_value)
 optimizer.trigger_plateau_escape()
 
 # Diagnostics
-diag = optimizer.get_diagnostics()
-# Returns: global_step, frustration, best_loss, avg_effective_lr, avg_init_lr
+diag = optimizer.get_diagnostics(debug=False)
+# Basic mode returns: global_step, frustration, best_loss, avg_effective_lr, avg_init_lr
+# Debug mode (debug=True) additionally returns:
+#   - avg_beta, avg_alpha, avg_decay: Mean per-parameter hyperparameters
+#   - param_groups: Per-group statistics breakdown
+#   - per_param_stats: Detailed min/max/std statistics for effective_lr, beta, alpha, decay, and step counts
 ```
 
 ---
