@@ -250,37 +250,152 @@ class ChaosGrad(torch.optim.Optimizer):
         """Manually force a frustration noise burst on the next step."""
         self._force_plateau_escape = True
 
-    def get_diagnostics(self):
+    def get_diagnostics(self, debug=False):
         """
         Returns optimizer health metrics.
 
-        avg_effective_lr: mean of (per_param_lr / init_lr) — how much adaptation
-            has moved each parameter's LR relative to its calibrated starting point.
-            1.0 = no drift from cold start; >1 = training is going well; <1 = struggling.
-        avg_init_lr: mean of init_lr across parameters — reflects the gradient scale
-            of the network at cold start. Useful for detecting misconfigured genesis_lr.
+        Args:
+            debug (bool): If True, includes computationally intensive per-parameter
+                statistics. Default: False.
+
+        Returns:
+            dict: Diagnostic information including:
+                - global_step: Total optimization steps taken
+                - frustration: Current frustration accumulator value
+                - best_loss: Best loss seen so far
+                - avg_effective_lr: Mean of (per_param_lr / init_lr) across all parameters
+                - avg_init_lr: Mean of init_lr across parameters
+                - avg_beta: Mean momentum coefficient (if debug=True)
+                - avg_alpha: Mean centralization gate (if debug=True)
+                - avg_decay: Mean weight decay (if debug=True)
+                - param_groups: Per-group statistics (if debug=True)
+                - per_param_stats: Detailed per-parameter statistics (if debug=True)
         """
         total_drift = 0.0
         total_init  = 0.0
+        total_beta  = 0.0
+        total_alpha = 0.0
+        total_decay = 0.0
         count = 0
+
+        # Collect group-level stats if debug mode
+        group_stats = [] if debug else None
+
         for group in self.param_groups:
             genesis_lr = group.get('lr', self.defaults['lr'])
+            group_name = group.get('group_name', 'unknown')
+
+            if debug:
+                g_drift = 0.0
+                g_beta = 0.0
+                g_alpha = 0.0
+                g_decay = 0.0
+                g_count = 0
+
             for p in group['params']:
                 s = self.state.get(p)
                 if s:
                     init_lr = s.get('init_lr', s.get('per_param_lr', 1.0))
                     per_lr  = s.get('per_param_lr', init_lr)
+                    per_beta = s.get('per_param_beta', 0.9)
+                    per_alpha = s.get('per_param_alpha', 0.5)
+                    per_decay = s.get('per_param_decay', 0.0)
+
                     total_drift += per_lr / max(init_lr, 1e-9)
                     total_init  += init_lr * genesis_lr
+                    total_beta  += per_beta
+                    total_alpha += per_alpha
+                    total_decay += per_decay
                     count += 1
+
+                    if debug:
+                        g_drift += per_lr / max(init_lr, 1e-9)
+                        g_beta += per_beta
+                        g_alpha += per_alpha
+                        g_decay += per_decay
+                        g_count += 1
+
+            if debug and g_count > 0:
+                group_stats.append({
+                    'group_name': group_name,
+                    'param_count': g_count,
+                    'avg_effective_lr': g_drift / g_count,
+                    'avg_beta': g_beta / g_count,
+                    'avg_alpha': g_alpha / g_count,
+                    'avg_decay': g_decay / g_count,
+                })
+
         n = count if count > 0 else 1
-        return {
+        diag = {
             'global_step':       self._global_step,
             'frustration':       self._frustration,
             'best_loss':         self._best_loss,
             'avg_effective_lr':  total_drift / n,
             'avg_init_lr':       total_init  / n,
         }
+
+        if debug:
+            diag['avg_beta'] = total_beta / n
+            diag['avg_alpha'] = total_alpha / n
+            diag['avg_decay'] = total_decay / n
+            diag['param_groups'] = group_stats
+
+            # Compute per-parameter statistics (min/max/std)
+            lr_ratios = []
+            betas = []
+            alphas = []
+            decays = []
+            step_counts = []
+
+            for group in self.param_groups:
+                for p in group['params']:
+                    s = self.state.get(p)
+                    if s:
+                        init_lr = s.get('init_lr', s.get('per_param_lr', 1.0))
+                        per_lr = s.get('per_param_lr', init_lr)
+                        lr_ratios.append(per_lr / max(init_lr, 1e-9))
+                        betas.append(s.get('per_param_beta', 0.9))
+                        alphas.append(s.get('per_param_alpha', 0.5))
+                        decays.append(s.get('per_param_decay', 0.0))
+                        step_counts.append(s.get('step', 0))
+
+            if lr_ratios:
+                import torch
+                lr_tensor = torch.tensor(lr_ratios)
+                beta_tensor = torch.tensor(betas)
+                alpha_tensor = torch.tensor(alphas)
+                decay_tensor = torch.tensor(decays)
+                step_tensor = torch.tensor(step_counts, dtype=torch.float32)
+
+                diag['per_param_stats'] = {
+                    'effective_lr': {
+                        'min': lr_tensor.min().item(),
+                        'max': lr_tensor.max().item(),
+                        'std': lr_tensor.std().item() if len(lr_ratios) > 1 else 0.0,
+                    },
+                    'beta': {
+                        'min': beta_tensor.min().item(),
+                        'max': beta_tensor.max().item(),
+                        'std': beta_tensor.std().item() if len(betas) > 1 else 0.0,
+                    },
+                    'alpha': {
+                        'min': alpha_tensor.min().item(),
+                        'max': alpha_tensor.max().item(),
+                        'std': alpha_tensor.std().item() if len(alphas) > 1 else 0.0,
+                    },
+                    'decay': {
+                        'min': decay_tensor.min().item(),
+                        'max': decay_tensor.max().item(),
+                        'std': decay_tensor.std().item() if len(decays) > 1 else 0.0,
+                    },
+                    'steps': {
+                        'min': step_tensor.min().item(),
+                        'max': step_tensor.max().item(),
+                        'mean': step_tensor.mean().item(),
+                    },
+                }
+
+        return diag
 
     # ------------------------------------------------------------------ #
     # Optimization step                                                   #

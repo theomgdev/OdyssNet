@@ -416,6 +416,54 @@ class TestDiagnostics:
         assert "last_loss" in diag
         assert "using_chaos_grad" in diag
         assert "current_lr" in diag
+        assert "gradient_persistence" in diag
+
+    def test_get_diagnostics_debug_mode(self):
+        model = _model()
+        t = _trainer(model)
+        x = _batch()
+        y = _targets()
+        t.train_batch(x, y, thinking_steps=2)
+        diag = t.get_diagnostics(debug=True)
+
+        # Check debug fields are present
+        assert "persistent_grads_active" in diag
+        assert "loss_tracking" in diag
+        assert "scaler_state" in diag
+
+        # Check optimizer debug info is passed through
+        if diag['using_chaos_grad']:
+            assert "optimizer" in diag
+            opt_diag = diag['optimizer']
+            # Debug fields should be in optimizer diagnostics
+            assert "avg_beta" in opt_diag
+            assert "avg_alpha" in opt_diag
+            assert "param_groups" in opt_diag
+
+    def test_get_diagnostics_default_no_debug_fields(self):
+        model = _model()
+        t = _trainer(model)
+        x = _batch()
+        y = _targets()
+        t.train_batch(x, y, thinking_steps=2)
+        diag = t.get_diagnostics(debug=False)
+
+        # These should NOT be in default output
+        assert "persistent_grads_active" not in diag
+        assert "anomaly_tracking" not in diag
+        assert "scaler_state" not in diag
+        assert "gradient_stats" not in diag
+
+    def test_get_diagnostics_with_gradient_persistence(self):
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-3, gradient_persistence=0.5)
+        x = _batch()
+        y = _targets()
+        t.train_batch(x, y, thinking_steps=2)
+        diag = t.get_diagnostics(debug=True)
+
+        assert diag['gradient_persistence'] == 0.5
+        assert "persistent_grads_active" in diag
 
     def test_trigger_plateau_escape_runs_without_error(self):
         model = _model()

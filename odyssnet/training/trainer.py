@@ -453,22 +453,114 @@ class OdyssNetTrainer:
             chaos_opt.trigger_plateau_escape()
             print("Manual plateau escape triggered!")
 
-    def get_diagnostics(self):
+    def get_diagnostics(self, debug=False):
         """
         Returns comprehensive training diagnostics.
 
-        Returns a dict with optimizer health metrics.
-        Useful for monitoring and logging in complex training loops.
+        Args:
+            debug (bool): If True, includes computationally intensive diagnostics
+                such as gradient statistics, persistent gradient info, and detailed
+                optimizer metrics. Default: False.
+
+        Returns:
+            dict: Diagnostic information including:
+                - step_count: Number of optimization steps taken
+                - last_loss: Most recent loss value
+                - using_chaos_grad: Whether ChaosGrad optimizer is being used
+                - current_lr: Current learning rate
+                - gradient_persistence: Gradient persistence coefficient
+                - persistent_grads_active: Number of active persistent gradients (if debug=True)
+                - anomaly_tracking: Anomaly detection state (if debug=True)
+                - scaler_state: AMP scaler information (if debug=True)
+                - optimizer: Nested optimizer diagnostics (if using ChaosGrad)
         """
         diag = {
             'step_count': self._step_count,
             'last_loss': self._last_loss,
             'using_chaos_grad': self._using_chaos_grad,
             'current_lr': self.optimizer.param_groups[0]['lr'] if getattr(self, 'optimizer', None) and getattr(self.optimizer, 'param_groups', None) else 0,
+            'gradient_persistence': self.gradient_persistence,
         }
+
+        if debug:
+            # Persistent gradients info
+            diag['persistent_grads_active'] = len(self._persistent_grads)
+
+            # Anomaly tracking metrics
+            anomaly_info = {}
+            if hasattr(self, '_anomaly_ewma') and self._anomaly_ewma is not None:
+                anomaly_info['ewma'] = self._anomaly_ewma
+                anomaly_info['variance'] = self._anomaly_var
+                anomaly_info['std'] = math.sqrt(self._anomaly_var) + 1e-8
+            if hasattr(self, '_prev_step_loss'):
+                anomaly_info['prev_step_loss'] = self._prev_step_loss
+            if hasattr(self, '_plateau_hook_triggered'):
+                anomaly_info['plateau_hook_triggered'] = self._plateau_hook_triggered
+
+            if anomaly_info:
+                diag['anomaly_tracking'] = anomaly_info
+
+            # Loss time buffer stats
+            if self._loss_time_buffer:
+                diag['loss_tracking'] = {
+                    'buffer_size': len(self._loss_time_buffer),
+                    'time_elapsed': self._loss_time_buffer[-1][0] if self._loss_time_buffer else 0.0,
+                    'recent_losses': [l for t, l in self._loss_time_buffer[-5:]] if len(self._loss_time_buffer) >= 5 else [],
+                }
+
+            # AMP scaler state
+            if hasattr(self, 'scaler'):
+                diag['scaler_state'] = {
+                    'enabled': self.scaler.is_enabled() if hasattr(self.scaler, 'is_enabled') else True,
+                    'scale': self.scaler.get_scale() if hasattr(self.scaler, 'get_scale') else None,
+                }
+
+            # Model gradient statistics
+            grad_stats = self._compute_gradient_stats()
+            if grad_stats:
+                diag['gradient_stats'] = grad_stats
 
         if self._using_chaos_grad:
             chaos_opt = cast(ChaosGrad, self.optimizer)
-            diag['optimizer'] = chaos_opt.get_diagnostics()
+            diag['optimizer'] = chaos_opt.get_diagnostics(debug=debug)
 
         return diag
+
+    def _compute_gradient_stats(self):
+        """Compute gradient statistics across all parameters."""
+        grad_norms = []
+        grad_means = []
+        params_with_grad = 0
+        params_without_grad = 0
+
+        for param in self.model.parameters():
+            if param.grad is not None:
+                params_with_grad += 1
+                grad_norms.append(param.grad.norm().item())
+                grad_means.append(param.grad.mean().item())
+            else:
+                params_without_grad += 1
+
+        if not grad_norms:
+            return None
+
+        import torch
+        grad_norm_tensor = torch.tensor(grad_norms)
+        grad_mean_tensor = torch.tensor(grad_means)
+
+        return {
+            'params_with_grad': params_with_grad,
+            'params_without_grad': params_without_grad,
+            'norm': {
+                'min': grad_norm_tensor.min().item(),
+                'max': grad_norm_tensor.max().item(),
+                'mean': grad_norm_tensor.mean().item(),
+                'std': grad_norm_tensor.std().item() if len(grad_norms) > 1 else 0.0,
+            },
+            'mean': {
+                'min': grad_mean_tensor.min().item(),
+                'max': grad_mean_tensor.max().item(),
+                'mean': grad_mean_tensor.mean().item(),
+                'std': grad_mean_tensor.std().item() if len(grad_means) > 1 else 0.0,
+            },
+        }
