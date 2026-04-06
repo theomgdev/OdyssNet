@@ -205,13 +205,13 @@ class TestOptimizerReturn:
 # ===========================================================================
 
 class TestOptimizerExpansion:
-    def test_expand_with_chaosgrad_returns_chaosgrad(self):
+    def test_expand_with_adamw_returns_adamw(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, torch.optim.AdamW)
 
-    def test_expand_with_chaosgrad_model_can_train(self):
+    def test_expand_with_adamw_model_can_train(self):
         model = _model(n=4)
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
@@ -352,7 +352,7 @@ class TestHebbianExpansion:
         assert 'hebb_factor' in names
         assert 'hebb_decay' in names
 
-    def test_chaosgrad_expand_with_hebbian(self):
+    def test_adamw_expand_with_hebbian(self):
         model = _model(n=4, hebb_type="global")
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
@@ -522,7 +522,7 @@ class TestSynapseHebbExpansion:
         new_opt.step()
         new_opt.zero_grad()
 
-    def test_chaosgrad_expand_with_synapse(self):
+    def test_adamw_expand_with_synapse(self):
         model = _model(n=4, hebb_type="synapse")
         opt = _chaosgrad(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)

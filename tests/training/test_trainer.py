@@ -64,7 +64,7 @@ class TestTrainerInit:
         t = _trainer()
         assert isinstance(t.optimizer, torch.optim.AdamW)
 
-    def test_custom_optimizer_bypasses_default_optimizer(self):
+    def test_custom_optimizer_overrides_default(self):
         model = _model()
         custom_opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
         t = OdyssNetTrainer(model, optimizer=custom_opt, device="cpu")

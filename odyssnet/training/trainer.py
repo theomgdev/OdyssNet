@@ -266,9 +266,10 @@ class OdyssNetTrainer:
             # Self-connections are handled by memory_feedback, not W.
             with torch.no_grad():
                 core_weight = self._core_weight
-                if core_weight is None or core_weight is not getattr(self.model, 'W', None):
-                    core_weight = getattr(self.model, 'W', None)
-                    self._core_weight = core_weight
+                current_weight = getattr(self.model, 'W', None)
+                if core_weight is not current_weight:
+                    core_weight = current_weight
+                    self._core_weight = current_weight
                 if isinstance(core_weight, torch.Tensor) and core_weight.dim() == 2 and core_weight.shape[0] == core_weight.shape[1]:
                     core_weight.fill_diagonal_(0.0)
 
