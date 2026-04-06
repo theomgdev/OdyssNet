@@ -132,11 +132,11 @@ except Exception as e:
     ...
 ```
 
-### 3.2 Rename `micro_quiet_warm` comment
+### 3.2 Rename `micro_quiet_8bit` comment
 
 | Line | Current | Action |
 |------|---------|--------|
-| 74 | `# micro_quiet_warm init for new connections` | **Replace** with `# micro_quiet init for new connections` |
+| 74 | `# micro_quiet_8bit init for new connections` | **Replace** with `# micro_quiet_warm init for new connections` |
 
 ### Verification
 
@@ -155,7 +155,7 @@ git diff -U5 odyssnet/utils/neurogenesis.py
 
 ---
 
-## Phase 5 — Rename `micro_quiet_warm` init strategy
+## Phase 5 — Rename `micro_quiet_8bit` init strategy
 
 The name is misleading (implies 8-bit quantization, but it is just `Normal(0, 1e-3)`). Rename to `micro_quiet_warm`.
 
@@ -163,7 +163,7 @@ The name is misleading (implies 8-bit quantization, but it is just `Normal(0, 1e
 
 ```python
 # Before
-elif strategy == 'micro_quiet_warm':
+elif strategy == 'micro_quiet_8bit':
 # After
 elif strategy == 'micro_quiet_warm':
 ```
@@ -172,12 +172,12 @@ elif strategy == 'micro_quiet_warm':
 
 ```bash
 # Dry run — inspect matches first
-grep -rn "micro_quiet_warm" --include="*.py" --include="*.md" .
+grep -rn "micro_quiet_8bit" --include="*.py" --include="*.md" .
 
 # Apply rename (sed on git bash / WSL)
 find . -type f \( -name "*.py" -o -name "*.md" \) \
   -not -path "./.git/*" -not -path "./tmp/*" \
-  -exec sed -i 's/micro_quiet_warm/micro_quiet_warm/g' {} +
+  -exec sed -i 's/micro_quiet_8bit/micro_quiet_warm/g' {} +
 ```
 
 **Affected files (known):**
@@ -195,7 +195,7 @@ find . -type f \( -name "*.py" -o -name "*.md" \) \
 
 ```bash
 # Confirm no stale references remain
-grep -rn "micro_quiet_warm" --include="*.py" --include="*.md" .
+grep -rn "micro_quiet_8bit" --include="*.py" --include="*.md" .
 # Should return 0 results
 
 # Verify all renamed references are correct
@@ -331,7 +331,7 @@ lr = diag.get('current_lr', 0)
 
 ```python
 # Before
-# micro_quiet_warm is kept intentionally for this tiny-core stability profile.
+# micro_quiet_8bit is kept intentionally for this tiny-core stability profile.
 # After
 # micro_quiet_warm is kept intentionally for this tiny-core stability profile.
 ```
@@ -392,7 +392,7 @@ Already handled by Phase 5 sed command. Verify manually.
 - Removed `ChaosGrad` optimizer — replaced with standard `AdamW` as default.
 - Removed `bitsandbytes` dependency and all `NO_BNB` environment variable usage.
 - Removed `trigger_plateau_escape()` from trainer (was ChaosGrad-specific).
-- Renamed `micro_quiet_warm` init strategy to `micro_quiet_warm`.
+- Renamed `micro_quiet_8bit` init strategy to `micro_quiet_warm`.
 
 ### Changed
 - Default optimizer is now `torch.optim.AdamW(lr=1e-3, weight_decay=0.01)`.
@@ -411,7 +411,7 @@ Do **not** modify existing CHANGELOG entries (they are historical record).
 ```bash
 # Master grep — nothing should match except CHANGELOG.md historical entries and tmp/
 grep -rn \
-  "ChaosGrad\|chaos_optimizer\|_using_chaos_grad\|_init_chaos_grad\|classify_params\|genesis_lr\|report_loss\|trigger_plateau_escape\|NO_BNB\|VERBOSE_BNB\|bitsandbytes\|micro_quiet_warm" \
+  "ChaosGrad\|chaos_optimizer\|_using_chaos_grad\|_init_chaos_grad\|classify_params\|genesis_lr\|report_loss\|trigger_plateau_escape\|NO_BNB\|VERBOSE_BNB\|bitsandbytes\|micro_quiet_8bit" \
   --include="*.py" --include="*.md" --include="*.toml" --include="*.txt" \
   . | grep -v ".git/" | grep -v "tmp/" | grep -v "CHANGELOG.md"
 
