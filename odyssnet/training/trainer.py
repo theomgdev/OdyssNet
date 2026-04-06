@@ -54,6 +54,7 @@ class OdyssNetTrainer:
         self._last_loss = None
         self._acc_counter = 0
         self._persistent_grads = {}
+        self._core_weight = getattr(self.model, 'W', None)
 
     def _ensure_scaler(self):
         """Lazily initialize AMP scaler in a version-compatible way."""
@@ -264,9 +265,12 @@ class OdyssNetTrainer:
             # Enforce zero diagonal on chaos core weight matrix.
             # Self-connections are handled by memory_feedback, not W.
             with torch.no_grad():
-                for name, param in self.model.named_parameters():
-                    if name.endswith('.W') and param.dim() == 2 and param.shape[0] == param.shape[1]:
-                        param.fill_diagonal_(0.0)
+                core_weight = self._core_weight
+                if core_weight is None or core_weight is not getattr(self.model, 'W', None):
+                    core_weight = getattr(self.model, 'W', None)
+                    self._core_weight = core_weight
+                if isinstance(core_weight, torch.Tensor) and core_weight.dim() == 2 and core_weight.shape[0] == core_weight.shape[1]:
+                    core_weight.fill_diagonal_(0.0)
 
         # Return loss for logging
         loss_val = loss.item() * gradient_accumulation_steps
@@ -427,6 +431,7 @@ class OdyssNetTrainer:
             amount,
             verbose,
         )
+        self._core_weight = getattr(self.model, 'W', None)
         self._clear_persistent_grads()
 
     # --- Diagnostic Methods ---

@@ -9,7 +9,7 @@ Covers:
 - expand: network state tensor expanded
 - expand: input/output IDs unchanged
 - expand: a new valid optimizer is returned
-- expand: optimizer state transfer (state transfer)
+- expand: optimizer state transfer
 - expand: gate parameters expanded correctly
 - expand: multiple sequential expansions
 """
