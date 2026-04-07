@@ -37,9 +37,6 @@ def _adamw(model, lr=1e-3):
     return torch.optim.AdamW(model.parameters(), lr=lr)
 
 
-def _chaosgrad(model, lr=1e-3):
-    return torch.optim.AdamW(model.parameters(), lr=lr)
-
 
 # ===========================================================================
 # Basic Expansion
@@ -207,13 +204,13 @@ class TestOptimizerReturn:
 class TestOptimizerExpansion:
     def test_expand_with_adamw_returns_adamw(self):
         model = _model(n=4)
-        opt = _chaosgrad(model)
+        opt = _adamw(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, torch.optim.AdamW)
 
     def test_expand_with_adamw_model_can_train(self):
         model = _model(n=4)
-        opt = _chaosgrad(model)
+        opt = _adamw(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         x = torch.randn(2, 6)
         out, _ = model(x, steps=2)
@@ -354,7 +351,7 @@ class TestHebbianExpansion:
 
     def test_adamw_expand_with_hebbian(self):
         model = _model(n=4, hebb_type="global")
-        opt = _chaosgrad(model)
+        opt = _adamw(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, torch.optim.AdamW)
         x = torch.randn(2, 6)
@@ -524,7 +521,7 @@ class TestSynapseHebbExpansion:
 
     def test_adamw_expand_with_synapse(self):
         model = _model(n=4, hebb_type="synapse")
-        opt = _chaosgrad(model)
+        opt = _adamw(model)
         new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
         assert isinstance(new_opt, torch.optim.AdamW)
         x = torch.randn(2, 6)

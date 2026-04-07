@@ -443,7 +443,7 @@ If loss oscillates or training is unstable:
 
 2. **Reduce learning rate:**
    ```python
-   trainer = OdyssNetTrainer(model, lr=1e-4)  # Lower genesis LR
+   trainer = OdyssNetTrainer(model, lr=1e-4)  # Lower learning rate
    ```
 
 3. **Try different initialization** if using tiny networks:
