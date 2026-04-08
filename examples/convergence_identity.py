@@ -31,7 +31,7 @@ def main():
 
     print("Training...")
     history = TrainingHistory()
-    loss_list = trainer.fit(inputs_val, targets_val, epochs=100, batch_size=32, thinking_steps=50)
+    loss_list = trainer.fit(inputs_val, targets_val, epochs=50, batch_size=32, thinking_steps=50)
     for loss in loss_list:
         history.record(loss=loss)
 

@@ -111,10 +111,7 @@ def main():
         elapsed = time.time() - start_time
         fps = ((epoch + 1) * len(train_dataset)) / elapsed
 
-        diag = trainer.get_diagnostics()
-        lr = diag.get('current_lr', 0)
-        history.record(loss=avg_loss, accuracy=acc, lr=lr)
-
+        history.record(loss=avg_loss, accuracy=acc)
         print(f"Epoch {epoch+1}: Loss {avg_loss:.4f} | Test Acc {acc:.2f}% | FPS: {fps:.1f}")
 
     history.plot(title="MNIST Zero-Hidden Training")

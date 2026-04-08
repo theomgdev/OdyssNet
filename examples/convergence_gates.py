@@ -25,7 +25,7 @@ def main():
         device=DEVICE
     )
 
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=5e-3)
 
     # XOR Data
     data = [
@@ -48,7 +48,7 @@ def main():
 
     print("Training...")
     # 5 Thinking steps to allow chaotic resonance to find the XOR pattern
-    loss_list = trainer.fit(inputs_val, targets_val, epochs=100, batch_size=8, thinking_steps=5)
+    loss_list = trainer.fit(inputs_val, targets_val, epochs=50, batch_size=8, thinking_steps=5)
 
     history = TrainingHistory()
     for loss in loss_list:
