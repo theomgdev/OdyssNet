@@ -10,7 +10,7 @@ def generate_dilated_data(batch_size, logic_len, gap, device):
     
     Values:
     - Input: -1.0 (Bit 0), 1.0 (Bit 1), 0.0 (Silence/Gap)
-    - Target: -1.0 (No Alarm), 1.0 (Alarm)
+    - Target: -0.9 (No Alarm), 0.9 (Alarm)
     """
     # 1. Generate Raw Sequence (Logic Layer)
     # 0 or 1
@@ -22,8 +22,8 @@ def generate_dilated_data(batch_size, logic_len, gap, device):
     # 2. Create Physical Tensors (Time Layer)
     # Inputs start at 0.0 (Silence)
     inputs = torch.zeros(batch_size, total_steps, 1, device=device)
-    # Targets start at -1.0 (No Alarm)
-    targets = torch.ones(batch_size, total_steps, 1, device=device) * -1.0
+    # Targets start at -0.9 (No Alarm)
+    targets = torch.ones(batch_size, total_steps, 1, device=device) * -0.9
     
     # 3. Fill and Calculate Logic
     for i in range(batch_size):
@@ -42,7 +42,7 @@ def generate_dilated_data(batch_size, logic_len, gap, device):
             # Logic: If Current=1 AND Prev=1 -> Alarm MATCH
             # Alarm should sound from arrival until end of gap
             if bit_val == 1 and prev_bit == 1:
-                 targets[i, t_real : t_real + gap + 1, 0] = 1.0
+                 targets[i, t_real : t_real + gap + 1, 0] = 0.9
             
             prev_bit = bit_val
             
@@ -75,7 +75,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=5e-3)
     
     print(f"Logic Steps: {LOGIC_LEN} | Thinking Gap: {GAP} | Total Physical Steps: {SEQ_LEN}")
 
