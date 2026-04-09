@@ -54,7 +54,7 @@ def xor_model():
 @pytest.fixture
 def basic_trainer(tiny_model):
     """Trainer with default AdamW."""
-    return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-3)
+    return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def basic_trainer(tiny_model):
 @pytest.fixture
 def dummy_optimizer(tiny_model):
     """Plain AdamW for optimizer tests."""
-    return torch.optim.AdamW(tiny_model.parameters(), lr=1e-3)
+    return torch.optim.AdamW(tiny_model.parameters(), lr=1e-4)
 
 
 # ---------------------------------------------------------------------------

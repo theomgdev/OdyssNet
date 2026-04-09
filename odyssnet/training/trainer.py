@@ -9,7 +9,7 @@ from ..utils.data import prepare_input, to_tensor
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
-    def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-3, device='cpu',
+    def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu',
                  gradient_persistence=0.0, synaptic_noise=0.0,
                  anomaly_hook=None):
         """
@@ -20,7 +20,7 @@ class OdyssNetTrainer:
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
                 If None, AdamW is used as default.
             loss_fn (callable): Custom loss function (Optional).
-            lr (float): Learning rate for default AdamW optimizer. Default: 1e-3.
+            lr (float): Learning rate for default AdamW optimizer. Default: 1e-4.
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.

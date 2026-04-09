@@ -39,7 +39,7 @@ def _model(n=5, in_ids=None, out_ids=None):
 def _trainer(model=None, **kwargs):
     if model is None:
         model = _model()
-    defaults = dict(device="cpu", lr=1e-3)
+    defaults = dict(device="cpu", lr=1e-4)
     defaults.update(kwargs)
     return OdyssNetTrainer(model, **defaults)
 
@@ -66,7 +66,7 @@ class TestTrainerInit:
 
     def test_custom_optimizer_overrides_default(self):
         model = _model()
-        custom_opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        custom_opt = torch.optim.AdamW(model.parameters(), lr=1e-4)
         t = OdyssNetTrainer(model, optimizer=custom_opt, device="cpu")
         assert isinstance(t.optimizer, torch.optim.AdamW)
 
@@ -149,7 +149,7 @@ class TestTrainBatch:
 
     def test_synaptic_noise_applies_without_error(self):
         model = _model()
-        t = OdyssNetTrainer(model, device="cpu", lr=1e-3, synaptic_noise=0.01)
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-4, synaptic_noise=0.01)
         x = _batch()
         y = _targets()
         loss = t.train_batch(x, y, thinking_steps=2)
@@ -209,7 +209,7 @@ class TestTrainBatch:
         # convergence_adder / detective / latch / stopwatch pattern:
         # 3D (batch, seq_len, features) input with full_sequence=True.
         model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7], device="cpu")
-        t = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-4)
         x = torch.randn(4, 6, 8)      # (batch, 6 steps, 8 neurons)
         y = torch.randn(4, 6, 1)      # (batch, 6 steps, 1 output)
         loss = t.train_batch(x, y, thinking_steps=6, full_sequence=True)
@@ -221,7 +221,7 @@ class TestTrainBatch:
             num_neurons=8, input_ids=[0], output_ids=[7],
             device="cpu", pulse_mode=False,
         )
-        t = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-4)
         x = torch.randn(4, 8)          # (batch, neurons) — single scalar per sample
         y = torch.randn(4, 10, 1)      # (batch, steps, output)
         loss = t.train_batch(x, y, thinking_steps=10, full_sequence=True)
@@ -382,7 +382,7 @@ class TestAnomalyHook:
         def hook(event_type, loss_val):
             events.append(event_type)
 
-        t = OdyssNetTrainer(model, device="cpu", lr=1e-3, anomaly_hook=hook)
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-4, anomaly_hook=hook)
         x = _batch()
 
         # Step 1: train toward zero → low loss, sets _prev_step_loss
@@ -442,7 +442,7 @@ class TestDiagnostics:
 
     def test_get_diagnostics_with_gradient_persistence(self):
         model = _model()
-        t = OdyssNetTrainer(model, device="cpu", lr=1e-3, gradient_persistence=0.5)
+        t = OdyssNetTrainer(model, device="cpu", lr=1e-4, gradient_persistence=0.5)
         x = _batch()
         y = _targets()
         t.train_batch(x, y, thinking_steps=2)

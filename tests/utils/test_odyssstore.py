@@ -31,7 +31,7 @@ def _model(n=4):
 
 
 def _optimizer(model):
-    return torch.optim.AdamW(model.parameters(), lr=1e-3)
+    return torch.optim.AdamW(model.parameters(), lr=1e-4)
 
 
 # ===========================================================================
@@ -112,7 +112,7 @@ class TestSaveCheckpoint:
 
         model = _model()
         opt = _optimizer(model)
-        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-4)
 
         # Run a few steps so there is non-trivial trainer state
         x = torch.randn(4, 4)
@@ -170,7 +170,7 @@ class TestLoadCheckpoint:
 
     def test_lr_override(self, tmp_path):
         model = _model()
-        opt = _optimizer(model)  # lr=1e-3
+        opt = _optimizer(model)  # lr=1e-4
         path = str(tmp_path / "lr.pt")
         save_checkpoint(model, opt, epoch=1, loss=0.0, path=path)
 
@@ -204,7 +204,7 @@ class TestLoadCheckpoint:
 
         model = _model()
         opt = _optimizer(model)
-        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-3)
+        trainer = OdyssNetTrainer(model, device="cpu", lr=1e-4)
 
         x = torch.randn(4, 4)
         y = torch.randn(4, 1)
@@ -218,7 +218,7 @@ class TestLoadCheckpoint:
         # Restore into fresh objects
         model2 = _model()
         opt2 = _optimizer(model2)
-        trainer2 = OdyssNetTrainer(model2, device="cpu", lr=1e-3)
+        trainer2 = OdyssNetTrainer(model2, device="cpu", lr=1e-4)
         load_checkpoint(model2, opt2, path, trainer=trainer2)
 
         assert trainer2._step_count == trainer._step_count

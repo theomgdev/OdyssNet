@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cleaned up several unused imports (`torch.nn`, `Dataset`, `math`) in advanced examples.
 
 ### Changed
+- Default learning rate in `OdyssNetTrainer` changed to `1e-4` (previously `1e-3`).
 - Centralized repetitive output-extraction and autocast resolution logic in `OdyssNetTrainer` into private helper methods (`_extract_outputs`, `_get_autocast_ctx`), standardizing logic.
 - Optimized optimizer state transferring logic in `neurogenesis.expand()`, collapsing multiple loops.
 

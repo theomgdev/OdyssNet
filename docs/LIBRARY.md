@@ -203,7 +203,7 @@ The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed pr
 from odyssnet import OdyssNetTrainer
 
 # AdamW is the default — just pass lr
-trainer = OdyssNetTrainer(model, lr=1e-3, device='cuda')
+trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
 
 # With optional features
 trainer = OdyssNetTrainer(
@@ -217,11 +217,11 @@ trainer = OdyssNetTrainer(
 
 # Custom optimizer (overrides default AdamW)
 import torch
-trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3))
+trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4))
 ```
 
 **Parameters:**
-*   `lr` (float): Learning rate for default AdamW optimizer. Default: `1e-3`.
+*   `lr` (float): Learning rate for default AdamW optimizer. Default: `1e-4`.
 *   `gradient_persistence` (float): **Ghost Gradients / Persistence**.
     *   `0.0`: Standard behavior (`zero_grad()` after every step).
     *   `> 0.0` (e.g., `0.1`): Keeps a percentage of the previous step's gradient. This creates a "momentum" over time, effectively simulating a larger batch size or longer temporal context. Useful for difficult convergence landscapes.

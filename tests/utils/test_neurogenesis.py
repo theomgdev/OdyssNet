@@ -33,7 +33,7 @@ def _model(n=5, in_ids=None, out_ids=None, **kwargs):
     return OdyssNet(num_neurons=n, input_ids=in_ids, output_ids=out_ids, device="cpu", **kwargs)
 
 
-def _adamw(model, lr=1e-3):
+def _adamw(model, lr=1e-4):
     return torch.optim.AdamW(model.parameters(), lr=lr)
 
 

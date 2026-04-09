@@ -418,7 +418,7 @@ def handle_anomaly(anomaly_type, loss_val):
 patience_counter = 0
 trainer = OdyssNetTrainer(
     model,
-    lr=1e-3,
+    lr=1e-4,
     anomaly_hook=handle_anomaly
 )
 
@@ -438,7 +438,7 @@ If loss oscillates or training is unstable:
 
 1. **Enable gradient persistence** for smoother optimization:
    ```python
-   trainer = OdyssNetTrainer(model, lr=1e-3, gradient_persistence=0.1)
+   trainer = OdyssNetTrainer(model, lr=1e-4, gradient_persistence=0.1)
    ```
 
 2. **Reduce learning rate:**
