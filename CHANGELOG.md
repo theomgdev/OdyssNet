@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [2.3.1] — 2026-04-09
 
+### Added
+- Added `ODYSSNET_DISABLE_PLOT` environment variable support to `TrainingHistory.plot()` to bypass interactive plotting during automated runs.
+- Updated `examples/test_all.py` to automatically set `ODYSSNET_DISABLE_PLOT=1` before spawning sub-processes.
+
 ### Fixed
 - Fixed bug in `save_checkpoint` where `os.makedirs` crashes if a bare filename is provided (e.g. `"model.pt"`) due to an empty directory string.
 - Fixed 5/6/7-space indentations across codebase to comply with strict 4-space PEP 8 guidelines.

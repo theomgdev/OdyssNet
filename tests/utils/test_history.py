@@ -56,3 +56,16 @@ class TestTrainingHistory:
         h.record(loss=1)  # int
         h.record(loss=0.5)  # float
         assert all(isinstance(v, float) for v in h.get("loss"))
+
+    def test_plot_disabled_by_env(self, capsys):
+        h = TrainingHistory()
+        h.record(loss=0.5)
+        
+        # Mock environment variable
+        os.environ["ODYSSNET_DISABLE_PLOT"] = "1"
+        try:
+            h.plot(title="Disabled Plot")
+            captured = capsys.readouterr()
+            assert "ODYSSNET_DISABLE_PLOT is set" in captured.out
+        finally:
+            del os.environ["ODYSSNET_DISABLE_PLOT"]

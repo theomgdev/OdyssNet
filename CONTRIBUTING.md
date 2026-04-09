@@ -297,7 +297,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
     *   *Example:* `DATA_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'file.txt')`
 5.  **Checkpointing:** Always use the library's `save_checkpoint`, `load_checkpoint`, and `transplant_weights` functions from `odyssnet.utils.odyssstore`. Do NOT write custom checkpoint code. If the library is missing a feature, extend the library instead.
     *   *Example:* `from odyssnet import save_checkpoint, load_checkpoint, transplant_weights`
-6.  **Training History & Plotting:** All finite-duration examples MUST use `TrainingHistory` to record metrics (loss, accuracy, lr, etc.) and call `history.plot()` at the end. This generates a multi-panel plot of all tracked metrics over time.
+6.  **Training History & Plotting:** All finite-duration examples MUST use `TrainingHistory` to record metrics (loss, accuracy, lr, etc.) and call `history.plot()` at the end. This generates a multi-panel plot of all tracked metrics over time. (Note: When examples are run via `test_all.py`, the `ODYSSNET_DISABLE_PLOT=1` environment variable automatically bypasses the interactive plotting UI).
     *   *Example:*
     ```python
     from odyssnet import TrainingHistory

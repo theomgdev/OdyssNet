@@ -455,7 +455,7 @@ history.plot(save_path="results/training.png", title="My Experiment")
 *   `record(**kwargs)`: Record one or more named metrics for the current step. Values are converted to float.
 *   `get(key)`: Return the list of recorded values for a metric name.
 *   `metrics`: Property returning names of all recorded metrics.
-*   `plot(save_path=None, title="Training History")`: Generate a multi-subplot figure with one panel per metric. If `save_path` is given, saves to disk; otherwise shows interactively.
+*   `plot(save_path=None, title="Training History")`: Generate a multi-subplot figure with one panel per metric. If `save_path` is given, saves to disk; otherwise shows interactively. If the environment variable `ODYSSNET_DISABLE_PLOT=1` is set, plotting is skipped entirely (useful for automated testing).
 
 ---
 

@@ -51,6 +51,10 @@ class TrainingHistory:
         If ``save_path`` is provided the figure is saved to disk instead of
         being displayed interactively.
         """
+        if os.environ.get("ODYSSNET_DISABLE_PLOT") == "1":
+            print("[TrainingHistory] ODYSSNET_DISABLE_PLOT is set — skipping plot.")
+            return
+
         try:
             import matplotlib
             if save_path:

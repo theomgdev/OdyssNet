@@ -90,6 +90,7 @@ def run_script(path, line_count=None):
         # Force UTF-8 for subprocess to handle emojis (█, 🚨)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
+        env["ODYSSNET_DISABLE_PLOT"] = "1"  # Disable interactive plotting in subprocesses
         
         result = subprocess.run(
             [sys.executable, path],
