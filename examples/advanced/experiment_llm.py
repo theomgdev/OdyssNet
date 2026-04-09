@@ -650,7 +650,6 @@ def main():
                     output_transform=flatten_logits
                 )
 
-            current_lr = trainer.optimizer.param_groups[0]['lr']
 
             total_loss += loss
             steps += 1
@@ -658,7 +657,7 @@ def main():
             if batch_idx % LOG_INTERVAL == 0:
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else loss
                 ppl = np.exp(loss_val)
-                print(f"Epoch {epoch} | Batch {batch_idx} | Doc #{current_doc} | Loss {loss:.4f} | PPL {ppl:.2f} | LR {current_lr:.2e}")
+                print(f"Epoch {epoch} | Batch {batch_idx} | Doc #{current_doc} | Loss {loss:.4f} | PPL {ppl:.2f}")
                 
         avg_loss = total_loss / steps
         avg_loss_val = avg_loss.item() if isinstance(avg_loss, torch.Tensor) else avg_loss

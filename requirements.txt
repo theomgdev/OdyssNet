@@ -8,3 +8,4 @@ scikit-learn
 tqdm
 tokenizers
 tiktoken
+pytorch-lightning

@@ -28,6 +28,7 @@ dependencies = [
     "numpy",
     "matplotlib",
     "tqdm",
+    "pytorch-lightning",
 ]
 
 [project.optional-dependencies]

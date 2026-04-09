@@ -236,16 +236,15 @@ def main():
                     print(f"[Samples] Save failed at epoch {epoch+1}: {e}")
             
             # Calculate metrics
-            current_lr = trainer.optimizer.param_groups[0]['lr']
             elapsed = time.time() - start_time
             avg_time_per_epoch = elapsed / (epoch + 1)
             remaining_epochs = NUM_EPOCHS - (epoch + 1)
             eta_seconds = remaining_epochs * avg_time_per_epoch
             
-            history.record(loss=avg_loss, lr=current_lr)
+            history.record(loss=avg_loss)
 
             print(f"Epoch {epoch+1:4d}/{NUM_EPOCHS} | Loss {avg_loss:.6f} | "
-                  f"LR {current_lr:.2e} | Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
+                  f"Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
