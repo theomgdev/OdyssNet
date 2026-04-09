@@ -4,6 +4,14 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.0] — 2026-04-10
+
+### Added
+- **Prodigy optimizer** is now the default when `lr=None` (the new default). Prodigy auto-calibrates the learning rate continuously — no manual LR tuning required. Requires the `prodigyopt` package (`pip install prodigyopt`), now listed as a core dependency.
+
+### Changed
+- `OdyssNetTrainer` default `lr` changed from `1e-4` to `None`. Passing `lr=None` (default) activates Prodigy; passing an explicit float (e.g. `lr=1e-4`) still selects AdamW with `weight_decay=0.01`.
+
 ## [2.3.1] — 2026-04-09
 
 ### Added

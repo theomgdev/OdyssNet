@@ -16,6 +16,7 @@ Covers:
 - Anomaly hook callbacks
 - get_diagnostics
 - state_dict / load_state_dict round-trip
+- Prodigy optimizer (lr=None default)
 """
 
 import pytest
@@ -60,9 +61,28 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
-    def test_default_optimizer_is_adamw(self):
-        t = _trainer()
+    def test_explicit_lr_uses_adamw(self):
+        # Explicit lr → AdamW
+        t = _trainer()  # _trainer() defaults to lr=1e-4
         assert isinstance(t.optimizer, torch.optim.AdamW)
+
+    def test_default_lr_none_uses_prodigy(self):
+        # lr=None (default) → Prodigy
+        prodigyopt = pytest.importorskip("prodigyopt", reason="prodigyopt not installed")
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu")  # lr=None is the default
+        assert isinstance(t.optimizer, prodigyopt.Prodigy)
+
+    def test_prodigy_can_train(self):
+        # Verify a full train_batch step completes with the Prodigy optimizer.
+        pytest.importorskip("prodigyopt", reason="prodigyopt not installed")
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu")
+        x = _batch()
+        y = _targets()
+        loss = t.train_batch(x, y, thinking_steps=2)
+        assert isinstance(loss, float)
+        assert torch.isfinite(torch.tensor(loss))
 
     def test_custom_optimizer_overrides_default(self):
         model = _model()

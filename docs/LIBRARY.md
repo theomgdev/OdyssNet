@@ -195,33 +195,37 @@ Runs the dynamic system.
 
 ## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **AdamW** is the default optimizer.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **Prodigy** is the default optimizer (auto-calibrating, no LR tuning required). Pass an explicit `lr` to use AdamW instead.
 
 ### Initialization
 
 ```python
 from odyssnet import OdyssNetTrainer
 
-# AdamW is the default — just pass lr
+# Quick prototyping: Prodigy — auto-calibrates LR, no tuning needed
+trainer = OdyssNetTrainer(model, device='cuda')
+
+# Reproducible experiments and production: pin an explicit lr to use AdamW
 trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
 
 # With optional features
 trainer = OdyssNetTrainer(
     model,
-    lr=1e-4,
     device='cuda',
     gradient_persistence=0.0,
     synaptic_noise=0.0,
     anomaly_hook=my_hook
 )
 
-# Custom optimizer (overrides default AdamW)
+# Custom optimizer (bypasses both Prodigy and AdamW)
 import torch
 trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4))
 ```
 
 **Parameters:**
-*   `lr` (float): Learning rate for default AdamW optimizer. Default: `1e-4`.
+*   `lr` (float or None): Learning rate. Default: `None`.
+    *   `None`: **Prodigy** optimizer is used. Auto-calibrates the learning rate continuously — no manual tuning required. Requires `pip install prodigyopt`. Best for quick prototyping; produces non-deterministic loss curves across runs even with a fixed seed.
+    *   float (e.g. `1e-4`): **AdamW** optimizer is used with `weight_decay=0.01`. Recommended for reproducible experiments, benchmarking, and production runs.
 *   `gradient_persistence` (float): **Ghost Gradients / Persistence**.
     *   `0.0`: Standard behavior (`zero_grad()` after every step).
     *   `> 0.0` (e.g., `0.1`): Keeps a percentage of the previous step's gradient. This creates a "momentum" over time, effectively simulating a larger batch size or longer temporal context. Useful for difficult convergence landscapes.
@@ -465,7 +469,7 @@ history.plot(save_path="results/training.png", title="My Experiment")
 ```python
 # 2 Inputs, 1 Output. 0 Hidden Layers.
 model = OdyssNet(num_neurons=3, input_ids=[0, 1], output_ids=[2], device='cuda')
-trainer = OdyssNetTrainer(model, gradient_persistence=0.1)
+trainer = OdyssNetTrainer(model, lr=5e-3, gradient_persistence=0.1)
 
 # Training logic...
 trainer.fit(X, Y, epochs=100, thinking_steps=5)

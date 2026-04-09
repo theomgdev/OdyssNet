@@ -158,7 +158,7 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
-*   **AdamW Optimizer:** OdyssNet'in zamansal dinamiklerini ve tekrarlayan öğrenme davranışını korurken standart ve kararlı optimizasyon sağlar.
+*   **Prodigy Optimizer (varsayılan):** Öğrenme hızını sürekli olarak otomatik kalibre eder — manuel ayar gerekmez. Açık bir `lr` değeri geçildiğinde AdamW kullanılır.
 *   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda zamansal korelasyonlar $h_t \otimes h_{t-1}$ biriktirilir ve $W_\text{eff} = W + (f_h \odot C_t)$ olarak enjekte edilir — `hebb_factor` global bir skaler, nöron başına vektör veya tam sinaps başına matris olabilir. Tüm çeşitler öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
 *   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 

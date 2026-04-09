@@ -9,3 +9,4 @@ tqdm
 tokenizers
 tiktoken
 pytorch-lightning
+prodigyopt

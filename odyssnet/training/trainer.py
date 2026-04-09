@@ -9,7 +9,7 @@ from ..utils.data import prepare_input, to_tensor
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
-    def __init__(self, model, optimizer=None, loss_fn=None, lr=1e-4, device='cpu',
+    def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device='cpu',
                  gradient_persistence=0.0, synaptic_noise=0.0,
                  anomaly_hook=None):
         """
@@ -18,9 +18,13 @@ class OdyssNetTrainer:
         Args:
             model (nn.Module): The OdyssNet model to train.
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
-                If None, AdamW is used as default.
+                If None, the default optimizer is selected based on `lr`.
             loss_fn (callable): Custom loss function (Optional).
-            lr (float): Learning rate for default AdamW optimizer. Default: 1e-4.
+            lr (float or None): Learning rate. Default: None.
+                - None: Prodigy optimizer is used. It auto-calibrates the learning
+                  rate continuously and requires no manual tuning. Requires the
+                  'prodigyopt' package (`pip install prodigyopt`).
+                - float (e.g. 1e-4): AdamW optimizer is used with weight_decay=0.01.
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
@@ -42,7 +46,19 @@ class OdyssNetTrainer:
         if optimizer:
             # User explicitly provided an optimizer — use it directly.
             self.optimizer = optimizer
+        elif lr is None:
+            # Default: Prodigy — auto-calibrating optimizer, no LR tuning required.
+            try:
+                from prodigyopt import Prodigy
+            except ImportError as e:
+                raise ImportError(
+                    "The default optimizer requires the 'prodigyopt' package. "
+                    "Install it with: pip install prodigyopt\n"
+                    "Alternatively, pass an explicit lr (e.g. lr=1e-4) to use AdamW."
+                ) from e
+            self.optimizer = Prodigy(model.parameters())
         else:
+            # Explicit lr provided: use AdamW.
             self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()

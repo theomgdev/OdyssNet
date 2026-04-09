@@ -195,7 +195,10 @@ model = OdyssNet(
 # Quick experiment — global plasticity
 model = OdyssNet(..., hebb_type='global')
 
-# AdamW is the default optimizer — just set lr
+# Default: Prodigy optimizer — auto-calibrates LR, no tuning needed
+trainer = OdyssNetTrainer(model)
+
+# AdamW: pass an explicit learning rate
 trainer = OdyssNetTrainer(model, lr=3e-4)
 ```
 
@@ -203,14 +206,14 @@ trainer = OdyssNetTrainer(model, lr=3e-4)
 
 ## ⚡ Hardware Optimization
 
-### 2. TensorFloat-32 (TF32)
+### 1. TensorFloat-32 (TF32)
 Always enable TF32 on Ampere+ GPUs for free speedup.
 ```python
 import torch
 torch.set_float32_matmul_precision('high')
 ```
 
-### 3. Compilation
+### 2. Compilation
 For production or long training runs, compile the model.
 ```python
 model.compile() # Uses torch.compile (PyTorch 2.0+)
@@ -279,7 +282,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
         
         # Now all randomness is locked: model init, data shuffling, dropout, etc.
         model = OdyssNet(...)
-        trainer = OdyssNetTrainer(model)
+        trainer = OdyssNetTrainer(model, lr=1e-4)  # pin lr for deterministic curves
         trainer.fit(X, Y, epochs=100)
     ```
     *   **Applies to:** 
@@ -287,7 +290,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
         *   Data shuffling / batch sampling.
         *   Dropout and stochastic regularization.
         *   CUDA random state (for GPU consistency).
-    *   **Test:** If you run the script twice with the same seed, loss curves and final results should be **identical**, byte-for-byte.
+    *   **Test:** If you run the script twice with the same seed, loss curves and final results should be **identical**, byte-for-byte. Note: this requires passing an explicit `lr` to `OdyssNetTrainer` — the default `lr=None` (Prodigy) adapts its learning rate online and will produce different curves across runs.
 
 2.  **Visuals:** Your example should print a cool visualization. Don't just print "Loss: 0.01". Print the timeline.
     *   *Example:* `t=05 | Input: 1 | Output: 0.99 🟢`
@@ -418,7 +421,6 @@ def handle_anomaly(anomaly_type, loss_val):
 patience_counter = 0
 trainer = OdyssNetTrainer(
     model,
-    lr=1e-4,
     anomaly_hook=handle_anomaly
 )
 
@@ -438,12 +440,12 @@ If loss oscillates or training is unstable:
 
 1. **Enable gradient persistence** for smoother optimization:
    ```python
-   trainer = OdyssNetTrainer(model, lr=1e-4, gradient_persistence=0.1)
+   trainer = OdyssNetTrainer(model, gradient_persistence=0.1)
    ```
 
-2. **Reduce learning rate:**
+2. **Use AdamW with a lower explicit learning rate** (bypasses Prodigy):
    ```python
-   trainer = OdyssNetTrainer(model, lr=1e-4)  # Lower learning rate
+   trainer = OdyssNetTrainer(model, lr=1e-4)
    ```
 
 3. **Try different initialization** if using tiny networks:
@@ -535,13 +537,14 @@ When modifying the library itself (not examples), follow these additional rules:
 
 ### New/modified example scripts (`examples/`)
 1.  [ ] **Does your script call `set_seed(42)` at the START of `main()`?** (MANDATORY for reproducibility)
-2.  [ ] Did you place it in the correct folder (`examples/` for core validations, `examples/advanced/` for complex tasks)?
-3.  [ ] Are you using `OdyssNetTrainer`?
-4.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
-5.  [ ] If you set `hebb_type`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
-6.  [ ] Does it converge reliably? (If you see `Loss nan`, see **Troubleshooting** above.)
-7.  [ ] Does the terminal output clearly explain what is happening?
-8.  [ ] Does the script use `TrainingHistory` and call `history.plot()` at the end?
-9.  [ ] Are file paths relative to `__file__`, not hardcoded?
+2.  [ ] **Does `OdyssNetTrainer` receive an explicit `lr`?** (e.g. `lr=1e-4`). The default `lr=None` activates Prodigy, which adapts LR online and breaks byte-for-byte reproducibility. Examples must pin a float lr.
+3.  [ ] Did you place it in the correct folder (`examples/` for core validations, `examples/advanced/` for complex tasks)?
+4.  [ ] Are you using `OdyssNetTrainer`?
+5.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
+6.  [ ] If you set `hebb_type`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
+7.  [ ] Does it converge reliably? (If you see `Loss nan`, see **Troubleshooting** above.)
+8.  [ ] Does the terminal output clearly explain what is happening?
+9.  [ ] Does the script use `TrainingHistory` and call `history.plot()` at the end?
+10. [ ] Are file paths relative to `__file__`, not hardcoded?
 
 Welcome to the Order of the Algorithm. Let's code Time.
