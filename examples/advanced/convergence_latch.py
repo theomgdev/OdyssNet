@@ -5,10 +5,10 @@ def generate_latch_data(batch_size, seq_len, device):
     """
     Generates data for 'Catch & Hold'.
     Input: (Batch, Seq, 1). -1.0 usually, 1.0 at trigger.
-    Target: (Batch, Seq, 1). -1.0 before trigger, 1.0 after trigger.
+    Target: (Batch, Seq, 1). -0.9 before trigger, 0.9 after trigger.
     """
     inputs = torch.ones(batch_size, seq_len, 1, device=device) * -1.0
-    targets = torch.ones(batch_size, seq_len, 1, device=device) * -1.0
+    targets = torch.ones(batch_size, seq_len, 1, device=device) * -0.9
     
     for i in range(batch_size):
         # Trigger happens somewhere between step 2 and seq_len-5
@@ -17,8 +17,8 @@ def generate_latch_data(batch_size, seq_len, device):
         # Pulse input at trigger
         inputs[i, trigger, 0] = 1.0
         
-        # Target becomes 1 AFTER trigger (inclusive)
-        targets[i, trigger:, 0] = 1.0
+        # Target becomes 0.9 AFTER trigger (inclusive)
+        targets[i, trigger:, 0] = 0.9
         
     return inputs, targets
 
@@ -46,7 +46,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-3)
     
     print("Training...")
     
