@@ -2,10 +2,8 @@ import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 import os
 import time
-import warnings
 
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
@@ -14,8 +12,6 @@ SEED = 42
 NUM_EPOCHS = 100
 BATCH_SIZE = 32
 LR = 1e-2
-MIN_LR = 1e-7
-WARMUP_EPOCHS = 3
 NUM_NEURONS = 10
 GRID_SIZE = 4
 THINKING_STEPS = GRID_SIZE * GRID_SIZE  # Total patches in spiral order
@@ -57,9 +53,6 @@ def get_spiral_indices(rows: int, cols: int):
 
 
 def main():
-    # Silence internal PyTorch scheduler warnings during sequential transitions
-    warnings.filterwarnings("ignore", message=r"The epoch parameter in `scheduler\.step\(\)` was not necessary")
-
     print("OdyssNet: MNIST RECORD CHALLENGE (Spiral-Fed 4x4 Patch Model)")
     print(f"Strategy: 16 Spiral Patches (7x7=49 pixels) -> Embed(4 Neurons) -> Core({NUM_NEURONS}) -> Decoder(10 Classes)")
     set_seed(SEED)
@@ -118,20 +111,10 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=8)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True, num_workers=8)
 
-    steps_per_epoch = len(train_loader)
-
     trainer = OdyssNetTrainer(
         model,
         device=DEVICE, lr=LR,
     )
-
-    # Scheduler: Warmup + Cosine Annealing (batch-wise precise)
-    warmup_steps = WARMUP_EPOCHS * steps_per_epoch
-    total_steps = NUM_EPOCHS * steps_per_epoch
-
-    scheduler1 = LinearLR(trainer.optimizer, start_factor=MIN_LR / LR, end_factor=1.0, total_iters=warmup_steps)
-    scheduler2 = CosineAnnealingLR(trainer.optimizer, T_max=total_steps - warmup_steps, eta_min=MIN_LR)
-    scheduler = SequentialLR(trainer.optimizer, schedulers=[scheduler1, scheduler2], milestones=[warmup_steps])
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
     trainer.loss_fn = loss_fn
@@ -162,7 +145,6 @@ def main():
 
             loss = trainer.train_batch(seq_input, target, thinking_steps=THINKING_STEPS)
             total_loss += loss
-            scheduler.step()
 
         avg_loss = total_loss / len(train_loader)
 
