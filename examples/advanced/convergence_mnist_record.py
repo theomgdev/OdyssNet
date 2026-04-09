@@ -168,7 +168,6 @@ def main():
                 total += target.size(0)
 
         acc = 100.0 * correct / total
-        current_lr = trainer.optimizer.param_groups[0]['lr']
 
         # Calculate time metrics
         elapsed = time.time() - start_time
@@ -181,10 +180,10 @@ def main():
             h, m = divmod(m, 60)
             return f"{h:02d}:{m:02d}:{s:02d}"
 
-        history.record(loss=avg_loss, accuracy=acc, lr=current_lr)
+        history.record(loss=avg_loss, accuracy=acc)
 
         print(f"Epoch {epoch+1:4d}/{NUM_EPOCHS} | Loss {avg_loss:.4f} | Acc {acc:5.2f}% | "
-              f"LR {current_lr:.2e} | Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
+              f"Elapsed {format_time(elapsed)} | ETA {format_time(eta_seconds)}")
 
     history.plot(title="MNIST Record (480 Params) Training")
 
