@@ -46,7 +46,7 @@ def main():
     DELAY_2 = 8
     
     BATCH_SIZE = 1024
-    EPOCHS = 2000
+    EPOCHS = 500
     
     # Initialize Model
     model = OdyssNet(
@@ -56,7 +56,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE, lr=5e-4)
     
     print(f"Structure: Pulse A at t={DELAY_1}. Pulse B at t={DELAY_2}. Target at t={SEQ_LEN-1}.")
     
