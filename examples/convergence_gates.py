@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odyssnet"
-version = "2.3.0"
+version = "2.3.1"
 description = "Temporal Depth replaces Spatial Depth — zero-hidden-layer neural networks via trainable chaos dynamics"
 readme = "README.md"
 license = {text = "MIT"}

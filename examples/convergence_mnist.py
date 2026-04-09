@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import os
@@ -47,8 +46,6 @@ def main():
     model = model.compile()
 
     trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
-    loss_fn = nn.MSELoss()
-    trainer.loss_fn = loss_fn
 
     # NO RESIZE used. Pure 28x28.
     data_dir = os.path.join(os.path.dirname(__file__), 'data')

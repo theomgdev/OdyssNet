@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def generate_adder_data(batch_size, seq_len, delay_1, delay_2, device):

@@ -479,3 +479,80 @@ class TestStateDictRoundTrip:
         t2 = _trainer(model2)
         t2.load_state_dict(sd)
         assert t2._step_count == t._step_count
+
+
+# ===========================================================================
+# Private Helper Methods
+# ===========================================================================
+
+class TestTrainerHelpers:
+    """Exercises the private helpers that centralise previously duplicated logic."""
+
+    # --- _get_autocast_ctx ---------------------------------------------------
+
+    def test_autocast_ctx_is_usable_context_manager(self):
+        """_get_autocast_ctx must return a valid context manager on CPU."""
+        t = _trainer()
+        ctx = t._get_autocast_ctx()
+        # Must support __enter__ / __exit__ without raising.
+        with ctx:
+            x = torch.randn(2, 5)
+            _ = x @ x.T
+
+    def test_autocast_ctx_is_consistent_on_repeated_calls(self):
+        """Each call produces a fresh context manager of the same type."""
+        t = _trainer()
+        ctx1 = t._get_autocast_ctx()
+        ctx2 = t._get_autocast_ctx()
+        assert type(ctx1) is type(ctx2)
+
+    # --- _extract_outputs: continuous mode -----------------------------------
+
+    def test_extract_outputs_continuous_single_step(self):
+        """Continuous mode, full_sequence=False: slice output_ids from final_state."""
+        model = OdyssNet(num_neurons=5, input_ids=[0, 1], output_ids=[3, 4], device="cpu")
+        t = _trainer(model)
+        batch, n = 4, 5
+        final_state = torch.randn(batch, n)
+        all_states  = torch.randn(batch, 3, n)  # not used in this branch
+        out = t._extract_outputs(all_states, final_state, full_sequence=False)
+        assert out.shape == (batch, 2)
+        assert torch.equal(out, final_state[:, [3, 4]])
+
+    def test_extract_outputs_continuous_full_sequence(self):
+        """Continuous mode, full_sequence=True: slice output_ids from all_states."""
+        model = OdyssNet(num_neurons=5, input_ids=[0, 1], output_ids=[3, 4], device="cpu")
+        t = _trainer(model)
+        steps, batch, n = 3, 4, 5
+        all_states  = torch.randn(batch, steps, n)
+        final_state = torch.randn(batch, n)  # not used in this branch
+        out = t._extract_outputs(all_states, final_state, full_sequence=True)
+        assert out.shape == (batch, steps, 2)
+        assert torch.equal(out, all_states[:, :, [3, 4]])
+
+    # --- _extract_outputs: vocab mode ----------------------------------------
+
+    def test_extract_outputs_vocab_single_step(self):
+        """Vocab mode, full_sequence=False: last-timestep slice of all_states."""
+        model = OdyssNet(
+            num_neurons=4, input_ids=[0], output_ids=[3],
+            device="cpu", vocab_size=8, vocab_mode="discrete",
+        )
+        t = _trainer(model)
+        batch, steps, vocab = 3, 5, 8
+        all_states = torch.randn(batch, steps, vocab)
+        out = t._extract_outputs(all_states, None, full_sequence=False)
+        assert out.shape == (batch, vocab)
+        assert torch.equal(out, all_states[:, -1, :])
+
+    def test_extract_outputs_vocab_full_sequence(self):
+        """Vocab mode, full_sequence=True: return all_states as-is."""
+        model = OdyssNet(
+            num_neurons=4, input_ids=[0], output_ids=[3],
+            device="cpu", vocab_size=8, vocab_mode="discrete",
+        )
+        t = _trainer(model)
+        batch, steps, vocab = 2, 6, 8
+        all_states = torch.randn(batch, steps, vocab)
+        out = t._extract_outputs(all_states, None, full_sequence=True)
+        assert out is all_states

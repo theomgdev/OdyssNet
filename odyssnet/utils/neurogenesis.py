@@ -212,16 +212,13 @@ class Neurogenesis:
         group = old_opt.param_groups[0]
         optimizer_cls = type(old_opt)
 
-        def get_arg(name, default):
-            return group.get(name, default)
-
         try:
             new_opt = optimizer_cls(
                 model.parameters(),
-                lr=get_arg('lr', 0.001),
-                weight_decay=get_arg('weight_decay', 0),
-                betas=get_arg('betas', (0.9, 0.999)),
-                eps=get_arg('eps', 1e-8)
+                lr=group.get('lr', 0.001),
+                weight_decay=group.get('weight_decay', 0),
+                betas=group.get('betas', (0.9, 0.999)),
+                eps=group.get('eps', 1e-8),
             )
         except Exception as e:
             print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
@@ -229,48 +226,38 @@ class Neurogenesis:
 
         # Migrate internal optimizer state
         def transfer_state(old_p, new_p, is_matrix=False):
-            if old_p in old_opt.state:
-                old_s = old_opt.state[old_p]
-                new_s = {}
-                
-                # Copy scalar attributes (step, etc.)
-                for k, v in old_s.items():
-                    if not torch.is_tensor(v):
-                        new_s[k] = v
-                
-                # Iterate over ALL keys in state (including qmap1, absmax1, etc.)
-                for key, val in old_s.items():
-                    if not torch.is_tensor(val):
-                         # Already copied scalars above
-                         continue
-                         
-                    try:
-                        tensor = val
-                        if tensor.shape != old_p.shape:
-                            # Needs resizing
-                            new_tensor = torch.zeros(new_p.shape, dtype=tensor.dtype, device=device)
-                            
-                            if is_matrix:
-                                min_rows = min(tensor.shape[0], new_p.shape[0])
-                                min_cols = min(tensor.shape[1], new_p.shape[1])
-                                new_tensor[:min_rows, :min_cols] = tensor[:min_rows, :min_cols]
-                            else:
-                                min_len = min(tensor.shape[0], new_p.shape[0])
-                                new_tensor[:min_len] = tensor[:min_len]
-                                
-                            new_s[key] = new_tensor
-                            
+            if old_p not in old_opt.state:
+                return
+
+            old_s = old_opt.state[old_p]
+            new_s = {}
+
+            for key, val in old_s.items():
+                if not torch.is_tensor(val):
+                    # Scalar attributes (step counter, etc.) — copy as-is.
+                    new_s[key] = val
+                    continue
+
+                try:
+                    if val.shape != old_p.shape:
+                        # Tensor needs resizing to match the expanded parameter.
+                        new_tensor = torch.zeros(new_p.shape, dtype=val.dtype, device=device)
+                        if is_matrix:
+                            min_rows = min(val.shape[0], new_p.shape[0])
+                            min_cols = min(val.shape[1], new_p.shape[1])
+                            new_tensor[:min_rows, :min_cols] = val[:min_rows, :min_cols]
                         else:
-                            # Metadata tensor - direct copy
-                            new_s[key] = tensor.clone()
-                            
-                    except Exception as e:
-                        print(f"      Running into issue with key '{key}': {e}. Skipping.")
-                        pass
-                
-                # Assign gathered state to new optimizer
-                if new_s:
-                    new_opt.state[new_p] = new_s
+                            min_len = min(val.shape[0], new_p.shape[0])
+                            new_tensor[:min_len] = val[:min_len]
+                        new_s[key] = new_tensor
+                    else:
+                        # Shape-invariant metadata tensor — direct copy.
+                        new_s[key] = val.clone()
+                except Exception as e:
+                    print(f"      Skipping optimizer state key '{key}': {e}")
+
+            if new_s:
+                new_opt.state[new_p] = new_s
                 
         # Transfer state for each parameter
         try:

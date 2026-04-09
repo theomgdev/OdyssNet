@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import os
 import time
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed

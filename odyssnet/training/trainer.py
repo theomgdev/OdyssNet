@@ -6,8 +6,6 @@ import math
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
-import os
-
 from ..utils.neurogenesis import Neurogenesis
 
 class OdyssNetTrainer:
@@ -93,6 +91,35 @@ class OdyssNetTrainer:
 
     def _clear_persistent_grads(self):
         self._persistent_grads.clear()
+
+    def _get_autocast_ctx(self):
+        """Return a version-compatible AMP autocast context for the current device."""
+        device_type = 'cuda' if self.device == 'cuda' else 'cpu'
+        amp_mod = getattr(torch, 'amp', None)
+        autocast_fn = getattr(amp_mod, 'autocast', None) if amp_mod is not None else None
+        if autocast_fn is not None:
+            return autocast_fn(device_type=device_type, enabled=(self.device == 'cuda'))
+        return torch.cuda.amp.autocast(enabled=(self.device == 'cuda'))
+
+    def _extract_outputs(self, all_states, final_state, full_sequence):
+        """Extract the prediction tensor from forward-pass outputs.
+
+        Handles both vocab-projection mode (decoded logits) and continuous
+        activity mode (explicit output neuron indices).
+        """
+        if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
+            # Vocab mode: all_states already holds decoded logits.
+            if full_sequence:
+                return all_states
+            # Prediction from the last timestep only: (B, T, Vocab) -> (B, Vocab)
+            return all_states[:, -1, :]
+
+        # Continuous activity mode: slice from explicit output neuron indices.
+        output_indices = self.model.output_ids
+        if full_sequence:
+            return all_states[:, :, output_indices]
+        return final_state[:, output_indices]
+
 
     def state_dict(self):
         """Return trainer runtime state for robust checkpoint resume."""
@@ -183,15 +210,7 @@ class OdyssNetTrainer:
             mask = to_tensor(mask, self.device)
 
         # Forward Pass (with AMP)
-        device_type = 'cuda' if self.device == 'cuda' else 'cpu'
-        amp_mod = getattr(torch, 'amp', None)
-        autocast_fn = getattr(amp_mod, 'autocast', None) if amp_mod is not None else None
-        if autocast_fn is not None:
-            autocast_ctx = autocast_fn(device_type=device_type, enabled=(self.device == 'cuda'))
-        else:
-            autocast_ctx = torch.cuda.amp.autocast(enabled=(self.device == 'cuda'))
-
-        with autocast_ctx:
+        with self._get_autocast_ctx():
             # Use initial_state if provided, otherwise reset
             if initial_state is not None:
                 current_state_in = initial_state
@@ -201,23 +220,7 @@ class OdyssNetTrainer:
 
             all_states, final_state = self.model(x_input, steps=thinking_steps, current_state=current_state_in, return_sequence=full_sequence)
 
-            # Extract Outputs & Calculate Loss
-            if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                # Vocab Mode: 'all_states' is decoded output (Logits)
-                raw_output = all_states
-
-                if full_sequence:
-                    predicted_outputs = raw_output
-                else:
-                    # Prediction on last step only: (B, T, Vocab) -> (B, Vocab) at T=-1
-                    predicted_outputs = raw_output[:, -1, :]
-            else:
-                # Continuous Activity Mode: Extract from explicit output neurons
-                output_indices = self.model.output_ids
-                if full_sequence:
-                    predicted_outputs = all_states[:, :, output_indices]
-                else:
-                    predicted_outputs = final_state[:, output_indices]
+            predicted_outputs = self._extract_outputs(all_states, final_state, full_sequence)
 
             # Optional Transform
             if output_transform:
@@ -344,23 +347,7 @@ class OdyssNetTrainer:
 
             self.model.reset_state(batch_size)
             all_states, final_state = self.model(x_input, steps=thinking_steps, return_sequence=full_sequence)
-
-            if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                # Vocab Mode: 'all_states' is the decoded output (Logits)
-                raw_output = all_states
-
-                if full_sequence:
-                    return raw_output
-                else:
-                    return raw_output[:, -1, :]
-            else:
-                # Continuous Activity Mode: Feature extraction from output neurons
-                output_indices = self.model.output_ids
-
-                if full_sequence:
-                    return all_states[:, :, output_indices]
-                else:
-                    return final_state[:, output_indices]
+            return self._extract_outputs(all_states, final_state, full_sequence)
 
     def evaluate(self, input_features, target_values, thinking_steps):
         """
@@ -521,7 +508,6 @@ class OdyssNetTrainer:
         if not grad_norms:
             return None
 
-        import torch
         grad_norm_tensor = torch.tensor(grad_norms)
         grad_mean_tensor = torch.tensor(grad_means)
 

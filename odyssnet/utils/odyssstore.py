@@ -34,8 +34,8 @@ def save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, traine
     if extra_data:
         checkpoint.update(extra_data)
         
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dir_part = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dir_part, exist_ok=True)
     
     torch.save(checkpoint, path)
     return path
@@ -79,9 +79,9 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
                     if 'initial_lr' in param_group:
-                         param_group['initial_lr'] = lr
+                        param_group['initial_lr'] = lr
                 print(f"Optimizer LR overwritten to: {lr}")
-                
+
         except Exception as e:
             print(f"WARNING: Could not load optimizer state: {e}. Optimizer will start fresh.")
 

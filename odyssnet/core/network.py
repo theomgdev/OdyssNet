@@ -10,16 +10,16 @@ class OdyssNet(nn.Module):
         
         # Auto-size to unique input+output IDs
         if num_neurons == -1:
-             unique_ids = set(input_ids) | set(output_ids)
-             if len(unique_ids) > 0:
-                 max_id = max(unique_ids)
-                 num_neurons = max_id + 1
-                 
-                 difference = num_neurons - len(unique_ids)
-                 if difference > 0:
-                      print(f"OdyssNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
-             else:
-                 num_neurons = 0
+            unique_ids = set(input_ids) | set(output_ids)
+            if len(unique_ids) > 0:
+                max_id = max(unique_ids)
+                num_neurons = max_id + 1
+
+                difference = num_neurons - len(unique_ids)
+                if difference > 0:
+                    print(f"OdyssNet Auto-Sizing: Sparse IDs detected. Created {num_neurons} neurons (covering Max ID {max_id}). Unconnected neurons: {difference}")
+            else:
+                num_neurons = 0
         
         self.num_neurons = num_neurons
         self.debug = debug
@@ -521,124 +521,113 @@ class OdyssNet(nn.Module):
         for t in range(steps):
             # Prepare input for this step
             x_step_info = None
-            
+
             if x_input is not None:
                 # --- VOCAB MODE ---
                 if self.vocab_size is not None:
-                     x_step_info = None
-                     
-                     # Determine current step index in the input sequence
-                     seq_idx = t // ratio
-                     is_active_step = (t % ratio == 0) and (seq_idx < x_input.shape[1])
-                     
-                     if is_active_step:
-                         # 1. Component Extraction
-                         if x_input.ndim == 2: # (Batch, Seq) - likely indices
-                             step_in = x_input[:, seq_idx]
-                         elif x_input.ndim == 3: # (Batch, Seq, Feat) - continuous
-                             step_in = x_input[:, seq_idx]
-                         else:
-                             # Fallback for Pulse/Single
-                             step_in = x_input
-                             
-                         # 2. Projection (Embed or Linear)
-                         vector = None
-                         
-                         # Discrete (Int/Long) -> Embedding
-                         if step_in.dtype in [torch.long, torch.int64, torch.int32]:
-                             if self.embed is not None:
-                                 vector = self.embed(step_in.long()) # Ensure Long for embedding
-                             else:
-                                 # Fallback for integer inputs in continuous mode
-                                 # Cast to float and project
-                                 if self.proj is not None:
-                                     vector = self.proj(step_in.float())
-                                     
-                         # Continuous (Float) -> Projection
-                         else:
-                             if self.proj is not None:
-                                 vector = self.proj(step_in)
-                             else:
-                                 # Fallback for float inputs in discrete mode
-                                 # Attempt to cast to long for embedding lookup 
-                                 if self.embed is not None:
-                                     vector = self.embed(step_in.long())
-                         
-                         # 3. Map to Network State
-                         if vector is not None:
-                             # Apply Encoder Activation
-                             vector = self.enc_dec_act(vector)
+                    # Determine current step index in the input sequence
+                    seq_idx = t // ratio
+                    is_active_step = (t % ratio == 0) and (seq_idx < x_input.shape[1])
 
-                             # Apply Input Scaling
-                             vector = vector * self._get_input_scale(vector.dtype)
+                    if is_active_step:
+                        # 1. Component Extraction
+                        if x_input.ndim == 2:    # (Batch, Seq) — likely token indices
+                            step_in = x_input[:, seq_idx]
+                        elif x_input.ndim == 3:  # (Batch, Seq, Feat) — continuous features
+                            step_in = x_input[:, seq_idx]
+                        else:
+                            # Fallback for pulse / single-step input
+                            step_in = x_input
 
-                             # Sparse tuple payload: (Flag, Data)
-                             x_step_info = (True, vector)
-                         
-                         # Cache input for continuous (non-pulse) persistence across steps
-                         if not self.pulse_mode:
-                             self._cached_scaled_input = x_step_info
+                        # 2. Projection (Embed or Linear)
+                        vector = None
 
-                     # Handle persistence for continuous mode (non-pulse)
-                     if not self.pulse_mode:
-                          # Re-use cached input if available (for static vocab inputs)
-                          if x_step_info is None and hasattr(self, '_cached_scaled_input'):
-                               x_step_info = self._cached_scaled_input
+                        # Discrete (Int/Long) -> Embedding
+                        if step_in.dtype in [torch.long, torch.int64, torch.int32]:
+                            if self.embed is not None:
+                                vector = self.embed(step_in.long())
+                            elif self.proj is not None:
+                                # Fallback: integer input in continuous mode — cast and project
+                                vector = self.proj(step_in.float())
+
+                        # Continuous (Float) -> Linear Projection
+                        else:
+                            if self.proj is not None:
+                                vector = self.proj(step_in)
+                            elif self.embed is not None:
+                                # Fallback: float input in discrete mode — cast to long
+                                vector = self.embed(step_in.long())
+
+                        # 3. Map to Network State
+                        if vector is not None:
+                            vector = self.enc_dec_act(vector)
+                            vector = vector * self._get_input_scale(vector.dtype)
+                            # Sparse tuple payload: (Flag, Data)
+                            x_step_info = (True, vector)
+
+                        # Cache input for continuous (non-pulse) persistence across steps
+                        if not self.pulse_mode:
+                            self._cached_scaled_input = x_step_info
+
+                    # Re-use cached input for non-active steps in continuous mode
+                    if not self.pulse_mode and x_step_info is None:
+                        x_step_info = getattr(self, '_cached_scaled_input', None)
 
                 # --- LEGACY DIRECT MODE ---
                 else:
                     # Handle Index-Based Input (VRAM Efficient)
                     if x_input.dtype in [torch.long, torch.int64, torch.int32]:
-                         if x_input.ndim == 2:
-                              if t % ratio == 0 and (t // ratio) < x_input.shape[1]:
-                                   token_indices = x_input[:, t // ratio]
-                                   valid_mask = token_indices != -1
-                                   
-                                   if valid_mask.any():
-                                        token_values = token_indices[valid_mask].long()
-                                        input_dim = input_pos.numel()
+                        if x_input.ndim == 2:
+                            if t % ratio == 0 and (t // ratio) < x_input.shape[1]:
+                                token_indices = x_input[:, t // ratio]
+                                valid_mask = token_indices != -1
 
-                                        # Fast path: token values are local indices into input_ids.
-                                        in_local_range = (token_values >= 0) & (token_values < input_dim)
-                                        if in_local_range.all():
-                                            scale_indices = token_values
+                                if valid_mask.any():
+                                    token_values = token_indices[valid_mask].long()
+                                    input_dim = input_pos.numel()
+
+                                    # Fast path: token values are local indices into input_ids.
+                                    in_local_range = (token_values >= 0) & (token_values < input_dim)
+                                    if in_local_range.all():
+                                        scale_indices = token_values
+                                        valid_neurons = input_pos[scale_indices]
+                                        x_step_info = (valid_mask, valid_neurons, scale_indices)
+                                    else:
+                                        # Fallback: token values are explicit neuron IDs.
+                                        if not hasattr(self, '_input_id_to_local'):
+                                            self._input_id_to_local = {int(neuron_id): idx for idx, neuron_id in enumerate(self.input_ids)}
+
+                                        active_batch_indices = torch.nonzero(valid_mask, as_tuple=False).view(-1)
+                                        mapped_batch = []
+                                        mapped_local = []
+                                        for b_idx, neuron_id in zip(active_batch_indices.tolist(), token_values.tolist()):
+                                            local_idx = self._input_id_to_local.get(int(neuron_id))
+                                            if local_idx is not None:
+                                                mapped_batch.append(b_idx)
+                                                mapped_local.append(local_idx)
+
+                                        if mapped_local:
+                                            sparse_mask = torch.zeros_like(valid_mask)
+                                            sparse_mask[torch.tensor(mapped_batch, device=valid_mask.device)] = True
+                                            scale_indices = torch.tensor(mapped_local, dtype=torch.long, device=token_values.device)
                                             valid_neurons = input_pos[scale_indices]
-                                            x_step_info = (valid_mask, valid_neurons, scale_indices)
-                                        else:
-                                            # Fallback: token values are explicit neuron IDs.
-                                            if not hasattr(self, '_input_id_to_local'):
-                                                self._input_id_to_local = {int(neuron_id): idx for idx, neuron_id in enumerate(self.input_ids)}
+                                            x_step_info = (sparse_mask, valid_neurons, scale_indices)
 
-                                            active_batch_indices = torch.nonzero(valid_mask, as_tuple=False).view(-1)
-                                            mapped_batch = []
-                                            mapped_local = []
-                                            for b_idx, neuron_id in zip(active_batch_indices.tolist(), token_values.tolist()):
-                                                local_idx = self._input_id_to_local.get(int(neuron_id))
-                                                if local_idx is not None:
-                                                    mapped_batch.append(b_idx)
-                                                    mapped_local.append(local_idx)
-
-                                            if mapped_local:
-                                                sparse_mask = torch.zeros_like(valid_mask)
-                                                sparse_mask[torch.tensor(mapped_batch, device=valid_mask.device)] = True
-                                                scale_indices = torch.tensor(mapped_local, dtype=torch.long, device=token_values.device)
-                                                valid_neurons = input_pos[scale_indices]
-                                                x_step_info = (sparse_mask, valid_neurons, scale_indices)
-                                   
                     elif x_input.ndim == 3:
                         # Sequential Input: (Batch, MultiSteps, Neurons)
                         if t % ratio == 0 and (t // ratio) < x_input.shape[1]:
                             x_step_info = x_input[:, t // ratio, :] * input_scale_vec
-                            
+
                     elif self.pulse_mode:
                         if t == 0:
                             x_step_info = x_input * input_scale_vec
                     else:
-                        # Continuous mode
+                        # Continuous mode: cache on first step, reuse for all subsequent steps
                         if t == 0:
                             self._cached_scaled_input = x_input * input_scale_vec
                         x_step_info = self._cached_scaled_input
-            
+
+
             # Compute per-step Hebbian contributions before advancing the state.
             # cur_hebb_W and cur_hebb_mem carry gradients through hebb_lr (and hebb_ret
             # from step ≥ 1) because local_hebb_W accumulates hebb_lr * corr from the

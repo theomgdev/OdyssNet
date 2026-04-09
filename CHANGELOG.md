@@ -4,6 +4,17 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3.1] — 2026-04-09
+
+### Fixed
+- Fixed bug in `save_checkpoint` where `os.makedirs` crashes if a bare filename is provided (e.g. `"model.pt"`) due to an empty directory string.
+- Fixed 5/6/7-space indentations across codebase to comply with strict 4-space PEP 8 guidelines.
+- Cleaned up several unused imports (`torch.nn`, `Dataset`, `math`) in advanced examples.
+
+### Changed
+- Centralized repetitive output-extraction and autocast resolution logic in `OdyssNetTrainer` into private helper methods (`_extract_outputs`, `_get_autocast_ctx`), standardizing logic.
+- Optimized optimizer state transferring logic in `neurogenesis.expand()`, collapsing multiple loops.
+
 ## [2.3.0] — 2026-04-06
 
 ### Removed

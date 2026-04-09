@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def generate_dilated_data(batch_size, logic_len, gap, device):

@@ -4,7 +4,6 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import os
 import time
-import warnings
 
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 

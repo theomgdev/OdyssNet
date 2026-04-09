@@ -88,6 +88,23 @@ class TestSaveCheckpoint:
         save_checkpoint(model, opt, epoch=1, loss=0.0, path=deep_path)
         assert os.path.exists(deep_path)
 
+    def test_bare_filename_no_crash(self, tmp_path):
+        """Saving to a filename with no parent component must not raise.
+
+        Previously, os.path.dirname("model.pt") returned "" and
+        os.makedirs("") raised FileNotFoundError on Windows.
+        """
+        import os as _os
+        original_cwd = _os.getcwd()
+        try:
+            _os.chdir(tmp_path)
+            model = _model()
+            opt = _optimizer(model)
+            save_checkpoint(model, opt, epoch=1, loss=0.0, path="bare.pt")
+            assert _os.path.exists("bare.pt")
+        finally:
+            _os.chdir(original_cwd)
+
     def test_trainer_state_saved_and_restored(self, tmp_path):
         # convergence_skill_transfer.py passes trainer_state=trainer.state_dict()
         # to save_checkpoint, then load_checkpoint restores it via trainer=.

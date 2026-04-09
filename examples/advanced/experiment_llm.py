@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import numpy as np
 import os
 import time
 import random
-import math
 from typing import Any, Mapping, cast
 from tokenizers import Tokenizer
 from tokenizers.implementations import ByteLevelBPETokenizer
