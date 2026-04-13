@@ -62,7 +62,7 @@ CUSTOM_VOCAB_SIZE = 1024
 # OPTIMIZER CONFIG
 RESET_OPTIMIZER_ON_LOAD = False
 OVERWRITE_LR_OF_CKPT = True
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-5
 
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
 TIE_EMBEDDINGS = False
@@ -213,14 +213,13 @@ def generate(model, tokenizer, start_str="The", length=None, temperature=0.8, to
     encoded = tokenizer.encode(start_str)
     input_seq = encoded.ids
 
-    current_state = None
-
     # Warm up state (Native Thinking)
+    model.reset_state(batch_size=1)
     x_in = torch.tensor(input_seq, dtype=torch.long, device=model.device).unsqueeze(0)
     steps_total = x_in.shape[1] * (THINK_GAP + 1)
-    
+
     with torch.no_grad():
-        _, current_state = model(x_in, steps=steps_total)
+        model(x_in, steps=steps_total)
 
         last_token_idx = input_seq[-1]
 
@@ -230,7 +229,7 @@ def generate(model, tokenizer, start_str="The", length=None, temperature=0.8, to
 
             x_next = torch.tensor([[last_token_idx]], dtype=torch.long, device=model.device)
 
-            preds, current_state = model(x_next, steps=total_step_single, current_state=current_state)
+            preds, _ = model(x_next, steps=total_step_single)
             
             logits = preds[0, 0, :]
 
@@ -293,7 +292,8 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         vocab_size=vocab_size,
         vocab_mode='discrete',
         tie_embeddings=TIE_EMBEDDINGS,
-        debug=debug
+        debug=debug,
+        hebb_type='synapse'
     )
 
     trainer = OdyssNetTrainer(
@@ -608,34 +608,29 @@ def main():
             total_thinking_steps = seq_len * (THINK_GAP + 1)
 
             if TRUNCATED_BPTT_SEQ_LEN != -1 and TRUNCATED_BPTT_SEQ_LEN > 0:
-                current_state = None
                 batch_loss = 0
                 steps_count = 0
-                
+
                 chunk_len = TRUNCATED_BPTT_SEQ_LEN
-                
+
                 for t_start in range(0, seq_len, chunk_len):
                     t_end = min(t_start + chunk_len, seq_len)
-                    
-                    # Extract sequence chunk
+
                     x_chunk = x[:, t_start:t_end]
                     y_chunk_flat = y[:, t_start:t_end].reshape(-1)
-                    
-                    # Thinking steps for the current chunk
+
                     actual_tokens = t_end - t_start
                     chunk_thinking_steps = actual_tokens * (THINK_GAP + 1)
 
-                    loss, current_state = trainer.train_batch(
+                    loss = trainer.train_batch(
                         x_chunk,
                         y_chunk_flat,
                         thinking_steps=chunk_thinking_steps,
                         full_sequence=True,
                         output_transform=flatten_logits,
-                        initial_state=current_state,
-                        return_state=True
+                        keep_state=(t_start > 0),
                     )
 
-                    current_state = current_state.detach()
                     batch_loss += loss
                     steps_count += 1
 

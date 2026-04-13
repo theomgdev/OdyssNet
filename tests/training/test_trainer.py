@@ -175,34 +175,29 @@ class TestTrainBatch:
         loss = t.train_batch(x, y, thinking_steps=2)
         assert isinstance(loss, float)
 
-    def test_return_state_flag(self):
+    def test_state_persisted_after_train_batch(self):
         model = _model()
         t = _trainer(model)
         x = _batch()
         y = _targets()
-        result = t.train_batch(x, y, thinking_steps=2, return_state=True)
-        assert isinstance(result, tuple)
-        loss, state = result
+        loss = t.train_batch(x, y, thinking_steps=2)
         assert isinstance(loss, float)
-        assert state.shape == (4, model.num_neurons)
+        assert model.state.shape == (4, model.num_neurons)
 
-    def test_tbptt_chained_initial_state(self):
-        # experiment_llm.py: return_state=True feeds the final state back as
-        # initial_state for the next chunk (Truncated BPTT).
+    def test_tbptt_keep_state(self):
+        # keep_state=True carries model.state across chunks without reset (Truncated BPTT).
         model = _model()
         t = _trainer(model)
         x = _batch()
         y = _targets()
 
-        loss1, state1 = t.train_batch(x, y, thinking_steps=2, return_state=True)
-        state1 = state1.detach()
+        loss1 = t.train_batch(x, y, thinking_steps=2)
+        assert isinstance(loss1, float)
 
-        # Second chunk starts from where the first chunk ended
-        loss2, state2 = t.train_batch(
-            x, y, thinking_steps=2, initial_state=state1, return_state=True
-        )
+        # Second chunk continues from where the first chunk ended
+        loss2 = t.train_batch(x, y, thinking_steps=2, keep_state=True)
         assert isinstance(loss2, float)
-        assert state2.shape == (4, model.num_neurons)
+        assert model.state.shape == (4, model.num_neurons)
 
     def test_output_transform_applied(self):
         # convergence_mnist_reverse_record.py uses output_transform to slice warmup

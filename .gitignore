@@ -42,6 +42,7 @@ Thumbs.db
 # AI
 CLAUDE.md
 GEMINI.md
+.claude/
 
 # Migrations & Plans
 *[mM]igration*.md

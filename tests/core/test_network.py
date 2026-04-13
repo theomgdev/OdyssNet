@@ -254,7 +254,9 @@ class TestForward:
         model = OdyssNet(num_neurons=4, input_ids=[0], output_ids=[3], device="cpu", dropout_rate=0.5)
         model.eval()
         x = torch.randn(4, 4)
+        model.reset_state(batch_size=4)
         out1, _ = model(x, steps=3)
+        model.reset_state(batch_size=4)
         out2, _ = model(x, steps=3)
         assert torch.allclose(out1, out2), "Eval mode must produce deterministic outputs"
 

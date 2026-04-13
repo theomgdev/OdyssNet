@@ -190,7 +190,7 @@ class OdyssNetTrainer:
                     continue
                 self._persistent_grads[id(param)] = persisted.to(device=param.device, dtype=param.dtype)
 
-    def train_batch(self, input_features, target_values, thinking_steps, gradient_accumulation_steps=1, full_sequence=False, mask=None, output_transform=None, initial_state=None, return_state=False):
+    def train_batch(self, input_features, target_values, thinking_steps, gradient_accumulation_steps=1, full_sequence=False, mask=None, output_transform=None, keep_state=False):
         """
         Runs a single training step on a batch.
         """
@@ -227,16 +227,12 @@ class OdyssNetTrainer:
 
         # Forward Pass (with AMP)
         with self._get_autocast_ctx():
-            # Use initial_state if provided, otherwise reset
-            if initial_state is not None:
-                current_state_in = initial_state
-            else:
+            if not keep_state:
                 self.model.reset_state(batch_size)
-                current_state_in = None
 
-            all_states, final_state = self.model(x_input, steps=thinking_steps, current_state=current_state_in, return_sequence=full_sequence)
+            all_states, h_t = self.model(x_input, steps=thinking_steps, return_sequence=full_sequence)
 
-            predicted_outputs = self._extract_outputs(all_states, final_state, full_sequence)
+            predicted_outputs = self._extract_outputs(all_states, h_t, full_sequence)
 
             # Optional Transform
             if output_transform:
@@ -345,8 +341,6 @@ class OdyssNetTrainer:
                 else:
                     self._plateau_hook_triggered = False
 
-        if return_state:
-            return loss_val, final_state
         return loss_val
 
     def predict(self, input_features, thinking_steps, full_sequence=False):

@@ -696,9 +696,10 @@ class OdyssNet(nn.Module):
             if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:
                 outputs.append(h_t)
 
-        # Persist accumulated Hebbian state for the next forward call.
-        if self.hebb_type is not None:
-            with torch.no_grad():
+        # Persist the recurrent state and Hebbian correlations for the next forward call.
+        with torch.no_grad():
+            self.state = h_t.detach()
+            if self.hebb_type is not None:
                 self.hebb_state_W.copy_(local_hebb_W.detach())
                 self.hebb_state_mem.copy_(local_hebb_mem.detach())
 
