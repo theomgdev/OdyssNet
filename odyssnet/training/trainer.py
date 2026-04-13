@@ -194,6 +194,9 @@ class OdyssNetTrainer:
         """
         Runs a single training step on a batch.
         """
+        if not isinstance(gradient_accumulation_steps, int) or gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be an integer >= 1")
+
         self.model.train()
 
         self._ensure_scaler()
@@ -385,6 +388,13 @@ class OdyssNetTrainer:
         """
         input_features = to_tensor(input_features, self.device)
         target_values = to_tensor(target_values, self.device)
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if len(input_features) != len(target_values):
+            raise ValueError("input_features and target_values must have the same length")
+        if len(input_features) == 0:
+            raise ValueError("input_features and target_values must be non-empty")
 
         history = []
 

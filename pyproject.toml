@@ -50,6 +50,3 @@ all = [
 
 [tool.setuptools.packages.find]
 include = ["odyssnet*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
