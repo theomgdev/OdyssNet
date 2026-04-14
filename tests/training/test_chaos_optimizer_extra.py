@@ -138,6 +138,18 @@ class TestStatePersistence:
         assert torch.allclose(m.W.data.diagonal(), torch.zeros(m.num_neurons))
         assert math.isfinite(m.W.data.norm().item())
 
+    def test_get_diagnostics_respects_group_lr_override(self):
+        m   = _model()
+        opt = _opt(m, lr=1e-4)
+        _one_step_raw(opt, m)
+
+        base_diag = opt.get_diagnostics()
+        for pg in opt.param_groups:
+            pg['lr'] = 5e-5
+        new_diag = opt.get_diagnostics()
+
+        assert new_diag['avg_init_lr'] == pytest.approx(base_diag['avg_init_lr'] * 0.5, rel=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # reset_param_state

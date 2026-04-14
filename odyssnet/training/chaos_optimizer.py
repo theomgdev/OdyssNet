@@ -484,7 +484,8 @@ class ChaosGrad(torch.optim.Optimizer):
 
                 # ---- Weight decay ----
                 if per_decay > 0.0 and not is_hebbian:
-                    p.data.mul_(1.0 - genesis_lr * per_decay)
+                    decay_factor = max(0.0, 1.0 - genesis_lr * per_decay)
+                    p.data.mul_(decay_factor)
 
                 # ---- Parameter update ----
                 p.data.add_(v_hat, alpha=-(genesis_lr * per_lr / denom))
@@ -569,10 +570,11 @@ class ChaosGrad(torch.optim.Optimizer):
         genesis_lr    = self.defaults['lr']
         effective_lrs = []
         init_lrs      = []
-        for state, _ in all_states:
+        for state, group in all_states:
             if 'per_param_lr' in state and 'init_lr' in state:
+                group_genesis_lr = group.get('lr', self.defaults['lr'])
                 effective_lrs.append(state['per_param_lr'] / state['init_lr'])
-                init_lrs.append(state['init_lr'] * genesis_lr)
+                init_lrs.append(state['init_lr'] * group_genesis_lr)
 
         diag: dict = {
             'global_step':      self._global_step,
@@ -601,7 +603,9 @@ class ChaosGrad(torch.optim.Optimizer):
             g_states = [self.state[p] for p in group['params'] if self.state.get(p)]
             if not g_states:
                 continue
+            g_genesis_lr = group.get('lr', self.defaults['lr'])
             g_lrs   = [s['per_param_lr'] / s['init_lr'] for s in g_states if 'per_param_lr' in s]
+            g_init_lrs = [s['init_lr'] * g_genesis_lr for s in g_states if 'init_lr' in s]
             g_betas  = [s['per_param_beta']  for s in g_states if 'per_param_beta'  in s]
             g_alphas = [s['per_param_alpha']  for s in g_states if 'per_param_alpha' in s]
             g_decays = [s['per_param_decay']  for s in g_states if 'per_param_decay' in s]
@@ -609,6 +613,7 @@ class ChaosGrad(torch.optim.Optimizer):
                 'group_name':       gname,
                 'param_count':      len(g_states),
                 'avg_effective_lr': (sum(g_lrs)    / len(g_lrs))    if g_lrs    else 0.0,
+                'avg_init_lr':      (sum(g_init_lrs) / len(g_init_lrs)) if g_init_lrs else 0.0,
                 'avg_beta':         (sum(g_betas)   / len(g_betas))  if g_betas  else 0.0,
                 'avg_alpha':        (sum(g_alphas)  / len(g_alphas)) if g_alphas else 0.0,
                 'avg_decay':        (sum(g_decays)  / len(g_decays)) if g_decays else 0.0,
