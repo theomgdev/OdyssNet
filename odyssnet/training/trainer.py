@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import math
+import numbers
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
@@ -194,6 +195,12 @@ class OdyssNetTrainer:
         """
         Runs a single training step on a batch.
         """
+        if isinstance(gradient_accumulation_steps, bool) or not isinstance(gradient_accumulation_steps, numbers.Integral):
+            raise ValueError("gradient_accumulation_steps must be an integer >= 1")
+        gradient_accumulation_steps = int(gradient_accumulation_steps)
+        if gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be an integer >= 1")
+
         self.model.train()
 
         self._ensure_scaler()
@@ -385,6 +392,15 @@ class OdyssNetTrainer:
         """
         input_features = to_tensor(input_features, self.device)
         target_values = to_tensor(target_values, self.device)
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+            raise TypeError("batch_size must be an integer")
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if len(input_features) != len(target_values):
+            raise ValueError("input_features and target_values must have the same length")
+        if len(input_features) == 0:
+            raise ValueError("input_features and target_values must be non-empty")
 
         history = []
 

@@ -48,8 +48,9 @@ def prepare_input(input_features, model_input_ids, num_neurons, device):
             x_input = torch.zeros(batch_size, steps, num_neurons, device=device)
             
             num_assigned = min(num_features, len(model_input_ids))
-            for k in range(num_assigned):
-                x_input[:, :, model_input_ids[k]] = input_features[:, :, k]
+            if num_assigned > 0:
+                target_ids = model_input_ids[:num_assigned]
+                x_input[:, :, target_ids] = input_features[:, :, :num_assigned]
             
             return x_input, batch_size
 
@@ -61,8 +62,9 @@ def prepare_input(input_features, model_input_ids, num_neurons, device):
         num_assigned = min(num_features, len(model_input_ids))
         
         # Assign features to neurons
-        for k in range(num_assigned):
-            x_input[:, model_input_ids[k]] = input_features[:, k]
+        if num_assigned > 0:
+            target_ids = model_input_ids[:num_assigned]
+            x_input[:, target_ids] = input_features[:, :num_assigned]
             
     return x_input, batch_size
 

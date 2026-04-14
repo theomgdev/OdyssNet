@@ -242,6 +242,16 @@ class TestTrainBatch:
         loss = t.train_batch(x, y, thinking_steps=10, full_sequence=True)
         assert isinstance(loss, float)
 
+    def test_gradient_accumulation_steps_must_be_positive(self):
+        model = _model()
+        t = _trainer(model)
+        x = _batch()
+        y = _targets()
+        with pytest.raises(ValueError):
+            t.train_batch(x, y, thinking_steps=2, gradient_accumulation_steps=0)
+        with pytest.raises(ValueError):
+            t.train_batch(x, y, thinking_steps=2, gradient_accumulation_steps=-1)
+
 
 # ===========================================================================
 # predict
@@ -340,6 +350,30 @@ class TestFit:
         y = torch.zeros(n, 2)  # constant target
         history = t.fit(x, y, epochs=20, batch_size=n, thinking_steps=5, verbose=False)
         assert history[-1] < history[0], "Loss should decrease over training"
+
+    def test_fit_empty_dataset_raises(self):
+        model = _model()
+        t = _trainer(model)
+        x = torch.empty(0, 5)
+        y = torch.empty(0, 2)
+        with pytest.raises(ValueError):
+            t.fit(x, y, epochs=1, batch_size=4, thinking_steps=2, verbose=False)
+
+    def test_fit_length_mismatch_raises(self):
+        model = _model()
+        t = _trainer(model)
+        x = torch.randn(3, 5)
+        y = torch.randn(2, 2)
+        with pytest.raises(ValueError):
+            t.fit(x, y, epochs=1, batch_size=2, thinking_steps=2, verbose=False)
+
+    def test_fit_invalid_batch_size_raises(self):
+        model = _model()
+        t = _trainer(model)
+        x = torch.randn(4, 5)
+        y = torch.randn(4, 2)
+        with pytest.raises(ValueError):
+            t.fit(x, y, epochs=1, batch_size=0, thinking_steps=2, verbose=False)
 
 
 # ===========================================================================
