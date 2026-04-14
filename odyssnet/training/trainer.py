@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import math
+import numbers
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
@@ -194,7 +195,10 @@ class OdyssNetTrainer:
         """
         Runs a single training step on a batch.
         """
-        if not isinstance(gradient_accumulation_steps, int) or gradient_accumulation_steps < 1:
+        if isinstance(gradient_accumulation_steps, bool) or not isinstance(gradient_accumulation_steps, numbers.Integral):
+            raise ValueError("gradient_accumulation_steps must be an integer >= 1")
+        gradient_accumulation_steps = int(gradient_accumulation_steps)
+        if gradient_accumulation_steps < 1:
             raise ValueError("gradient_accumulation_steps must be an integer >= 1")
 
         self.model.train()
