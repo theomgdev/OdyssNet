@@ -9,7 +9,7 @@ optimizer when you want autonomous per-parameter meta-adaptation:
     from odyssnet.training.chaos_optimizer import ChaosGrad
 
     model   = OdyssNet(num_neurons=32, input_ids=[0], output_ids=[31])
-    opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+    opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-4)
     trainer = OdyssNetTrainer(model, optimizer=opt)
 
 Algorithm (v3 improvements over the removed v2.2):
@@ -38,14 +38,14 @@ class ChaosGrad(torch.optim.Optimizer):
       - per_param_alpha : gradient-centralization gate
 
     The single user-facing parameter ``lr`` (genesis learning rate,
-    default 1e-3) is a mathematical starting point, not a dial to tune.
+    default 1e-4) is a mathematical starting point, not a dial to tune.
 
     Args:
         params: Iterable of parameters **or** a list of classified param-group
                 dicts returned by :meth:`classify_params`. Providing classified
                 groups enables group-specific decay seeding, per-group beta
                 equilibria, and the Hebbian bypass rule.
-        lr (float): Genesis learning rate. Default: ``1e-3``.
+        lr (float): Genesis learning rate. Default: ``1e-4``.
     """
 
     # ------------------------------------------------------------------ #
@@ -133,7 +133,7 @@ class ChaosGrad(torch.optim.Optimizer):
     # Construction                                                         #
     # ------------------------------------------------------------------ #
 
-    def __init__(self, params, lr: float = 1e-3) -> None:
+    def __init__(self, params, lr: float = 1e-4) -> None:
         if lr <= 0:
             raise ValueError(f"Genesis learning rate must be > 0, got {lr}")
         defaults = dict(

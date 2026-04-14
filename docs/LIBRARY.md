@@ -223,7 +223,7 @@ trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(),
 
 # ChaosGrad — zero-hyperparameter optimizer (optional, see ChaosGrad section below)
 from odyssnet import ChaosGrad
-opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-4)
 trainer = OdyssNetTrainer(model, optimizer=opt)
 ```
 
@@ -512,7 +512,7 @@ from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGrad
 model   = OdyssNet(num_neurons=32, input_ids=[0], output_ids=[31], device='cuda')
 
 # Classify parameters for group-specific meta-adaptation
-opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-4)
 trainer = OdyssNetTrainer(model, optimizer=opt, device='cuda')
 
 for epoch in range(100):

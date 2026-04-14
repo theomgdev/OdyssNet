@@ -203,7 +203,7 @@ trainer = OdyssNetTrainer(model, lr=3e-4)
 
 # ChaosGrad: optional zero-hyperparameter optimizer (pass as custom optimizer)
 from odyssnet import ChaosGrad
-opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-4)
 trainer = OdyssNetTrainer(model, optimizer=opt)
 ```
 

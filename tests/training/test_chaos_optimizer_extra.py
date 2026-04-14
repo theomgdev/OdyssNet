@@ -29,7 +29,7 @@ def _model(n=8, **kwargs):
                     device='cpu', **kwargs)
 
 
-def _opt(model, lr=1e-3):
+def _opt(model, lr=1e-4):
     return ChaosGrad(ChaosGrad.classify_params(model), lr=lr)
 
 
@@ -126,11 +126,11 @@ class TestStatePersistence:
         from group, so the new value must take effect on the next step.
         """
         m   = _model()
-        opt = _opt(m, lr=1e-3)
+        opt = _opt(m, lr=1e-4)
         _one_step_raw(opt, m)
 
         for pg in opt.param_groups:
-            pg['lr'] = 5e-4
+            pg['lr'] = 5e-5
 
         W_before = m.W.data.clone()
         _one_step_raw(opt, m)
@@ -279,7 +279,7 @@ class TestCrossFeatureInteractions:
     def test_plain_params_no_crash(self):
         """ChaosGrad with plain model.parameters() (no classify_params) must train."""
         m   = _model()
-        opt = ChaosGrad(m.parameters(), lr=1e-3)
+        opt = ChaosGrad(m.parameters(), lr=1e-4)
         t   = OdyssNetTrainer(m, optimizer=opt)
         loss = _step(t, n=3)
         assert math.isfinite(loss)
@@ -287,7 +287,7 @@ class TestCrossFeatureInteractions:
     def test_plain_params_hebbian_no_bypass(self):
         """Without classify_params, hebb params get lightweight treatment (no crash)."""
         m   = _model(hebb_type='global')
-        opt = ChaosGrad(m.parameters(), lr=1e-3)
+        opt = ChaosGrad(m.parameters(), lr=1e-4)
         t   = OdyssNetTrainer(m, optimizer=opt)
         loss = _step(t, n=5)
         assert math.isfinite(loss)

@@ -42,7 +42,7 @@ def _model(n=8, in_ids=None, out_ids=None, **kwargs):
                     device="cpu", **kwargs)
 
 
-def _opt(model, lr=1e-3):
+def _opt(model, lr=1e-4):
     return ChaosGrad(ChaosGrad.classify_params(model), lr=lr)
 
 
@@ -148,7 +148,7 @@ class TestClassification:
 
     def test_plain_params_accepted(self):
         m   = _model()
-        opt = ChaosGrad(m.parameters(), lr=1e-3)
+        opt = ChaosGrad(m.parameters(), lr=1e-4)
         assert opt is not None
 
 
@@ -183,7 +183,7 @@ class TestOptimizerStep:
 
     def test_sparse_gradient_raises(self):
         embed = torch.nn.Embedding(10, 4, sparse=True)
-        opt   = ChaosGrad(embed.parameters(), lr=1e-3)
+        opt   = ChaosGrad(embed.parameters(), lr=1e-4)
         idx   = torch.tensor([0, 2])
         out   = embed(idx).sum()
         out.backward()
