@@ -200,7 +200,17 @@ trainer = OdyssNetTrainer(model)
 
 # AdamW: pass an explicit learning rate
 trainer = OdyssNetTrainer(model, lr=3e-4)
+
+# ChaosGrad: optional zero-hyperparameter optimizer (pass as custom optimizer)
+from odyssnet import ChaosGrad
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+trainer = OdyssNetTrainer(model, optimizer=opt)
 ```
+
+> **Optimizer selection guide:**
+> - **Prodigy** (`lr=None`, default) — best for quick experiments; non-deterministic curves.
+> - **AdamW** (explicit `lr`) — reproducible runs, benchmarks, production.
+> - **ChaosGrad** (pass as `optimizer=`) — research into self-tuning dynamics; ideal when `hebb_type` is enabled (Hebbian parameters are unconditionally protected from weight decay and burst noise).
 
 ---
 

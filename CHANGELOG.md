@@ -4,6 +4,20 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.0] — 2026-04-14
+
+### Added
+- **ChaosGrad v3** (`odyssnet/training/chaos_optimizer.py`): Zero-hyperparameter optimizer re-introduced as a fully optional, drop-in custom optimizer. Pass it via `OdyssNetTrainer(model, optimizer=ChaosGrad(...))`. Default optimizer selection (Prodigy / AdamW) is unchanged.
+  - **Second-moment adaptive normalisation** (`v2` EMA + bias correction + `denom`) — closes the AdamW performance gap by continuously re-calibrating gradient scale.
+  - **Bias-corrected momentum** (`v_hat = v / (1 - β^t)`) — eliminates cold-start understepping.
+  - **Grad EMA signal reference** — replaces single-step `prev_grad` with a slow EMA (`α = 0.6`) for more stable hypergradient signals in recurrent regimes.
+  - **Group-aware frustration bursts** — Hebbian logits (`hebb_factor`, `hebb_decay`) are unconditionally excluded from burst noise. `chaos_core`/`memory`/`projections` receive full bursts; all other groups receive half-scale noise with no meta-reset.
+  - **9-group parameter classification** (`classify_params`) — `bias`, `norm`, and `scales` promoted from `lightweight` into dedicated groups with appropriate beta equilibria (0.95 for `chaos_core`/`memory`, 0.85 for `gates`).
+- `OdyssNetTrainer.trigger_plateau_escape()` re-introduced (no-op when non-ChaosGrad optimizer is active).
+- `OdyssNetTrainer.get_diagnostics()` automatically includes `'optimizer'` key with ChaosGrad diagnostics when ChaosGrad is detected.
+- `ChaosGrad` exported from `odyssnet` public API.
+- Neurogenesis (`trainer.expand()`) handles ChaosGrad migration natively: classified param groups are rebuilt for the grown model and global frustration state is preserved.
+
 ## [2.4.0] — 2026-04-10
 
 ### Added

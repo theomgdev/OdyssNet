@@ -195,7 +195,7 @@ Runs the dynamic system.
 
 ## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **Prodigy** is the default optimizer (auto-calibrating, no LR tuning required). Pass an explicit `lr` to use AdamW instead.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **Prodigy** is the default optimizer (auto-calibrating, no LR tuning required). Pass an explicit `lr` to use AdamW instead, or supply any custom optimizer — including **ChaosGrad**.
 
 ### Initialization
 
@@ -220,6 +220,11 @@ trainer = OdyssNetTrainer(
 # Custom optimizer (bypasses both Prodigy and AdamW)
 import torch
 trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4))
+
+# ChaosGrad — zero-hyperparameter optimizer (optional, see ChaosGrad section below)
+from odyssnet import ChaosGrad
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+trainer = OdyssNetTrainer(model, optimizer=opt)
 ```
 
 **Parameters:**
@@ -481,3 +486,120 @@ trainer.fit(X, Y, epochs=100, thinking_steps=5)
 model = OdyssNet(num_neurons=10, input_ids=range(10), output_ids=range(10), vocab_size=[784, 10])
 # Model handles projection and decoding automatically.
 ```
+
+---
+
+## ChaosGrad Optimizer (`odyssnet.training.chaos_optimizer`)
+
+ChaosGrad is a **fully optional**, zero-hyperparameter optimizer designed specifically for OdyssNet. Pass it as a custom optimizer to bypass the default Prodigy / AdamW selection.
+
+The trainer's default behavior is **unchanged** — Prodigy when `lr=None`, AdamW when `lr=float`.
+
+### When to use ChaosGrad
+
+| Situation | Recommendation |
+|-----------|----------------|
+| Quick prototyping, first run | Prodigy (default) |
+| Reproducible benchmarks | AdamW with explicit `lr` |
+| Research into self-tuning dynamics, OdyssNet-specific regularisation | **ChaosGrad** |
+| Hebbian plasticity enabled (`hebb_type != None`) | ChaosGrad handles hebb params specially |
+
+### Usage
+
+```python
+from odyssnet import OdyssNet, OdyssNetTrainer, ChaosGrad
+
+model   = OdyssNet(num_neurons=32, input_ids=[0], output_ids=[31], device='cuda')
+
+# Classify parameters for group-specific meta-adaptation
+opt     = ChaosGrad(ChaosGrad.classify_params(model), lr=1e-3)
+trainer = OdyssNetTrainer(model, optimizer=opt, device='cuda')
+
+for epoch in range(100):
+    loss = trainer.train_batch(x, y, thinking_steps=10)
+    # No LR schedule needed — ChaosGrad adapts autonomously
+
+# Optional: manual plateau escape
+trainer.trigger_plateau_escape()
+
+# Diagnostics
+diag = trainer.get_diagnostics(debug=True)
+opt_diag = diag['optimizer']
+print(f"Frustration:    {opt_diag['frustration']:.3f}")
+print(f"Avg eff. LR:    {opt_diag['avg_effective_lr']:.4f}")
+```
+
+You can also pass plain `model.parameters()` without classification — every parameter will use the `lightweight` group defaults.
+
+### Parameter Classification
+
+`ChaosGrad.classify_params(model)` divides OdyssNet parameters into 9 semantic groups:
+
+| Group | Detection | Init Decay | Beta Equil | Burst |
+|-------|-----------|-----------|------------|-------|
+| `chaos_core` | `W` | 0.01 | 0.95 | Full |
+| `memory` | `memory_feedback` | 0.0 | 0.95 | Full |
+| `projections` | `embed`/`proj`/`output_decoder` | 0.01 | 0.90 | Full |
+| `gates` | `input_gate`, `output_gate`, `core_gate`, `memory_gate` | 0.0 | 0.85 | Half |
+| `hebbian` | `hebb_factor`, `hebb_decay` | 0.0 | 0.90 | **None** |
+| `norm` | `norm.*` | 0.0 | 0.90 | Half |
+| `bias` | `B` | 0.0 | 0.90 | Half |
+| `scales` | `input_scale`, `output_scale` | 0.0 | 0.90 | Half |
+| `lightweight` | everything else | 0.0 | 0.90 | Half |
+
+**Hebbian Bypass Rule:** `hebb_factor` and `hebb_decay` **never** receive weight decay regardless of any hypergradient signal. Frustration bursts also skip these parameters entirely.
+
+### Public API
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `classify_params` | `@staticmethod classify_params(model)` | Returns list of classified param-group dicts |
+| `step` | `step(closure=None)` | One autonomous optimization step |
+| `report_loss` | `report_loss(loss_value)` | Feed loss to the Frustration Accumulator (trainer does this automatically) |
+| `trigger_plateau_escape` | `trigger_plateau_escape()` | Force a frustration burst on the next step |
+| `get_diagnostics` | `get_diagnostics(debug=False)` | Optimizer health metrics |
+
+### Frustration Accumulator
+
+ChaosGrad tracks loss stagnation internally. When `frustration > 0.75` (or `trigger_plateau_escape()` is called), it injects noise into the momentum buffers and resets meta-parameters toward their calibrated defaults — providing an automatic escape from plateaus without user intervention.
+
+The `OdyssNetTrainer` automatically calls `report_loss()` after every optimizer step when ChaosGrad is detected.
+
+### Neurogenesis Compatibility
+
+`trainer.expand(amount=N)` works transparently with ChaosGrad. The optimizer state (momentum, meta-parameters, second moments) is migrated to the grown network — old neurons preserve their learned adaptation, new neurons start from cold-start calibration. The global frustration state (`_frustration`, `_best_loss`, `_global_step`) is also preserved across the expansion.
+
+### Checkpoint Save / Load
+
+ChaosGrad's global state (`frustration`, `best_loss`, `global_step`) is included in `optimizer.state_dict()` under the key `'chaos_global'` and is restored by `optimizer.load_state_dict()`. This means `save_checkpoint` / `load_checkpoint` round-trips preserve the full optimizer state including frustration dynamics:
+
+```python
+from odyssnet import save_checkpoint, load_checkpoint
+
+save_checkpoint(model, trainer, path="run.pt")
+epoch, loss = load_checkpoint(model, trainer, path="run.pt")
+# trainer.optimizer._frustration is restored
+```
+
+If you override the genesis learning rate at load time, ChaosGrad reads it from the param group (not from `defaults`), so the override takes effect on the next step:
+
+```python
+epoch, loss = load_checkpoint(model, trainer, path="run.pt", lr=5e-4)
+# ChaosGrad now uses genesis_lr=5e-4 for weight decay and update scaling
+```
+
+### Interactions with Other Features
+
+| Feature | Interaction | Notes |
+|---------|-------------|-------|
+| **Synaptic noise** (`synaptic_noise > 0`) | Noise is added to weights *before* the forward pass. ChaosGrad's `sig_wd = cos(g, W)` therefore measures alignment against the *noisy* weight. | Intentional — noisy W is what gradient was computed against. |
+| **Gradient clipping** (applied inside trainer) | All three hypergradient signals are computed on clipped gradients. `grad_ema` also tracks clipped gradients. | Clipping reduces signal magnitude but doesn't break adaptation. |
+| **Gradient persistence** | Persisted gradients from the previous step are injected *before* the ChaosGrad step. `sig_lr` therefore measures consistency of the *combined* (current + persisted) gradient vs `grad_ema`. | No issue; effectively a soft gradient accumulation. |
+| **Gradient accumulation** | `report_loss` is called once per optimizer step (not per micro-batch), with the un-normalized loss value. `global_step` tracks optimizer steps. | Correct — frustration reflects true convergence, not accumulation count. |
+| **Gradient checkpointing** | Recomputes activations during backward. Gradient values reaching ChaosGrad are identical whether or not checkpointing is active. | Fully compatible. |
+| **AMP (mixed precision)** | ChaosGrad receives gradients after `scaler.unscale_()` — in float32 scale. ChaosGrad internally casts gradients to float32 (`g_f = grad.float()`). | Fully compatible. |
+| **`regenerate_synapses()`** | When weak entries of `W` are re-initialised, the trainer automatically clears ChaosGrad's per-parameter state for `W`. Cold-start recalibration happens on the next step, re-computing `init_lr` from the new gradient scale. | If `revived == 0` (no weights regenerated), state is preserved. |
+| **`transplant_weights()`** | Weight transplantation does *not* transfer optimizer state (by design — cold restart after transplant). ChaosGrad cold-starts on all parameters after loading transplanted weights. | Same behaviour as AdamW / Prodigy after transplant. |
+| **Neurogenesis (`trainer.expand()`)** | Per-parameter tensors (`momentum`, `grad_ema`) are zero-padded to the new size. Scalar state (`init_lr`, `per_param_lr`, etc.) is copied unchanged. New neurons start from cold-start calibration. Global frustration is preserved. | Fully compatible. |
+| **`classify_params` (skipped)** | If you pass `model.parameters()` directly instead of `classify_params(model)`, all parameters — including Hebbian logits — are treated as `lightweight`. The Hebbian bypass rule (no decay, no burst) does NOT apply. Always use `classify_params` on models with `hebb_type != None`. | Documented limitation; no crash. |
+| **Anomaly hook** | ChaosGrad has its own internal plateau escape (frustration burst). The trainer's anomaly hook fires independently based on loss statistics. The two mechanisms don't interfere. | Use both together if needed. |

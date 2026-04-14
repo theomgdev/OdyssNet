@@ -6,8 +6,8 @@ import math
 import numbers
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
-
 from ..utils.neurogenesis import Neurogenesis
+from .chaos_optimizer import ChaosGrad
 
 class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device='cpu',
@@ -47,6 +47,7 @@ class OdyssNetTrainer:
         if optimizer:
             # User explicitly provided an optimizer — use it directly.
             self.optimizer = optimizer
+            self._using_chaos_grad = isinstance(optimizer, ChaosGrad)
         elif lr is None:
             # Default: Prodigy — auto-calibrating optimizer, no LR tuning required.
             try:
@@ -55,12 +56,15 @@ class OdyssNetTrainer:
                 raise ImportError(
                     "The default optimizer requires the 'prodigyopt' package. "
                     "Install it with: pip install prodigyopt\n"
-                    "Alternatively, pass an explicit lr (e.g. lr=1e-4) to use AdamW."
+                    "Alternatively, pass an explicit lr (e.g. lr=1e-4) to use AdamW, "
+                    "or pass optimizer=ChaosGrad(ChaosGrad.classify_params(model)) to use ChaosGrad."
                 ) from e
             self.optimizer = Prodigy(model.parameters())
+            self._using_chaos_grad = False
         else:
             # Explicit lr provided: use AdamW.
             self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+            self._using_chaos_grad = False
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()
 
@@ -284,6 +288,10 @@ class OdyssNetTrainer:
             self._acc_counter = 0
             self._step_count += 1
 
+            # ChaosGrad: report loss for frustration tracking
+            if self._using_chaos_grad:
+                self.optimizer.report_loss(loss.item() * gradient_accumulation_steps)
+
             # Enforce zero diagonal on chaos core weight matrix.
             # Self-connections are handled by memory_feedback, not W.
             with torch.no_grad():
@@ -382,8 +390,18 @@ class OdyssNetTrainer:
         """
         Triggers synaptic regeneration (Darwinian Revive) on weak connections.
         Re-initializes weights below threshold (or bottom percentage) instead of pruning them.
+
+        When ChaosGrad is the active optimizer, the per-parameter state for
+        ``W`` is automatically cleared after regeneration so that stale
+        momentum accumulated on the old weak connections does not push the
+        freshly re-initialised weights in the wrong direction. ChaosGrad will
+        cold-start recalibrate ``W`` on the next step.
         """
         revived, total = self.model.regenerate_weak_weights(threshold, percentage)
+        if self._using_chaos_grad and revived > 0:
+            w_param = getattr(self.model, 'W', None)
+            if w_param is not None:
+                self.optimizer.reset_param_state(w_param)
         return revived, total
 
     def fit(self, input_features, target_values, epochs, batch_size=32, thinking_steps=10, verbose=True):
@@ -434,6 +452,15 @@ class OdyssNetTrainer:
 
         return history
 
+    def trigger_plateau_escape(self) -> None:
+        """
+        Manually trigger a ChaosGrad frustration burst on the next optimizer step.
+
+        Has no effect when a non-ChaosGrad optimizer is in use.
+        """
+        if self._using_chaos_grad:
+            self.optimizer.trigger_plateau_escape()
+
     def expand(self, amount=1, verbose=True):
         """
         Dynamically adds neurons to the model (Neurogenesis).
@@ -475,6 +502,10 @@ class OdyssNetTrainer:
             'current_lr': self.optimizer.param_groups[0]['lr'] if getattr(self, 'optimizer', None) and getattr(self.optimizer, 'param_groups', None) else 0,
             'gradient_persistence': self.gradient_persistence,
         }
+
+        # ChaosGrad-specific diagnostics (always included when active)
+        if self._using_chaos_grad:
+            diag['optimizer'] = self.optimizer.get_diagnostics(debug=debug)
 
         if debug:
             # Persistent gradients info

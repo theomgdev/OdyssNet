@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from ..training.chaos_optimizer import ChaosGrad
 
 class Neurogenesis:
     """
@@ -212,17 +213,27 @@ class Neurogenesis:
         group = old_opt.param_groups[0]
         optimizer_cls = type(old_opt)
 
-        try:
-            new_opt = optimizer_cls(
-                model.parameters(),
-                lr=group.get('lr', 0.001),
-                weight_decay=group.get('weight_decay', 0),
-                betas=group.get('betas', (0.9, 0.999)),
-                eps=group.get('eps', 1e-8),
-            )
-        except Exception as e:
-            print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
-            new_opt = torch.optim.AdamW(model.parameters(), lr=group.get('lr', 0.001))
+        if isinstance(old_opt, ChaosGrad):
+            # ChaosGrad carries genesis_lr in defaults; re-classify params for the grown model.
+            genesis_lr = old_opt.defaults.get('lr', 1e-3)
+            param_groups = ChaosGrad.classify_params(model)
+            new_opt = ChaosGrad(param_groups, lr=genesis_lr)
+            # Carry over global frustration state so burst dynamics persist.
+            new_opt._global_step = old_opt._global_step
+            new_opt._frustration = old_opt._frustration
+            new_opt._best_loss   = old_opt._best_loss
+        else:
+            try:
+                new_opt = optimizer_cls(
+                    model.parameters(),
+                    lr=group.get('lr', 0.001),
+                    weight_decay=group.get('weight_decay', 0),
+                    betas=group.get('betas', (0.9, 0.999)),
+                    eps=group.get('eps', 1e-8),
+                )
+            except Exception as e:
+                print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
+                new_opt = torch.optim.AdamW(model.parameters(), lr=group.get('lr', 0.001))
 
         # Migrate internal optimizer state
         def transfer_state(old_p, new_p, is_matrix=False):
@@ -234,24 +245,30 @@ class Neurogenesis:
 
             for key, val in old_s.items():
                 if not torch.is_tensor(val):
-                    # Scalar attributes (step counter, etc.) — copy as-is.
+                    # Scalar attributes (step counter, meta-params, etc.) — copy as-is.
                     new_s[key] = val
                     continue
 
                 try:
-                    if val.shape != old_p.shape:
-                        # Tensor needs resizing to match the expanded parameter.
+                    if val.shape != new_p.shape:
+                        # Tensor shape doesn't match the expanded parameter — resize with
+                        # zero-padding.  This correctly handles both "old param size" tensors
+                        # (momentum, exp_avg, grad_ema …) and any other shape mismatch.
                         new_tensor = torch.zeros(new_p.shape, dtype=val.dtype, device=device)
                         if is_matrix:
                             min_rows = min(val.shape[0], new_p.shape[0])
                             min_cols = min(val.shape[1], new_p.shape[1])
                             new_tensor[:min_rows, :min_cols] = val[:min_rows, :min_cols]
-                        else:
+                        elif val.dim() == 1:
                             min_len = min(val.shape[0], new_p.shape[0])
                             new_tensor[:min_len] = val[:min_len]
+                        else:
+                            # Fallback: copy whatever overlaps
+                            slices = tuple(slice(0, min(s, n)) for s, n in zip(val.shape, new_p.shape))
+                            new_tensor[slices] = val[slices]
                         new_s[key] = new_tensor
                     else:
-                        # Shape-invariant metadata tensor — direct copy.
+                        # Shape already matches the new parameter — direct copy.
                         new_s[key] = val.clone()
                 except Exception as e:
                     print(f"      Skipping optimizer state key '{key}': {e}")
