@@ -484,7 +484,7 @@ class ChaosGrad(torch.optim.Optimizer):
 
                 # ---- Weight decay ----
                 if per_decay > 0.0 and not is_hebbian:
-                    decay_factor = max(0.0, 1.0 - genesis_lr * per_decay)
+                    decay_factor = max(self._EPS, 1.0 - genesis_lr * per_decay)
                     p.data.mul_(decay_factor)
 
                 # ---- Parameter update ----

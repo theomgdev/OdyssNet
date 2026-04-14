@@ -144,11 +144,24 @@ class TestStatePersistence:
         _one_step_raw(opt, m)
 
         base_diag = opt.get_diagnostics()
+        base_debug_diag = opt.get_diagnostics(debug=True)
         for pg in opt.param_groups:
             pg['lr'] = 5e-5
         new_diag = opt.get_diagnostics()
+        new_debug_diag = opt.get_diagnostics(debug=True)
 
         assert new_diag['avg_init_lr'] == pytest.approx(base_diag['avg_init_lr'] * 0.5, rel=1e-6)
+
+        base_group_init = {
+            g['group_name']: g['avg_init_lr']
+            for g in base_debug_diag['param_groups']
+        }
+        new_group_init = {
+            g['group_name']: g['avg_init_lr']
+            for g in new_debug_diag['param_groups']
+        }
+        for gname, base_avg in base_group_init.items():
+            assert new_group_init[gname] == pytest.approx(base_avg * 0.5, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
