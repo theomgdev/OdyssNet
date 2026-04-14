@@ -62,7 +62,7 @@ CUSTOM_VOCAB_SIZE = 1024
 # OPTIMIZER CONFIG
 RESET_OPTIMIZER_ON_LOAD = False
 OVERWRITE_LR_OF_CKPT = True
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 1e-4
 
 # TIE EMBEDDINGS (VRAM Saving & Parameter Sharing)
 TIE_EMBEDDINGS = False
@@ -292,8 +292,7 @@ def initialize_system(vocab_size, num_neurons, device, input_count=-1, output_co
         vocab_size=vocab_size,
         vocab_mode='discrete',
         tie_embeddings=TIE_EMBEDDINGS,
-        debug=debug,
-        hebb_type='synapse'
+        debug=debug
     )
 
     trainer = OdyssNetTrainer(
