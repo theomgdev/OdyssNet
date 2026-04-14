@@ -393,6 +393,8 @@ class OdyssNetTrainer:
         input_features = to_tensor(input_features, self.device)
         target_values = to_tensor(target_values, self.device)
 
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+            raise TypeError("batch_size must be an integer")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         if len(input_features) != len(target_values):
