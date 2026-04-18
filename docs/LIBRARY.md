@@ -330,11 +330,11 @@ The `odyssstore` module provides checkpoint management utilities, including a un
 
 ### Functions
 
-#### `save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None)`
-Saves a training checkpoint to disk.
+#### `save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, trainer_state=None)`
+Saves a training checkpoint to disk. Pass `trainer_state=trainer.state_dict()` to also persist the trainer's runtime state (step counter, scaler, persistent gradients).
 
-#### `load_checkpoint(model, optimizer, path, device='cpu', strict=True)`
-Loads a checkpoint. Set `strict=False` to ignore size mismatches (will partially load what fits).
+#### `load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, trainer=None)`
+Loads a checkpoint. Set `strict=False` to ignore size mismatches (will partially load what fits). Pass `lr` to overwrite the saved learning rate after loading. Pass `trainer` (an `OdyssNetTrainer` instance) to restore runtime trainer state (step counter, scaler, persistent gradients).
 
 #### `transplant_weights(model, checkpoint_path, device='cpu', verbose=True)`
 🧬 **Weight Transplantation**: Transfers learned weights from a checkpoint to a model, **even if the number of neurons is different**.
@@ -377,6 +377,8 @@ Dynamically adds `amount` empty neurons to the model.
 if loss > prev_loss:
     trainer.expand(amount=1)
 ```
+
+> **Initialization:** New connections are initialized with `micro_quiet_warm` (Normal(0, 1e-3)) noise so they remain dormant relative to trained weights and do not destabilize the existing dynamics. Optimizer momentum is migrated from the old parameters to the expanded ones.
 
 ---
 

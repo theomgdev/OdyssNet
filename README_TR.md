@@ -101,7 +101,7 @@ set_seed(42)
 # Sıfır-Gizli Ağ başlat
 # 1 Giriş, 1 Çıkış.
 model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
-trainer = OdyssNetTrainer(model, device='cuda')
+trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
 
 # Eğit
 inputs = torch.randn(100, 1)
@@ -194,7 +194,7 @@ Geçmişe "geriye bakmak" için açık $Q \times K$ matrislerini kullanan Transf
 ### Matematiksel Model
 Ağ durumu $h_t$ şu şekilde evrimleşir:
 
-$$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
+$$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
 
 ---
 

@@ -101,7 +101,7 @@ set_seed(42)
 # Initialize a Zero-Hidden Network
 # 1 Input, 1 Output. 
 model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
-trainer = OdyssNetTrainer(model, device='cuda')
+trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
 
 # Train
 inputs = torch.randn(100, 1)
@@ -194,7 +194,7 @@ Unlike Transformers which use explicit $Q \times K$ matrices to "look back" at t
 ### Mathematical Model
 The network state $h_t$ evolves as:
 
-$$h_t = \text{StepNorm}(\text{GELU}(h_{t-1} \cdot W + B + I_t))$$
+$$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
 
 ---
 
