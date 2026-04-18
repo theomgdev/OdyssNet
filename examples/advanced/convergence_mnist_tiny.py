@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import os
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
@@ -55,12 +55,9 @@ def main():
     train_dataset = datasets.MNIST(root=data_dir, train=True, download=True, transform=train_transform)
     test_dataset = datasets.MNIST(root=data_dir, train=False, download=True, transform=test_transform)
     
-    SUBSET_SIZE = 5000 
-    train_subset = Subset(train_dataset, range(SUBSET_SIZE))
-    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
-    
-    test_subset = Subset(test_dataset, range(1000))
-    test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
+    kwargs = {'num_workers': 4, 'pin_memory': True} if DEVICE == 'cuda' else {}
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, **kwargs)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, **kwargs)
     
     trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
     loss_fn = nn.MSELoss()

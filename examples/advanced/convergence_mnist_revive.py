@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import os
 import time
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
@@ -27,11 +27,10 @@ def main():
     
     # Match EXACTLY with convergence_mnist.py (Default: Tanh, Orthogonal)
     model = OdyssNet(
-        num_neurons=NUM_NEURONS, 
-        input_ids=input_ids, 
-        output_ids=output_ids, 
-        pulse_mode=True, 
-        # Default activation is 'tanh', weight_init is 'resonant'
+        num_neurons=NUM_NEURONS,
+        input_ids=input_ids,
+        output_ids=output_ids,
+        pulse_mode=True,
         device=DEVICE
     )
     
@@ -57,14 +56,10 @@ def main():
     train_dataset = datasets.MNIST(root=data_dir, train=True, download=True, transform=train_transform)
     test_dataset = datasets.MNIST(root=data_dir, train=False, download=True, transform=test_transform)
     
-    SUBSET_SIZE = 10000
-    train_subset = Subset(train_dataset, range(SUBSET_SIZE))
-    test_subset = Subset(test_dataset, range(1000))
-    
     # Optimization: Pin Memory & Workers (Same as baseline)
     kwargs = {'num_workers': 4, 'pin_memory': True} if DEVICE == 'cuda' else {}
-    train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, **kwargs)
-    test_loader = DataLoader(test_subset, batch_size=64, shuffle=False, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, **kwargs)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, **kwargs)
     
     NUM_EPOCHS = 100 
     THINKING_STEPS = 10

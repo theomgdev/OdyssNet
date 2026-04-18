@@ -49,7 +49,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |
 | **XOR** | Gizli Katman Gerekir | **Kaos Kapısı** (Zamana Katlanmış) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
-| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %97.5** | `convergence_mnist.py` |
+| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %98.92** | `convergence_mnist.py` |
 | **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %94.38** | `convergence_mnist_embed.py` |
 | **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %90.14** | `convergence_mnist_record.py` |
 | **MNIST Ters (Üretim)** | Dekoder Gerekir | **484-Param Üreteç** | **%93.83 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
@@ -211,8 +211,10 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
 
     ```text
     In:  1.0 -> Out:  0.9999
-    In: -1.0 -> Out: -0.9998
+    In: -1.0 -> Out: -1.0000
     ```
+
+    ![Identity Convergence](img/convergence_identity.png)
     </details>
 *   **Script:** `examples/convergence_identity.py`
 *   **Çıkarım:** Mutlak minimum karmaşıklıkla temel sinyal iletimini ve `StepNorm` kararlılığını kanıtlar.
@@ -227,11 +229,13 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
     ```text
       A      B |   XOR (Tahmin) | Mantık
     ----------------------------------------
-      -1.0   -1.0 |      -1.0005 | 0 (Hedef: 0) TAMAM
-      -1.0    1.0 |       1.0006 | 1 (Hedef: 1) TAMAM
-       1.0   -1.0 |       1.0001 | 1 (Hedef: 1) TAMAM
-       1.0    1.0 |      -1.0001 | 0 (Hedef: 0) TAMAM
+      -1.0   -1.0 |      -0.9998 | 0 (Hedef: 0) TAMAM
+      -1.0    1.0 |       0.9996 | 1 (Hedef: 1) TAMAM
+       1.0   -1.0 |       0.9997 | 1 (Hedef: 1) TAMAM
+       1.0    1.0 |      -1.0003 | 0 (Hedef: 0) TAMAM
     ```
+
+    ![XOR Convergence](img/convergence_gates.png)
     </details>
 *   **Mimari:** **3 Nöron** (2 Giriş, 1 Çıkış). **0 Gizli Nöron**. Toplam **9 Parametre**.
 *   **Düşünme Süresi:** **5 Adım**.
@@ -244,16 +248,18 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 #### 1. Ana Kıyaslama (Saf Sıfır-Gizli)
 *   **Hedef:** Tam 28x28 MNIST (784 Piksel).
 *   **Mimari:** 794 Nöron (Giriş+Çıkış). **0 Gizli Katman.**
-*   **Sonuç:** **%97.5 Doğruluk**.
+*   **Sonuç:** **%98.92 Doğruluk** (peak **%99.02** epoch 48'de).
     <details>
     <summary>Eğitim Günlüğünü Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.0019 | Test Acc 97.50% | FPS: 1127.9
+    Epoch 100: Loss 0.0035 | Test Acc 98.92% | FPS: 6348.0
     ```
+
+    ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
-*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%97.5) elde eder.
+*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%98.92) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
 *   **Hipotez:** Ölü sinapsları öldürmek yerine **canlandırarak** (rastgele yeniden başlatma) %100 parametre verimliliğine ulaşabilir miyiz?
@@ -351,7 +357,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <details>
     <summary>Üretilmiş Görselleri Gör (Eğitim İlerleme)</summary>
 
-    ![MNIST Ters Üretim](examples/advanced/img/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Ters Üretim](img/convergence_mnist_reverse_record_summary.png)
 
     Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamının görsel desenine başarıyla eşlemeyi öğrendi. Çıkış, tüm 10 rakamın öğrenilmiş dinamiklerden temiz bir şekilde rekonstruksiyon ettiğini gösteriyor.
     </details>

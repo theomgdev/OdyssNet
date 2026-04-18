@@ -49,7 +49,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
-| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 97.5%** | `convergence_mnist.py` |
+| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 98.92%** | `convergence_mnist.py` |
 | **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 94.38%** | `convergence_mnist_embed.py` |
 | **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 90.14%** | `convergence_mnist_record.py` |
 | **MNIST Reverse (Generation)** | Needs Decoder | **The 484-Param Generator** | **93.83% Compression** | `convergence_mnist_reverse_record.py` |
@@ -211,8 +211,10 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
 
     ```text
     In:  1.0 -> Out:  0.9999
-    In: -1.0 -> Out: -0.9998
+    In: -1.0 -> Out: -1.0000
     ```
+
+    ![Identity Convergence](img/convergence_identity.png)
     </details>
 *   **Script:** `examples/convergence_identity.py`
 *   **Insight:** Proves the basic signal transmission and `StepNorm` stability with the absolute minimum complexity.
@@ -227,11 +229,13 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
     ```text
       A      B |   XOR (Pred) | Logic
     ----------------------------------------
-      -1.0   -1.0 |      -1.0005 | 0 (Target: 0) OK
-      -1.0    1.0 |       1.0006 | 1 (Target: 1) OK
-       1.0   -1.0 |       1.0001 | 1 (Target: 1) OK
-       1.0    1.0 |      -1.0001 | 0 (Target: 0) OK
+      -1.0   -1.0 |      -0.9998 | 0 (Target: 0) OK
+      -1.0    1.0 |       0.9996 | 1 (Target: 1) OK
+       1.0   -1.0 |       0.9997 | 1 (Target: 1) OK
+       1.0    1.0 |      -1.0003 | 0 (Target: 0) OK
     ```
+
+    ![XOR Convergence](img/convergence_gates.png)
     </details>
 *   **Architecture:** **3 Neurons** (2 Input, 1 Output). **0 Hidden Neurons**. Total **9 Parameters**.
 *   **Thinking Time:** **5 Steps**.
@@ -244,16 +248,18 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 #### 1. The Main Benchmark (Pure Zero-Hidden)
 *   **Target:** Full 28x28 MNIST (784 Pixels).
 *   **Architecture:** 794 Neurons (Input+Output). **0 Hidden Layers.**
-*   **Result:** **97.5% Accuracy**.
+*   **Result:** **98.92% Accuracy** (peak **99.02%** at epoch 48).
     <details>
     <summary>See Training Log</summary>
 
     ```text
-    Epoch 100: Loss 0.0019 | Test Acc 97.50% | FPS: 1127.9
+    Epoch 100: Loss 0.0035 | Test Acc 98.92% | FPS: 6348.0
     ```
+
+    ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
-*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (97.5%) without Deep Learning layers, purely through **Temporal Depth**.
+*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (98.92%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
 *   **Hypothesis:** Can we reach 100% parameter efficiency by **reviving** dead synapses (random re-initialization) instead of just killing them?
@@ -351,7 +357,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <details>
     <summary>See Generated Images (Training Progression)</summary>
 
-    ![MNIST Reverse Generation](examples/advanced/img/convergence_mnist_reverse_record_summary.png)
+    ![MNIST Reverse Generation](img/convergence_mnist_reverse_record_summary.png)
 
     The network successfully learned to map each scalar input (0.0, 0.1, ..., 0.9) to its corresponding digit's visual pattern. Output shows all 10 digits cleanly reconstructed from the learned dynamics.
     </details>
