@@ -2,7 +2,6 @@
 
 **OdyssNet is the proof that Time is the ultimate Hidden Layer.**
 
-[![CI](https://github.com/theomgdev/odyssnet/actions/workflows/ci.yml/badge.svg)](https://github.com/theomgdev/odyssnet/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
