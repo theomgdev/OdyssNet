@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
-import torch.nn.functional as F
 from typing import cast
 
 class OdyssNet(nn.Module):
@@ -438,7 +437,7 @@ class OdyssNet(nn.Module):
             # hebb_W_contrib:   (N, N) tensor or None — added to W before recurrence.
             # hebb_mem_contrib: (N,)   tensor or None — added to memory_feedback.
             W_eff = self.W if hebb_W_contrib is None else self.W + hebb_W_contrib
-            signal = F.linear(h_t_in, W_eff.t(), self.B)
+            signal = h_t_in @ W_eff + self.B
             if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
 
             if self.core_gate_act is not None and self.core_gate is not None:
@@ -675,7 +674,7 @@ class OdyssNet(nn.Module):
                     h_prev_f = h_prev.detach().float()
                     if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
                     if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
-                    corr_W   = torch.einsum('bi,bj->ij', h_t_f, h_prev_f) / (batch_sz * self.num_neurons)
+                    corr_W   = torch.einsum('bj,bi->ji', h_prev_f, h_t_f) / (batch_sz * self.num_neurons)
                     corr_mem = (h_t_f * h_prev_f).mean(dim=0)
                 corr_W.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
                 if self.debug: self._dbg(corr_W,   f"corr_W (step {t})")
@@ -705,7 +704,10 @@ class OdyssNet(nn.Module):
 
         # Apply Output Scaling
         if return_sequence:
-            stacked_outputs = torch.stack(outputs, dim=1)
+            if not outputs:
+                stacked_outputs = h_t.unsqueeze(1)[:, :0, :]
+            else:
+                stacked_outputs = torch.stack(outputs, dim=1)
         else:
             # Avoid allocating (B, T, N) when only the final state is needed.
             stacked_outputs = h_t.unsqueeze(1)
