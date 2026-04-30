@@ -157,7 +157,7 @@ def main():
     # Data Preparation
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,)) # Normalize to (-1, 1)
+        transforms.Normalize((0.1307,), (0.3081,)) # Standard MNIST mean and std
     ])
     
     train_dataset = datasets.MNIST(root=DATA_ROOT, train=True, download=True, transform=transform)
