@@ -127,6 +127,7 @@ def main():
         vocab_mode='continuous',
         weight_init='micro_quiet_warm',
         gate='none',
+        hebb_type='both'
     )
 
     if use_compile:

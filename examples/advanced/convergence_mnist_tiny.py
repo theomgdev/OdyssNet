@@ -33,7 +33,8 @@ def main():
         input_ids=input_ids, 
         output_ids=output_ids, 
         pulse_mode=True, 
-        device=DEVICE
+        device=DEVICE,
+        hebb_type='both'
     )
     
     print(f"Params: {model.get_num_params()} (~3.5k)")
