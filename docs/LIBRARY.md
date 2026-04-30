@@ -32,7 +32,8 @@ model = OdyssNet(
     gate=None,           # Default resolves to ['none', 'none', 'identity']
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
-    hebb_type=None,      # Optional: Plasticity resolution — None, 'global', 'neuron', or 'synapse'
+    hebb_type=None,      # Toggle: None, 'temporal', 'spatial', or 'both'
+    hebb_res='neuron',   # Plasticity resolution: 'global', 'neuron', or 'synapse'
     debug=False,         # NaN/Inf diagnosis — raises RuntimeError at the first offending operation
 )
 ```
@@ -66,22 +67,24 @@ model = OdyssNet(
     *   `'continuous'`: Initializes only Linear Projection. Use for float-only inputs (e.g., vision, audio). Saves VRAM.
 *   `tie_embeddings` (bool): 
     *   If `True`, ties the input embedding weights to the output decoder weights, saving significant VRAM and parameter count (Symmetric `vocab_size` only). Default is `False`.
-*   `hebb_type` (str or None): Controls the structural resolution of **Heterogeneous Synaptic Plasticity**. Default is `None` (plasticity disabled).
+*   `hebb_type` (str or None): Controls the active mechanism for **Heterogeneous Synaptic Plasticity**. Default is `None` (plasticity disabled).
+    *   `'temporal'`: STDP-style learning; correlates current state $h_t$ with previous state $h_{t-1}$.
+    *   `'spatial'`: Co-activation learning (classic Hebbian); correlates current state $h_t$ with itself $h_t$ (neurons firing simultaneously).
+    *   `'both'`: Combines both temporal and spatial mechanisms.
+*   `hebb_res` (str): Controls the structural resolution of plasticity. Default is `'neuron'`.
 
-    | `hebb_type` | Parameter Shape | Extra Params | Mechanics |
+    | `hebb_res` | Parameter Shape | Extra Params per Path | Mechanics |
     |---|---|---|---|
-    | `None` | — | 0 | Disabled. |
     | `"global"` | scalar `()` | +2 | Uniform plasticity — the whole network is equally plastic. |
     | `"neuron"` | vector `(N,)` | +2N | Per-neuron plasticity — each neuron learns its own adaptation rate. |
     | `"synapse"` | matrix `(N, N)` | +2N² | Per-synapse plasticity — each connection has its own factor and decay. |
 
-    *   Two learnable logit parameters are created according to the resolution:
-        *   `hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
-        *   `hebb_decay` (raw logit → `sigmoid` → retention ≈ 0.90 initially)
-    *   During each forward pass the model accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_\text{eff} = W + (f_h \odot C_t)$ (where $f_h$ is `hebb_factor`), with $\odot$ element-wise multiplication broadcast to the chosen resolution.
-    *   The Hebbian state is persisted across forward calls via registered buffers (`hebb_state_W`, `hebb_state_mem`) and is cleared by `reset_state()`.
-    *   Both `hebb_factor` and `hebb_decay` are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
-    *   **Memory cost**: `"global"` adds negligible overhead; `"neuron"` adds $O(N)$; `"synapse"` triples total parameter count to $3N^2$.
+    *   For each active path (`t_` for temporal, `s_` for spatial), two learnable logit parameters are created according to the resolution:
+        *   `t_hebb_factor` / `s_hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
+        *   `t_hebb_decay` / `s_hebb_decay` (raw logit → `sigmoid` → retention ≈ 0.90 initially)
+    *   During each forward pass the model accumulates correlations (temporal $h_t \otimes h_{t-1}$ and/or spatial $h_t \otimes h_t$) and applies them to the effective weights.
+    *   The Hebbian states are persisted across forward calls via registered buffers (`t_hebb_state_W`, `s_hebb_state_W`, etc.) and are cleared by `reset_state()`.
+    *   Both factors and decays are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
     *   `None`: Default configuration with memory identity gate enabled, others disabled.
     *   `str` (e.g., `'sigmoid'`): Applies the same gate activation to all three branches `[encoder_decoder, core, memory]`.

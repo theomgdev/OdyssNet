@@ -50,11 +50,18 @@ class Neurogenesis:
         # For "neuron" and "synapse" types the params are vectors/matrices and are
         # zero-padded to the new size; "global" scalars are shape-invariant.
         hebb_type = getattr(model, 'hebb_type', None)
-        old_hebb_factor = getattr(model, 'hebb_factor', None)
-        old_hebb_decay  = getattr(model, 'hebb_decay',  None)
-        # Capture old Hebbian buffer data before the model is mutated.
-        old_hebb_state_W   = model.hebb_state_W.clone()   if hebb_type is not None else None
-        old_hebb_state_mem = model.hebb_state_mem.clone() if hebb_type is not None else None
+        hebb_res = getattr(model, 'hebb_res', None)
+        def _get_hebb(name): return getattr(model, name, None)
+
+        old_t_hebb_factor = _get_hebb('t_hebb_factor')
+        old_t_hebb_decay  = _get_hebb('t_hebb_decay')
+        old_s_hebb_factor = _get_hebb('s_hebb_factor')
+        old_s_hebb_decay  = _get_hebb('s_hebb_decay')
+        
+        old_t_hebb_state_W   = _get_hebb('t_hebb_state_W').clone() if _get_hebb('t_hebb_state_W') is not None else None
+        old_t_hebb_state_mem = _get_hebb('t_hebb_state_mem').clone() if _get_hebb('t_hebb_state_mem') is not None else None
+        old_s_hebb_state_W   = _get_hebb('s_hebb_state_W').clone() if _get_hebb('s_hebb_state_W') is not None else None
+        old_s_hebb_state_mem = _get_hebb('s_hebb_state_mem').clone() if _get_hebb('s_hebb_state_mem') is not None else None
 
         # Preserve vocab layer parameters (for optimizer state transfer)
         old_embed_param = model.embed.weight if model.embed is not None else None
@@ -175,32 +182,41 @@ class Neurogenesis:
         # The existing (old_n × old_n) correlation state is copied into the top-left
         # corner of the new (new_n × new_n) buffer; the new rows/cols start at zero.
         if hebb_type is not None:
-            new_hebb_W = torch.zeros(new_n, new_n, device=device)
-            new_hebb_W[:old_n, :old_n] = old_hebb_state_W
-            model.register_buffer('hebb_state_W', new_hebb_W)
+            def _resize_buffer(old_buffer, is_matrix=False):
+                if old_buffer is None: return None
+                if is_matrix:
+                    new_b = torch.zeros(new_n, new_n, device=device)
+                    new_b[:old_n, :old_n] = old_buffer
+                else:
+                    new_b = torch.zeros(new_n, device=device)
+                    new_b[:old_n] = old_buffer
+                return new_b
 
-            new_hebb_mem = torch.zeros(new_n, device=device)
-            new_hebb_mem[:old_n] = old_hebb_state_mem
-            model.register_buffer('hebb_state_mem', new_hebb_mem)
+            if old_t_hebb_state_W is not None:
+                model.register_buffer('t_hebb_state_W', _resize_buffer(old_t_hebb_state_W, True))
+                model.register_buffer('t_hebb_state_mem', _resize_buffer(old_t_hebb_state_mem, False))
+            if old_s_hebb_state_W is not None:
+                model.register_buffer('s_hebb_state_W', _resize_buffer(old_s_hebb_state_W, True))
+                model.register_buffer('s_hebb_state_mem', _resize_buffer(old_s_hebb_state_mem, False))
 
-            # Resize hebb_factor and hebb_decay to match new neuron count.
-            # "global" scalars need no resize; "neuron" pads to (new_n,);
-            # "synapse" pads to (new_n, new_n) — new entries use the default logit values.
-            if hebb_type == "neuron":
-                new_hf = torch.full((new_n,), -3.0, device=device)
-                new_hf[:old_n] = old_hebb_factor.data
-                new_hd = torch.full((new_n,), 2.2, device=device)
-                new_hd[:old_n] = old_hebb_decay.data
-                model.hebb_factor = nn.Parameter(new_hf)
-                model.hebb_decay  = nn.Parameter(new_hd)
-            elif hebb_type == "synapse":
-                new_hf = torch.full((new_n, new_n), -3.0, device=device)
-                new_hf[:old_n, :old_n] = old_hebb_factor.data
-                new_hd = torch.full((new_n, new_n), 2.2, device=device)
-                new_hd[:old_n, :old_n] = old_hebb_decay.data
-                model.hebb_factor = nn.Parameter(new_hf)
-                model.hebb_decay  = nn.Parameter(new_hd)
-            # "global": model.hebb_factor / hebb_decay are scalars — shapes unchanged.
+            def _resize_param(old_param, default_val):
+                if old_param is None: return None
+                if hebb_res == "neuron":
+                    new_p = torch.full((new_n,), default_val, device=device)
+                    new_p[:old_n] = old_param.data
+                elif hebb_res == "synapse":
+                    new_p = torch.full((new_n, new_n), default_val, device=device)
+                    new_p[:old_n, :old_n] = old_param.data
+                else: # global
+                    return nn.Parameter(old_param.data.clone())
+                return nn.Parameter(new_p)
+
+            if old_t_hebb_factor is not None:
+                model.t_hebb_factor = _resize_param(old_t_hebb_factor, -3.0)
+                model.t_hebb_decay  = _resize_param(old_t_hebb_decay, 2.2)
+            if old_s_hebb_factor is not None:
+                model.s_hebb_factor = _resize_param(old_s_hebb_factor, -3.0)
+                model.s_hebb_decay  = _resize_param(old_s_hebb_decay, 2.2)
 
         # Re-bind IDs and update buffers
         model.input_ids = old_input_ids
@@ -285,16 +301,16 @@ class Neurogenesis:
             # Transfer Hebbian parameter optimizer state.
             # "global" scalars are shape-invariant; "neuron"/"synapse" params were
             # padded above so the old state is copied into the overlapping region.
-            if (hebb_type is not None
-                    and isinstance(old_hebb_factor, nn.Parameter)
-                    and isinstance(getattr(model, 'hebb_factor', None), nn.Parameter)):
-                transfer_state(old_hebb_factor, model.hebb_factor,
-                               is_matrix=(hebb_type == "synapse"))
-            if (hebb_type is not None
-                    and isinstance(old_hebb_decay, nn.Parameter)
-                    and isinstance(getattr(model, 'hebb_decay', None), nn.Parameter)):
-                transfer_state(old_hebb_decay, model.hebb_decay,
-                               is_matrix=(hebb_type == "synapse"))
+            if hebb_type is not None:
+                def _transfer_hebb(old_p, new_p_name):
+                    new_p = getattr(model, new_p_name, None)
+                    if isinstance(old_p, nn.Parameter) and isinstance(new_p, nn.Parameter):
+                        transfer_state(old_p, new_p, is_matrix=(hebb_res == "synapse"))
+                
+                _transfer_hebb(old_t_hebb_factor, 't_hebb_factor')
+                _transfer_hebb(old_t_hebb_decay, 't_hebb_decay')
+                _transfer_hebb(old_s_hebb_factor, 's_hebb_factor')
+                _transfer_hebb(old_s_hebb_decay, 's_hebb_decay')
 
             # Transfer vocab layer state (shapes constant during neurogenesis)
             if old_embed_param is not None and hasattr(model, 'embed') and model.embed is not None:

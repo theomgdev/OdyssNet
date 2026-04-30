@@ -155,17 +155,17 @@ For tasks requiring high input/output dimensionality (like vision or LLMs) witho
 model = OdyssNet(num_neurons=10, ..., vocab_size=(784, 10))
 ```
 
-### F. Heterogeneous Synaptic Plasticity (`hebb_type`)
-For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics — enable one of the three resolution levels:
+### F. Heterogeneous Synaptic Plasticity (`hebb_type` & `hebb_res`)
+For tasks where **online synaptic plasticity** may help — e.g., fast-adaptation, continual learning, or tasks with shifting statistics — enable `hebb_type` (`"temporal"`, `"spatial"`, or `"both"`) and choose one of the three resolution levels:
 
-| `hebb_type` | Extra Params | When to use |
+| `hebb_res` | Extra Params per path | When to use |
 |---|---|---|
 | `"global"` | +2 | Quick experiments; uniform plasticity across all synapses. |
 | `"neuron"` | +2N | RL and reactive environments; per-neuron "caste" differentiation. |
 | `"synapse"` | +2N² | Logic, NLP, and reasoning tasks requiring **dynamic variable binding**. |
 
-*   **What it does:** At each step the network accumulates temporal cross-neuron correlations $C_t = h_t \otimes h_{t-1}$ and applies them as $W_\text{eff} = W + (f_h \odot C_t)$ (where $f_h$ is `hebb_factor`). Both `hebb_factor` and `hebb_decay` are **learnable** — the network discovers how plastic each synapse should be.
-*   **State:** Correlations are persisted via buffers (`hebb_state_W`, `hebb_state_mem`) across intra-sequence forward calls and are explicitly cleared on `reset_state()` between sequences.
+*   **What it does:** At each step the network accumulates correlations (temporal $C_t = h_t \otimes h_{t-1}$ and/or spatial $C_s = h_t \otimes h_t$) depending on `hebb_type`. It applies them to the weights. Both factors and decays (`t_hebb_factor`, `s_hebb_factor`, etc.) are **learnable** — the network discovers how plastic each synapse should be.
+*   **State:** Correlations are persisted via buffers (`t_hebb_state_W`, `s_hebb_state_mem`, etc.) across intra-sequence forward calls and are explicitly cleared on `reset_state()` between sequences.
 *   **Best Use Case (Generation / Sequential Building):** Hebbian shines in tasks where step T relies heavily on expanding or completing a pattern from step T-1. It provides a powerful **short-term working memory** between steps, acting as a dynamic shortcut that fast-tracks sequence generation.
 *   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise".
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
@@ -178,7 +178,8 @@ model = OdyssNet(
     input_ids=[0, 1],
     output_ids=[31],
     activation='tanh',
-    hebb_type='synapse',   # Per-synapse plasticity
+    hebb_type='both',
+    hebb_res='synapse',    # Per-synapse plasticity
     device='cuda',
 )
 
@@ -188,12 +189,13 @@ model = OdyssNet(
     input_ids=list(range(8)),
     output_ids=list(range(56, 64)),
     activation='tanh',
-    hebb_type='neuron',    # Per-neuron plasticity
+    hebb_type='temporal',
+    hebb_res='neuron',     # Per-neuron plasticity
     device='cuda',
 )
 
 # Quick experiment — global plasticity
-model = OdyssNet(..., hebb_type='global')
+model = OdyssNet(..., hebb_type='spatial', hebb_res='global')
 
 # Default: Prodigy optimizer — auto-calibrates LR, no tuning needed
 trainer = OdyssNetTrainer(model)

@@ -36,7 +36,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
-*   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='synapse'|'neuron'|'global'`) — ağ zamansal nöron korelasyonlarını biriktirir ve global, nöron başına veya sinaps başına çözünürlükte tamamen türevlenebilir logit parametreleri (`hebb_factor`, `hebb_decay`) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
+*   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — ağ korelasyonları biriktirir ve global, nöron başına veya sinaps başına çözünürlükte tamamen türevlenebilir logit parametreleri (`t_hebb_factor`, `s_hebb_decay`, vb.) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
@@ -159,7 +159,7 @@ Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühen
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
 *   **Prodigy Optimizer (varsayılan):** Öğrenme hızını sürekli olarak otomatik kalibre eder — manuel ayar gerekmez. Açık bir `lr` değeri geçildiğinde AdamW kullanılır.
-*   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda zamansal korelasyonlar $h_t \otimes h_{t-1}$ biriktirilir ve $W_\text{eff} = W + (f_h \odot C_t)$ olarak enjekte edilir — `hebb_factor` global bir skaler, nöron başına vektör veya tam sinaps başına matris olabilir. Tüm çeşitler öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
+*   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda korelasyonlar (zamansal $h_t \otimes h_{t-1}$ veya uzamsal $h_t \otimes h_t$) biriktirilir ve enjekte edilir — `t_hebb_factor` gibi faktörler global bir skaler, nöron başına vektör veya tam sinaps başına matris olabilir. Tüm çeşitler öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
 *   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?

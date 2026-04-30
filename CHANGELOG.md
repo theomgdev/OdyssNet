@@ -4,6 +4,16 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.5.0] — 2026-04-30
+
+### Added
+- **Spatial Hebbian Plasticity**: Introduced a co-activation learning mechanism (classic Hebbian) alongside the existing STDP-style learning.
+- **`hebb_mode` functionality (`hebb_type`)**: `hebb_type` is now repurposed to act as the mechanism toggle: `None` (disabled), `"temporal"`, `"spatial"`, or `"both"`.
+- **`hebb_res`**: Controls the structural resolution (`"global"`, `"neuron"`, `"synapse"`). Defaults to `"neuron"`.
+
+### Changed
+- **BREAKING**: Replaced single-path Hebbian parameters with path-specific prefixes (`t_hebb_factor` and `s_hebb_factor`, etc.). Existing checkpoints utilizing `hebb_factor` will need to be loaded with `strict=False` and re-trained, or manually patched, as we have prioritized a clean architecture over legacy support.
+
 ## [2.4.0] — 2026-04-10
 
 ### Added
