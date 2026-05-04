@@ -695,3 +695,74 @@ class TestHebbianTypes:
         assert model.t_hebb_factor.grad is not None
         assert model.t_hebb_factor.grad.shape == (4,)
         assert torch.isfinite(model.t_hebb_factor.grad).all()
+
+
+# ===========================================================================
+# Novelty-Gated Hebbian (weak connections get amplified plasticity)
+# ===========================================================================
+
+class TestNoveltyGatedHebbian:
+    def _run_with_weight_profile(self, weight_value, hebb_res="global"):
+        """Run a fixed-activation forward pass and return the resulting Hebbian state.
+
+        Sets all off-diagonal weights to `weight_value` so the novelty gate
+        operates uniformly.  A constant hidden state ensures the raw correlation
+        is identical across runs — only the gate differs.
+        """
+        model = _make(4, hebb_type="both", hebb_res=hebb_res)
+        with torch.no_grad():
+            model.W.fill_(weight_value)
+            model.W.fill_diagonal_(0.0)
+            # Seed a non-trivial hidden state so correlation is non-zero
+            model.state = torch.ones(1, 4) * 0.5
+        model.eval()
+        x = torch.ones(1, 4) * 0.5
+        model(x, steps=2)
+        return model
+
+    def test_weak_weights_produce_stronger_hebb_state(self):
+        """Core invariant: weaker existing weights → larger Hebbian update."""
+        m_weak   = self._run_with_weight_profile(0.01)
+        m_strong = self._run_with_weight_profile(2.0)
+        weak_mag   = m_weak.t_hebb_state_W.abs().sum().item()
+        strong_mag = m_strong.t_hebb_state_W.abs().sum().item()
+        assert weak_mag > strong_mag, (
+            f"Weak-weight Hebbian magnitude ({weak_mag:.6f}) should exceed "
+            f"strong-weight magnitude ({strong_mag:.6f})"
+        )
+
+    def test_spatial_weak_weights_stronger_than_strong(self):
+        """Same invariant for spatial Hebbian path."""
+        m_weak   = self._run_with_weight_profile(0.01)
+        m_strong = self._run_with_weight_profile(2.0)
+        weak_mag   = m_weak.s_hebb_state_W.abs().sum().item()
+        strong_mag = m_strong.s_hebb_state_W.abs().sum().item()
+        assert weak_mag > strong_mag
+
+    def test_novelty_gate_preserves_diagonal_zero(self):
+        """Novelty gate must not break the diagonal constraint."""
+        model = self._run_with_weight_profile(0.5)
+        assert model.t_hebb_state_W.diagonal().abs().max().item() == 0.0
+        assert model.s_hebb_state_W.diagonal().abs().max().item() == 0.0
+
+    @pytest.mark.parametrize("hebb_res", ["global", "neuron", "synapse"])
+    def test_novelty_gate_works_across_resolutions(self, hebb_res):
+        """Novelty gate functions correctly at every hebb_res level."""
+        m_weak   = self._run_with_weight_profile(0.01, hebb_res=hebb_res)
+        m_strong = self._run_with_weight_profile(2.0,  hebb_res=hebb_res)
+        assert m_weak.t_hebb_state_W.abs().sum().item() > m_strong.t_hebb_state_W.abs().sum().item()
+
+    def test_gradient_flows_through_gated_correlation(self):
+        """Backprop through novelty-gated Hebbian must reach hebb_factor."""
+        model = _make(4, hebb_type="both", hebb_res="global")
+        model.train()
+        with torch.no_grad():
+            model.W.fill_(0.5)
+            model.W.fill_diagonal_(0.0)
+        x = torch.randn(2, 4)
+        out, _ = model(x, steps=3)
+        out.sum().backward()
+        assert model.t_hebb_factor.grad is not None
+        assert model.s_hebb_factor.grad is not None
+        assert torch.isfinite(model.t_hebb_factor.grad).all()
+        assert torch.isfinite(model.s_hebb_factor.grad).all()

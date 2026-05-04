@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.0] — 2026-05-04
+
+### Added
+- **Novelty-Gated Hebbian Correlation**: A per-synapse gate `g_ji = 1/(1+|W_eff_ji|)` suppresses tautological correlation on strong connections and amplifies plasticity on weak/novel pathways. Applied to both temporal and spatial Hebbian mechanisms. The gate is parameter-free and structurally detached (no second-order gradients through W).
+
 ## [2.5.0] — 2026-04-30
 
 ### Added

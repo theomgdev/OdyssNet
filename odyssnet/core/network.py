@@ -127,6 +127,13 @@ class OdyssNet(nn.Module):
         # Factors and decays are raw logits; sigmoid maps them to (0, 1).
         # sigmoid(-3.0) ≈ 0.047 — small initial Hebbian influence.
         # sigmoid( 2.2) ≈ 0.900 — high initial retention.
+        #
+        # Novelty-Gated Correlation:
+        #   Raw co-activation on strong weights is tautological — a neuron fires
+        #   because the weight already drives it, not because of a new pattern.
+        #   A per-synapse gate  g_ji = 1/(1+|W_eff_ji|)  suppresses correlation
+        #   on strong connections and amplifies discovery on weak/novel pathways.
+        #   The gate is detached (no second-order gradients through W).
 
         if hebb_type not in (None, "temporal", "spatial", "both"):
             raise ValueError(f"hebb_type must be None, 'temporal', 'spatial', or 'both', got {hebb_type!r}")
@@ -703,10 +710,16 @@ class OdyssNet(nn.Module):
                     h_prev_f = h_prev.detach().float()
                     if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
                     if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
-                    
+
+                    # Novelty gate — suppress tautological weight-driven correlations.
+                    _w_eff = self.W if cur_hebb_W is None else self.W + cur_hebb_W
+                    _m_eff = self.memory_feedback if cur_hebb_mem is None else self.memory_feedback + cur_hebb_mem
+                    novelty_W   = (1.0 / (1.0 + _w_eff.detach().abs())).float()
+                    novelty_mem = (1.0 / (1.0 + _m_eff.detach().abs())).float()
+
                     if self.hebb_type in ("temporal", "both"):
-                        corr_W_t   = torch.einsum('bj,bi->ji', h_prev_f, h_t_f) / (batch_sz * self.num_neurons)
-                        corr_mem_t = (h_t_f * h_prev_f).mean(dim=0)
+                        corr_W_t   = novelty_W * torch.einsum('bj,bi->ji', h_prev_f, h_t_f) / (batch_sz * self.num_neurons)
+                        corr_mem_t = novelty_mem * (h_t_f * h_prev_f).mean(dim=0)
                         corr_W_t.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
                         if self.debug: self._dbg(corr_W_t,   f"corr_W_t (step {t})")
                         if self.debug: self._dbg(corr_mem_t, f"corr_mem_t (step {t})")
@@ -725,8 +738,8 @@ class OdyssNet(nn.Module):
                         if self.debug: self._dbg(local_t_hebb_mem, f"local_t_hebb_mem (step {t})")
 
                     if self.hebb_type in ("spatial", "both"):
-                        corr_W_s   = torch.einsum('bj,bi->ji', h_t_f, h_t_f) / (batch_sz * self.num_neurons)
-                        corr_mem_s = (h_t_f * h_t_f).mean(dim=0)
+                        corr_W_s   = novelty_W * torch.einsum('bj,bi->ji', h_t_f, h_t_f) / (batch_sz * self.num_neurons)
+                        corr_mem_s = novelty_mem * (h_t_f * h_t_f).mean(dim=0)
                         corr_W_s.fill_diagonal_(0.0)
                         if self.debug: self._dbg(corr_W_s,   f"corr_W_s (step {t})")
                         if self.debug: self._dbg(corr_mem_s, f"corr_mem_s (step {t})")

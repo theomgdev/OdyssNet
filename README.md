@@ -35,7 +35,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
 *   **Trainable Chaos:** Uses **StepNorm** and **Tanh** to tame chaotic signals.
-*   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — the network accumulates correlations and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.).
+*   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — the network accumulates correlations and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.). A built-in **Novelty Gate** `g = 1/(1+|W_eff|)` suppresses tautological reinforcement on strong connections and amplifies discovery on weak/novel pathways.
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
@@ -158,7 +158,7 @@ Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to f
 *   **StepNorm** acts as gravity, keeping energy bounded.
 *   **Tanh** filters meaningful signals while maintaining signal symmetry.
 *   **Prodigy Optimizer (default)**: Auto-calibrates the learning rate continuously — no manual tuning required. Pass an explicit `lr` to use AdamW instead.
-*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, correlations (temporal $h_t \otimes h_{t-1}$ or spatial $h_t \otimes h_t$) are accumulated each step and injected — where factors like `t_hebb_factor` can be a global scalar, a per-neuron vector, or a full per-synapse matrix. All variants are learnable, letting the network discover how plastic each pathway should be.
+*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, correlations (temporal $h_t \otimes h_{t-1}$ or spatial $h_t \otimes h_t$) are accumulated each step and injected — where factors like `t_hebb_factor` can be a global scalar, a per-neuron vector, or a full per-synapse matrix. All variants are learnable, letting the network discover how plastic each pathway should be. Each correlation is scaled by a **Novelty Gate** $g_{ji} = 1/(1+|W_{\text{eff},ji}|)$ that suppresses tautological reinforcement on strong synapses and channels plasticity toward weak, unexplored connections.
 *   **The Latch Experiment** proved OdyssNet can create a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?

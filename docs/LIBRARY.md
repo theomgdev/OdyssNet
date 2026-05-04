@@ -83,6 +83,7 @@ model = OdyssNet(
         *   `t_hebb_factor` / `s_hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
         *   `t_hebb_decay` / `s_hebb_decay` (raw logit → `sigmoid` → retention ≈ 0.90 initially)
     *   During each forward pass the model accumulates correlations (temporal $h_t \otimes h_{t-1}$ and/or spatial $h_t \otimes h_t$) and applies them to the effective weights.
+    *   **Novelty Gate**: Each raw correlation is element-wise scaled by $g_{ji} = 1/(1+|W_{\text{eff},ji}|)$ before accumulation. This structural gate suppresses tautological reinforcement on strong connections (where co-activation is expected, not discovered) and amplifies plasticity on weak/novel synapses where genuine new patterns emerge. The gate is parameter-free and detached from the computation graph (no second-order gradients through W).
     *   The Hebbian states are persisted across forward calls via registered buffers (`t_hebb_state_W`, `s_hebb_state_W`, etc.) and are cleared by `reset_state()`.
     *   Both factors and decays are fully differentiable — gradients flow into them via the recurrent computation so the network **learns how to learn** online.
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
