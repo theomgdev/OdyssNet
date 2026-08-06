@@ -1,3 +1,9 @@
+import sys
+
+# Keep emoji-rich console output from crashing legacy Windows code pages.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader

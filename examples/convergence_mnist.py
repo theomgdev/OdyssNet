@@ -45,7 +45,7 @@ def main():
     # Compile for speed (PyTorch 2.0+)
     model = model.compile()
 
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE)
 
     # NO RESIZE used. Pure 28x28.
     data_dir = os.path.join(os.path.dirname(__file__), 'data')

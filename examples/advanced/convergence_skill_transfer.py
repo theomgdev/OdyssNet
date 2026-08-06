@@ -96,7 +96,7 @@ def main():
     add_epochs = 1200
     mul_epochs = 700
     batch_size = 256
-    lr = 1e-4
+    lr = None  # zero-config: ChaosGrad estimates the step scale online
 
     print("\nStep 1/3: Train SMALL model on ADD")
     small_model = OdyssNet(

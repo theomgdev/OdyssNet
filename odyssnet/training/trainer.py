@@ -291,6 +291,10 @@ class OdyssNetTrainer:
         loss_val = loss.item() * gradient_accumulation_steps
         self._last_loss = loss_val
 
+        # Feed the loss stream to the optimizer's spike brake (ChaosGrad).
+        if step_now and hasattr(self.optimizer, 'report_loss'):
+            self.optimizer.report_loss(loss_val)
+
         # Predictive tracking formulation natively without blocking performance
         current_time = time.time()
         if self._start_time_pred is None:

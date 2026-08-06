@@ -1,3 +1,9 @@
+import sys
+
+# Keep emoji-rich console output from crashing legacy Windows code pages.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import torch
 import torch.nn as nn
 from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
@@ -53,7 +59,7 @@ def main():
         device=DEVICE
     )
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE)
     
     print("Training...")
     

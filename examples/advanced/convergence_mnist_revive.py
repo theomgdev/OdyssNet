@@ -37,7 +37,7 @@ def main():
     # Compile model
     model = model.compile()
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     

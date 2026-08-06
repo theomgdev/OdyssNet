@@ -60,7 +60,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, **kwargs)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, **kwargs)
     
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=1e-4)
+    trainer = OdyssNetTrainer(model, device=DEVICE)
     loss_fn = nn.MSELoss()
     trainer.loss_fn = loss_fn
     

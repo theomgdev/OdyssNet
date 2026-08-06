@@ -51,7 +51,7 @@ def main():
     )
     
     # Initialize Trainer
-    trainer = OdyssNetTrainer(model, device=DEVICE, lr=5e-5)
+    trainer = OdyssNetTrainer(model, device=DEVICE)
     
     print(f"Model: {NUM_NEURONS} Neurons. Thinking for {STEPS} steps.")
     

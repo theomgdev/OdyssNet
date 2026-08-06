@@ -251,6 +251,66 @@ class TestStepping:
 
 
 # ===========================================================================
+# Loss-spike brake
+# ===========================================================================
+
+class TestBrake:
+    def test_invalid_brake_factor_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), brake_factor=1.0)
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), brake_factor=0.0)
+
+    def test_spike_shrinks_estimate(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        # Establish a calm loss stream, then spike it.
+        for _ in range(30):
+            opt.report_loss(1.0)
+        d_before = opt.param_groups[0]['d']
+        num_before = opt.param_groups[0]['d_numerator']
+        opt.report_loss(100.0)
+        assert opt.param_groups[0]['d_max'] <= max(
+            opt.param_groups[0]['d0'], d_before)
+        assert abs(opt.param_groups[0]['d_numerator']) <= abs(num_before)
+
+    def test_steady_loss_never_brakes(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        d_before = opt.param_groups[0]['d']
+        for v in (1.0, 0.99, 1.01, 0.98, 1.0, 0.97):
+            opt.report_loss(v)
+        assert opt.param_groups[0]['d'] == d_before
+
+    def test_nan_loss_ignored(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        opt.report_loss(float('nan'))
+        opt.report_loss(1.0)  # must not raise
+
+    def test_brake_disabled(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m, brake_factor=None)
+        _train_steps(m, opt, steps=10)
+        d_before = opt.param_groups[0]['d']
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(1000.0)
+        assert opt.param_groups[0]['d'] == d_before
+
+    def test_trainer_feeds_brake(self):
+        m = _model()
+        t = OdyssNetTrainer(m, device="cpu")
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        t.train_batch(x, y, thinking_steps=2)
+        assert t.optimizer._loss_ema is not None
+
+
+# ===========================================================================
 # Persistence
 # ===========================================================================
 

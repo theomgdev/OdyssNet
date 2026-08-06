@@ -80,6 +80,13 @@ class ChaosGrad(torch.optim.Optimizer):
             overshoot by orders of magnitude during the turbulent early
             phase; the anchored cap keeps every step proportional to the
             network's design scale. Set ``None`` to disable. Default 0.25.
+        brake_factor (float, optional): Loss-spike brake. When
+            :meth:`report_loss` observes a statistical spike in the loss
+            stream, the distance estimate (and its ratchet ceiling) is
+            multiplied by this factor, letting the estimator re-grow only
+            if the landscape truly supports it. Counteracts the monotone
+            step-scale growth that destabilizes sharpening temporal tasks.
+            Set ``None`` to disable. Default 0.5.
         use_bias_correction (bool): Adam bias correction on the step
             magnitude. Default True.
         safeguard_warmup (bool): Use the warmup-robust variant of the
@@ -89,7 +96,8 @@ class ChaosGrad(torch.optim.Optimizer):
     def __init__(self, params, lr=None, betas=(0.9, 0.999), beta3=None,
                  eps=1e-8, weight_decay=0.0, d0=1e-6, d_coef=1.0,
                  growth_rate=float('inf'), d_mode='global', trust_ratio=0.25,
-                 use_bias_correction=True, safeguard_warmup=False):
+                 brake_factor=0.5, use_bias_correction=True,
+                 safeguard_warmup=False):
         if lr is not None and lr <= 0.0:
             raise ValueError(f"lr must be positive or None, got {lr}")
         if not 0.0 < d0:
@@ -108,13 +116,15 @@ class ChaosGrad(torch.optim.Optimizer):
             raise ValueError(f"d_mode must be 'global' or 'per_group', got {d_mode!r}")
         if trust_ratio is not None and trust_ratio <= 0.0:
             raise ValueError(f"trust_ratio must be positive or None, got {trust_ratio}")
+        if brake_factor is not None and not 0.0 < brake_factor < 1.0:
+            raise ValueError(f"brake_factor must be in (0, 1) or None, got {brake_factor}")
 
         defaults = dict(
             lr=lr, betas=betas, beta3=beta3, eps=eps,
             weight_decay=weight_decay,
             d=d0, d0=d0, d_max=d0, d_numerator=0.0,
             d_coef=d_coef, growth_rate=growth_rate, d_mode=d_mode,
-            trust_ratio=trust_ratio,
+            trust_ratio=trust_ratio, brake_factor=brake_factor,
             use_bias_correction=use_bias_correction,
             safeguard_warmup=safeguard_warmup,
             zero_diag=False,
@@ -122,6 +132,13 @@ class ChaosGrad(torch.optim.Optimizer):
             k=0,
         )
         super().__init__(params, defaults)
+
+        # Loss-stream statistics for the spike brake. Transient by design:
+        # after a checkpoint reload the EWMA re-seeds from the first
+        # reported loss, which is harmless (the braked d/d_max persist via
+        # the param groups).
+        self._loss_ema = None
+        self._loss_var = 0.0
 
         # Anchor the traction limit to the *initial* weight scale. A cap
         # referencing live weights would be self-defeating: runaway steps
@@ -399,6 +416,66 @@ class ChaosGrad(torch.optim.Optimizer):
             group['d_numerator'] = numerator
             group['d'] = d
             group['d_max'] = d_max
+
+    # ------------------------------------------------------------------ #
+    # Loss-spike brake                                                    #
+    # ------------------------------------------------------------------ #
+
+    #: EWMA smoothing for the loss stream (≈ 20-step memory).
+    _BRAKE_EMA_ALPHA = 0.05
+    #: A spike is a loss exceeding EWMA by 3 sigma AND by 20 percent.
+    _BRAKE_SIGMA = 3.0
+    _BRAKE_RATIO = 1.2
+
+    def report_loss(self, loss_value):
+        """
+        Feed the training loss to the spike brake. Called automatically by
+        ``OdyssNetTrainer`` after every optimization step; call it manually
+        in custom loops to enable the brake.
+
+        A statistical spike (loss above the running EWMA by 3 sigma and by
+        20 percent) signals that the current step scale has outgrown the
+        sharpening landscape. The estimator's numerator and ratchet ceiling
+        are scaled down by ``brake_factor``, and the estimate re-grows only
+        if the landscape supports it.
+        """
+        if isinstance(loss_value, torch.Tensor):
+            loss_value = loss_value.item()
+        if not math.isfinite(loss_value):
+            return
+
+        if self._loss_ema is None:
+            self._loss_ema = loss_value
+            self._loss_var = 0.0
+            return
+
+        diff = loss_value - self._loss_ema
+        std = math.sqrt(self._loss_var) + 1e-12
+        is_spike = (
+            diff > self._BRAKE_SIGMA * std
+            and loss_value > self._BRAKE_RATIO * abs(self._loss_ema)
+        )
+
+        alpha = self._BRAKE_EMA_ALPHA
+        self._loss_ema += alpha * diff
+        self._loss_var = (1 - alpha) * (self._loss_var + alpha * diff * diff)
+
+        if is_spike:
+            self._apply_brake()
+            # Re-seed the statistics at the spike level so a single plateau
+            # shift does not trigger a brake cascade.
+            self._loss_ema = loss_value
+            self._loss_var = 0.0
+
+    def _apply_brake(self):
+        for group in self.param_groups:
+            brake = group['brake_factor']
+            if brake is None or group['lr'] is not None:
+                continue
+            d0 = group['d0']
+            group['d_numerator'] *= brake
+            group['d_max'] = max(d0, group['d_max'] * brake)
+            group['d'] = max(d0, min(group['d'], group['d_max']))
 
     # ------------------------------------------------------------------ #
     # Diagnostics                                                         #
