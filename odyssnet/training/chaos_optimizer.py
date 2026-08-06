@@ -82,11 +82,12 @@ class ChaosGrad(torch.optim.Optimizer):
             network's design scale. Set ``None`` to disable. Default 0.25.
         brake_factor (float, optional): Loss-spike brake. When
             :meth:`report_loss` observes a statistical spike in the loss
-            stream, the distance estimate (and its ratchet ceiling) is
-            multiplied by this factor, letting the estimator re-grow only
-            if the landscape truly supports it. Counteracts the monotone
-            step-scale growth that destabilizes sharpening temporal tasks.
-            Set ``None`` to disable. Default 0.5.
+            stream, a transient ``brake_ceiling`` multiplier (independent of
+            the D-adaptation estimate ``d``) is cut by this factor, throttling
+            the *applied* step without touching the estimator's bookkeeping.
+            The ceiling relaxes back toward 1.0 every call, so an isolated
+            spike heals in tens of steps while a fast cascade of spikes (real
+            divergence) keeps compounding. Set ``None`` to disable. Default 0.5.
         use_bias_correction (bool): Adam bias correction on the step
             magnitude. Default True.
         safeguard_warmup (bool): Use the warmup-robust variant of the
@@ -122,7 +123,7 @@ class ChaosGrad(torch.optim.Optimizer):
         defaults = dict(
             lr=lr, betas=betas, beta3=beta3, eps=eps,
             weight_decay=weight_decay,
-            d=d0, d0=d0, d_max=d0, d_numerator=0.0,
+            d=d0, d0=d0, d_max=d0, d_numerator=0.0, brake_ceiling=1.0,
             d_coef=d_coef, growth_rate=growth_rate, d_mode=d_mode,
             trust_ratio=trust_ratio, brake_factor=brake_factor,
             use_bias_correction=use_bias_correction,
@@ -342,6 +343,10 @@ class ChaosGrad(torch.optim.Optimizer):
             adaptive = group['lr'] is None
             d = group['d']
             dlr = group.pop('_dlr')
+            # The brake throttles what's actually applied to the weights; it
+            # never touches `d`/`d_numerator` bookkeeping (Pass 1), so the
+            # estimator keeps learning the true scale even while suppressed.
+            applied_dlr = dlr * group['brake_ceiling'] if adaptive else dlr
 
             for p in group['params']:
                 if p.grad is None:
@@ -353,13 +358,13 @@ class ChaosGrad(torch.optim.Optimizer):
                 denom = state['exp_avg_sq'].sqrt().add_(d_eps)
 
                 if decay != 0.0:
-                    p.add_(p, alpha=-decay * dlr)
+                    p.add_(p, alpha=-decay * applied_dlr)
 
                 if beta1 > 0:
-                    p.addcdiv_(state['exp_avg'], denom, value=-dlr)
+                    p.addcdiv_(state['exp_avg'], denom, value=-applied_dlr)
                 else:
                     scale = d if adaptive else 1.0
-                    p.addcdiv_(grad, denom, value=-dlr * scale)
+                    p.addcdiv_(grad, denom, value=-applied_dlr * scale)
 
                 if group['zero_diag'] and p.dim() == 2 and p.shape[0] == p.shape[1]:
                     p.fill_diagonal_(0.0)
@@ -426,6 +431,11 @@ class ChaosGrad(torch.optim.Optimizer):
     #: A spike is a loss exceeding EWMA by 3 sigma AND by 20 percent.
     _BRAKE_SIGMA = 3.0
     _BRAKE_RATIO = 1.2
+    #: Per-call relaxation of `brake_ceiling` back toward 1.0. Geometric, not
+    #: a fixed window: an isolated spike heals in tens of calls; a fast
+    #: cascade of spikes (genuine divergence) doesn't get time to recover
+    #: between hits and keeps compounding down.
+    _BRAKE_RELEASE = 0.99
 
     def report_loss(self, loss_value):
         """
@@ -434,10 +444,10 @@ class ChaosGrad(torch.optim.Optimizer):
         in custom loops to enable the brake.
 
         A statistical spike (loss above the running EWMA by 3 sigma and by
-        20 percent) signals that the current step scale has outgrown the
-        sharpening landscape. The estimator's numerator and ratchet ceiling
-        are scaled down by ``brake_factor``, and the estimate re-grows only
-        if the landscape supports it.
+        20 percent) cuts a transient ``brake_ceiling`` multiplier by
+        ``brake_factor``, throttling the applied step without touching the
+        distance estimator's own bookkeeping (see :meth:`_apply_brake`). The
+        ceiling relaxes back toward 1.0 on every call.
         """
         if isinstance(loss_value, torch.Tensor):
             loss_value = loss_value.item()
@@ -456,26 +466,44 @@ class ChaosGrad(torch.optim.Optimizer):
             and loss_value > self._BRAKE_RATIO * abs(self._loss_ema)
         )
 
+        pre_var = self._loss_var
         alpha = self._BRAKE_EMA_ALPHA
         self._loss_ema += alpha * diff
         self._loss_var = (1 - alpha) * (self._loss_var + alpha * diff * diff)
 
+        # Continuous recovery on every call, spike or not.
+        for group in self.param_groups:
+            if group['brake_factor'] is not None:
+                group['brake_ceiling'] = min(1.0, group['brake_ceiling'] / self._BRAKE_RELEASE)
+
         if is_spike:
             self._apply_brake()
-            # Re-seed the statistics at the spike level so a single plateau
-            # shift does not trigger a brake cascade.
+            # Re-seed the mean at the spike level so a single plateau shift
+            # doesn't itself look like a spike next call, but keep the
+            # pre-spike variance estimate — collapsing it to 0 made the sigma
+            # test degenerate (trivially satisfied) for ~20 calls afterward.
             self._loss_ema = loss_value
-            self._loss_var = 0.0
+            self._loss_var = pre_var
 
     def _apply_brake(self):
+        """
+        Cuts `brake_ceiling` by `brake_factor` — a transient multiplier on
+        the applied step, separate from `d`/`d_numerator`/`d_max`. Earlier
+        this scaled the estimator's own numerator and ratchet ceiling
+        directly, which was a permanent mutation: on tasks where ordinary
+        minibatch noise crosses the spike threshold every few hundred steps
+        (observed on MNIST-record probes, unrelated to Hebbian plasticity),
+        repeated harmless triggers ratcheted the step scale to near-zero
+        with no way back, silently freezing training. The ceiling design
+        keeps the same protection for genuine fast-onset divergence (the
+        delayed-adder case this brake was built for) while letting isolated
+        noise wash out.
+        """
         for group in self.param_groups:
             brake = group['brake_factor']
             if brake is None or group['lr'] is not None:
                 continue
-            d0 = group['d0']
-            group['d_numerator'] *= brake
-            group['d_max'] = max(d0, group['d_max'] * brake)
-            group['d'] = max(d0, min(group['d'], group['d_max']))
+            group['brake_ceiling'] *= brake
 
     # ------------------------------------------------------------------ #
     # Diagnostics                                                         #
@@ -499,7 +527,10 @@ class ChaosGrad(torch.optim.Optimizer):
         steps = 0
         for group in self.param_groups:
             adaptive = group['lr'] is None
-            d_eff = group['d'] if adaptive else group['lr']
+            # Reflects what's actually applied to the weights (the D-adaptation
+            # estimate times the brake's transient ceiling), not just the raw
+            # estimate, so a user watching this number sees the true step size.
+            d_eff = group['d'] * group['brake_ceiling'] if adaptive else group['lr']
             d_values.append(d_eff)
             steps = max(steps, group['k'])
             if debug:
@@ -509,6 +540,7 @@ class ChaosGrad(torch.optim.Optimizer):
                     'adaptive': adaptive,
                     'effective_lr': d_eff,
                     'd_max': group['d_max'],
+                    'brake_ceiling': group['brake_ceiling'],
                     'weight_decay': group['weight_decay'],
                 })
 

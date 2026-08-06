@@ -262,7 +262,14 @@ class TestBrake:
         with pytest.raises(ValueError):
             ChaosGrad(m.parameters(), brake_factor=0.0)
 
-    def test_spike_shrinks_estimate(self):
+    def test_spike_shrinks_applied_step(self):
+        # Intent changed, not just implementation: the brake used to mutate
+        # `d`/`d_numerator` directly, which permanently scarred the D-adaptation
+        # estimator on every trigger -- fatal on tasks where ordinary minibatch
+        # noise crosses the spike threshold every few hundred steps (see
+        # `_apply_brake`'s docstring). It now throttles a separate transient
+        # `brake_ceiling` and leaves the estimator's own bookkeeping untouched,
+        # so it keeps learning the true scale even while suppressed.
         m = _model()
         opt = ChaosGrad.from_model(m)
         _train_steps(m, opt, steps=20)
@@ -271,10 +278,39 @@ class TestBrake:
             opt.report_loss(1.0)
         d_before = opt.param_groups[0]['d']
         num_before = opt.param_groups[0]['d_numerator']
+        ceiling_before = opt.param_groups[0]['brake_ceiling']
         opt.report_loss(100.0)
-        assert opt.param_groups[0]['d_max'] <= max(
-            opt.param_groups[0]['d0'], d_before)
-        assert abs(opt.param_groups[0]['d_numerator']) <= abs(num_before)
+        assert opt.param_groups[0]['brake_ceiling'] < ceiling_before
+        assert opt.param_groups[0]['d'] == d_before
+        assert opt.param_groups[0]['d_numerator'] == num_before
+
+    def test_ceiling_relaxes_after_isolated_spike(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ceiling_after_spike = opt.param_groups[0]['brake_ceiling']
+        assert ceiling_after_spike < 1.0
+        # An isolated spike should heal: many calm calls relax the ceiling
+        # back up rather than leaving it permanently depressed.
+        for _ in range(300):
+            opt.report_loss(1.0)
+        assert opt.param_groups[0]['brake_ceiling'] > ceiling_after_spike
+
+    def test_cascading_spikes_keep_compounding(self):
+        # A fast cascade (genuine divergence, like the delayed-adder failure
+        # this brake exists for) shouldn't get time to relax between hits.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ceiling_after_first = opt.param_groups[0]['brake_ceiling']
+        opt.report_loss(1000.0)
+        assert opt.param_groups[0]['brake_ceiling'] < ceiling_after_first
 
     def test_steady_loss_never_brakes(self):
         m = _model()

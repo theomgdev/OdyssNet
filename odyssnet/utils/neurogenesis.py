@@ -252,7 +252,7 @@ class Neurogenesis:
                 old_group = old_by_name.get(new_group.get('group_name'))
                 if old_group is None:
                     continue
-                for key in ('d', 'd_max', 'd_numerator', 'k', 'weight_decay'):
+                for key in ('d', 'd_max', 'd_numerator', 'brake_ceiling', 'k', 'weight_decay'):
                     if key in old_group:
                         new_group[key] = old_group[key]
         else:
