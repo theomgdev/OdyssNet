@@ -63,16 +63,13 @@ class OdyssNetTrainer:
         self._persistent_grads = {}
         self._core_weight = getattr(self.model, 'W', None)
 
+    def _is_cuda(self):
+        return str(self.device).startswith('cuda')
+
     def _ensure_scaler(self):
-        """Lazily initialize AMP scaler in a version-compatible way."""
-        if hasattr(self, 'scaler'):
-            return
-        amp_mod = getattr(torch, 'amp', None)
-        scaler_cls = getattr(amp_mod, 'GradScaler', None) if amp_mod is not None else None
-        if scaler_cls is not None:
-            self.scaler = scaler_cls('cuda', enabled=(self.device == 'cuda'))
-        else:
-            self.scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
+        """Lazily initialize the AMP gradient scaler."""
+        if not hasattr(self, 'scaler'):
+            self.scaler = torch.amp.GradScaler('cuda', enabled=self._is_cuda())
 
     def _inject_persistent_grads(self):
         """Inject persisted unscaled gradients before the optimizer step."""
@@ -102,13 +99,11 @@ class OdyssNetTrainer:
         self._persistent_grads.clear()
 
     def _get_autocast_ctx(self):
-        """Return a version-compatible AMP autocast context for the current device."""
-        device_type = 'cuda' if self.device == 'cuda' else 'cpu'
-        amp_mod = getattr(torch, 'amp', None)
-        autocast_fn = getattr(amp_mod, 'autocast', None) if amp_mod is not None else None
-        if autocast_fn is not None:
-            return autocast_fn(device_type=device_type, enabled=(self.device == 'cuda'))
-        return torch.cuda.amp.autocast(enabled=(self.device == 'cuda'))
+        """Return the AMP autocast context for the current device."""
+        is_cuda = self._is_cuda()
+        return torch.amp.autocast(
+            device_type='cuda' if is_cuda else 'cpu', enabled=is_cuda,
+        )
 
     def _extract_outputs(self, all_states, final_state, full_sequence):
         """Extract the prediction tensor from forward-pass outputs.
