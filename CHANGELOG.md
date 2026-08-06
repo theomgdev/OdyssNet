@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`OdyssNetTrainer` default optimizer is now ChaosGrad** (`lr=None` → automatic estimation). Passing an explicit `lr` selects ChaosGrad's fixed-rate mode (AdamW-equivalent updates under the family policy) instead of AdamW.
 - All convergence examples now run zero-config (no `lr` argument). Precision-record examples (embed/record/reverse-record/LLM) keep their tuned rates via fixed-rate mode.
 - `Neurogenesis.expand()` migrates ChaosGrad with fresh family grouping while preserving the step-scale estimate.
+- `convergence_mnist_embed.py` moved to zero-config (`lr` removed) — matches its previously tuned fixed-rate result under ChaosGrad.
+- `convergence_adder.py` epochs raised 500 → 2000 to ride out the mid-training loss spike before the loss-spike brake settles the estimate back down.
+- Re-validated and refreshed the advertised numbers in README.md/README_TR.md for MNIST, MNIST Revive, MNIST Tiny/Scaled, MNIST (8k) Embed, Sine Wave, Adder, Latch, Stopwatch, Detective, and Skill Transfer under ChaosGrad v2.6 — most improved (e.g. MNIST Tiny 90.2% → 95.15%, MNIST Revive 97.8% → 98.54%). MNIST (Record) and MNIST Reverse (Generation) numbers are intentionally left untouched pending further optimizer work.
 
 ### Fixed
 - `Neurogenesis.expand()` silently copied shape-tracking optimizer state tensors (`exp_avg`, `exp_avg_sq`, ...) without resizing them, crashing the first optimizer step after expansion.

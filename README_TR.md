@@ -49,15 +49,15 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |
 | **XOR** | Gizli Katman Gerekir | **Kaos Kapısı** (Zamana Katlanmış) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
-| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %98.92** | `convergence_mnist.py` |
-| **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %94.38** | `convergence_mnist_embed.py` |
+| **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %98.62** | `convergence_mnist.py` |
+| **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %94.08** | `convergence_mnist_embed.py` |
 | **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %90.14** | `convergence_mnist_record.py` |
 | **MNIST Ters (Üretim)** | Dekoder Gerekir | **484-Param Üreteç** | **%93.83 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
 | **Sinüs Dalgası** | Osilatör Gerekir | **Programlanabilir VCO** | **Mükemmel Senkron** | `convergence_sine_wave.py` |
 | **Mandal** | LSTM Gerekir | **Çekici Havzası** (İrade) | **Sonsuz Tutma** | `convergence_latch.py` |
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
 | **Dedektif**| Bellek Gerekir | **Bilişsel Sessizlik** (Akıl Yürütme) | **Mükemmel Tespit**| `convergence_detective_thinking.py` |
-| **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.5x Daha Hızlı** | `convergence_skill_transfer.py` |
+| **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.0x Daha Hızlı** | `convergence_skill_transfer.py` |
 
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
@@ -248,46 +248,46 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 #### 1. Ana Kıyaslama (Saf Sıfır-Gizli)
 *   **Hedef:** Tam 28x28 MNIST (784 Piksel).
 *   **Mimari:** 794 Nöron (Giriş+Çıkış). **0 Gizli Katman.**
-*   **Sonuç:** **%98.92 Doğruluk** (peak **%99.02** epoch 48'de).
+*   **Sonuç:** **%98.62 Doğruluk**.
     <details>
     <summary>Eğitim Günlüğünü Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.0035 | Test Acc 98.92% | FPS: 6348.0
+    Epoch 100: Loss 0.0087 | Test Acc 98.62% | FPS: 6033.3
     ```
 
     ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
-*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%98.92) elde eder.
+*   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%98.62) elde eder.
 
 #### 2. Anka Deneyi (Sürekli Yenileme)
 *   **Hipotez:** Ölü sinapsları öldürmek yerine **canlandırarak** (rastgele yeniden başlatma) %100 parametre verimliliğine ulaşabilir miyiz?
-*   **Sonuç:** **%97.8 Doğruluk**.
+*   **Sonuç:** **%98.54 Doğruluk**.
 *   **Gözlemler:**
-    *   Epoch 1: **19 bağlantı** "işe yaramaz" kabul edilip yeniden doğdu (629642 toplam içinde %0.00).
-    *   Epoch 100: Yeniden doğma **240 canlandırılmış** (%0.04) ile devam etti.
-    *   Bu sürekli ameliyat sırasında doğruluk **%97.8'e** tırmandı.
+    *   Epoch 1: **7.980 bağlantı** "işe yaramaz" kabul edilip yeniden doğdu (633612 toplam içinde %1.26).
+    *   Epoch 100: Yeniden doğma **11 canlandırılmış** (%0.00) seviyesine oturdu.
+    *   Bu sürekli ameliyat sırasında doğruluk **%98.54'e** tırmandı.
     <details>
     <summary>Yenileme Günlüğünü Gör</summary>
 
     ```text
-    Epoch 1: Loss 0.2859 | Acc 86.50% | Revived: 19/629642 (0.00%)
-    Epoch 100: Loss 0.0021 | Acc 97.80% | Revived: 240/629642 (0.04%)
+    Epoch 1: Loss 0.1038 | Acc 95.39% | Revived: 7980/633612 (1.26%)
+    Epoch 100: Loss 0.0089 | Acc 98.54% | Revived: 11/633612 (0.00%)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_revive.py`
-*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır ve %97.8 doğruluk elde eder.
+*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır ve %98.54 doğruluk elde eder.
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
 *   **Hedef:** 7x7'ye Küçültülmüş MNIST. (Bir simgeden daha az.)
 *   **Mimari:** Toplam **59 Nöron** (~3.5k Parametre).
-*   **Sonuç:** **%90.2 Doğruluk**.
+*   **Sonuç:** **%95.15 Doğruluk**.
     <details>
     <summary>Küçük Sonuçları Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.0058 | Test Acc 90.20%
+    Epoch 100: Loss 0.0249 | Test Acc 95.15%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
@@ -296,12 +296,12 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 #### 4. Ölçekli Test (Orta Kısıtlar)
 *   **Hedef:** 14x14'e Küçültülmüş MNIST.
 *   **Mimari:** ~42k Parametre.
-*   **Sonuç:** **%97.0 Doğruluk**.
+*   **Sonuç:** **%97.38 Doğruluk**.
     <details>
     <summary>Ölçekli Sonuçları Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.0094 | Test Acc 97.00%
+    Epoch 100: Loss 0.0188 | Test Acc 97.38%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_scaled.py`
@@ -310,15 +310,15 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Hedef:** Ayrışık projeksiyon kullanarak tam MNIST (784 Piksel).
 *   **Mimari:** **10 Nöron** (Düşünme Çekirdeği). Toplam **~8k Parametre**.
 *   **Strateji:** 784 Piksel $\to$ Proje(10) $\to$ RNN(10) $\to$ Çözümle(10).
-*   **Sonuç:** **%94.38 Doğruluk**.
+*   **Sonuç:** **%94.08 Doğruluk**.
     <details>
     <summary>Eğitim Günlüğünü Gör</summary>
 
     ```text
     Projected Input: 784 -> 10
     Total Params: 8090
-    Epoch 1: Loss 2.0601 | Test Acc 76.54%
-    Epoch 100: Loss 0.3141 | Test Acc 94.38%
+    Epoch 1: Loss 1.4060 | Test Acc 87.13%
+    Epoch 100: Loss 0.7529 | Test Acc 94.08%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_embed.py`
@@ -373,16 +373,16 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     ```text
     Frekans 0.15 (Yavaş Dalga):
-      t=1:  Hedef 0.1494 | OdyssNet 0.3369
-      t=6:  Hedef 0.7833 | OdyssNet 0.7792
-      t=11: Hedef 0.9969 | OdyssNet 1.0009
-      t=16: Hedef 0.6755 | OdyssNet 0.6738
-      t=21: Hedef -0.0084 | OdyssNet -0.0099
-      t=26: Hedef -0.6878 | OdyssNet -0.6883
+      t=1:  Hedef 0.1494 | OdyssNet 0.3411
+      t=6:  Hedef 0.7833 | OdyssNet 0.7764
+      t=11: Hedef 0.9969 | OdyssNet 1.0028
+      t=16: Hedef 0.6755 | OdyssNet 0.6856
+      t=21: Hedef -0.0084 | OdyssNet -0.0063
+      t=26: Hedef -0.6878 | OdyssNet -0.6840
 
     Frekans 0.45 (Hızlı Dalga):
-      t=1:  Hedef 0.4350 | OdyssNet 0.1721
-      t=26: Hedef -0.7620 | OdyssNet -0.7915
+      t=1:  Hedef 0.4350 | OdyssNet 0.1495
+      t=26: Hedef -0.7620 | OdyssNet -0.7772
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_sine_wave.py`
@@ -396,10 +396,10 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <summary>"Zihinsel Matematik" Sonuçlarını Gör</summary>
 
     ```text
-    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2124 (Fark: 0.0124)
-     0.5 + 0.2 =  0.70 | OdyssNet:  0.7216 (Fark: 0.0216)
-     0.1 + -0.1 = 0.00 | OdyssNet: -0.0166 (Fark: 0.0166)
-    -0.4 + -0.4 = -0.80 | OdyssNet: -0.8014 (Fark: 0.0014)
+    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2040 (Fark: 0.0040)
+     0.5 + 0.2 =  0.70 | OdyssNet:  0.6526 (Fark: 0.0474)
+     0.1 + -0.1 = 0.00 | OdyssNet:  0.0101 (Fark: 0.0101)
+    -0.4 + -0.4 = -0.80 | OdyssNet: -0.8082 (Fark: 0.0082)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_adder.py`
@@ -414,11 +414,13 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     ```text
     Tetikleyici t=5'te gönderildi
-    t=04 | Out: -0.8587 | KAPALI 🔴
-    t=05 | Out: -0.8101 | KAPALI ⚡ TETİKLEYİCİ!
-    t=06 | Out: 1.0399 | AÇIK  🟢
+    t=04 | Out: -0.9296 | KAPALI 🔴
+    t=05 | Out: -0.7212 | KAPALI ⚡ TETİKLEYİCİ!
+    t=06 | Out: 0.8312 | AÇIK  🟢
     ...
-    t=19 | Out: 1.0291 | AÇIK  🟢
+    t=19 | Out: 0.8948 | AÇIK  🟢
+    ...
+    t=30 | Out: 1.0249 | AÇIK  🟢 (kararlı platoya ulaşıldı)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_latch.py`
@@ -433,15 +435,15 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     ```text
     Hedef Zamanlayıcı: 10 adım (Giriş değeri: 0.50)
-    t=09 | Out: 0.4957 ████
-    t=10 | Out: 1.0118 ██████████ 🎯 HEDEF
-    t=11 | Out: 0.5082 █████
+    t=09 | Out: 0.5085 █████
+    t=10 | Out: 0.6978 ██████ 🎯 HEDEF
+    t=11 | Out: 0.5259 █████
     Sonuç: t=10'da zirve (Hata: 0)
 
     Hedef Zamanlayıcı: 20 adım (Giriş değeri: 1.00)
-    t=19 | Out: 0.4837 ████
-    t=20 | Out: 0.9975 █████████ 🎯 HEDEF
-    t=21 | Out: 0.5029 █████
+    t=19 | Out: 0.5508 █████
+    t=20 | Out: 0.8369 ████████ 🎯 HEDEF
+    t=21 | Out: 0.5452 █████
     Sonuç: t=20'de zirve (Hata: 0)
     ```
     </details>
@@ -458,12 +460,12 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```text
     Zaman  | Giriş | Çıkış    | Durum
     ----------------------------------------
-    8      | 0     | 0.0256    |
-    12     | 1     | -0.9988   |
-    16     | 1     | 0.0307 🚨 | ATEŞLEMELİ
-    17     | .     | 0.9866 🚨 | (Düşünüyor...)
-    18     | .     | 0.9892 🚨 | (Düşünüyor...)
-    19     | .     | 0.9919 🚨 | (Düşünüyor...)
+    8      | 0     | -0.0680  |
+    12     | 1     | -0.9009  |
+    16     | 1     | -0.0650  | ATEŞLEMELİ
+    17     | .     | 0.8835 🚨 | (Düşünüyor...)
+    18     | .     | 0.9051 🚨 | (Düşünüyor...)
+    19     | .     | 0.8961 🚨 | (Düşünüyor...)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_detective_thinking.py`
@@ -477,15 +479,15 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     <summary>Transfer vs Scratch Günlüğünü Gör</summary>
 
     ```text
-    Küçük ADD final kayıp: 0.004086
-    Transplant copied: 676/9604 (%7.0)
-    MULTIPLY ortalama kayıp | transplanted=0.021606 | scratch=0.056580
-    MULTIPLY final kayıp | transplanted=0.000118 | scratch=0.007560
-    loss <= 0.020 eşiğine iniş | transplanted=38 | scratch=135
-    Test MAE | transplanted=0.009329 | scratch=0.094381
+    Küçük ADD final kayıp: 0.077479
+    Transplant copied: 1972/28612 (%6.9)
+    MULTIPLY ortalama kayıp | transplanted=0.077583 | scratch=0.041394
+    MULTIPLY final kayıp | transplanted=0.001538 | scratch=0.010530
+    loss <= 0.020 eşiğine iniş | transplanted=90 | scratch=273
+    Test MAE | transplanted=0.059090 | scratch=0.122761
 
     Örnek tahminler (hedef= a*b):
-    a=-0.80, b=-0.70, hedef=+0.5600 | transferred=+0.5804 | scratch=+0.5182
+    a=-0.80, b=-0.70, hedef=+0.5600 | transferred=+0.5648 | scratch=+0.3793
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`

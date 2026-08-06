@@ -93,8 +93,8 @@ def main():
     small_neurons = 24
     large_neurons = 96
 
-    add_epochs = 1200
-    mul_epochs = 700
+    add_epochs = 500
+    mul_epochs = 1500
     batch_size = 256
     lr = None  # zero-config: ChaosGrad estimates the step scale online
 
@@ -104,6 +104,7 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
+        hebb_type="both"
     )
     small_trainer = OdyssNetTrainer(
         small_model,
@@ -140,6 +141,7 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
+        hebb_type="both"
     )
 
     set_seed(777)
@@ -148,6 +150,7 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
+        hebb_type="both"
     )
 
     transplant_stats = transplant_weights(transfer_model, ckpt_path, device=device, verbose=True)

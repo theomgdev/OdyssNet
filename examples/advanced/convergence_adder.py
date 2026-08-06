@@ -46,7 +46,7 @@ def main():
     DELAY_2 = 8
     
     BATCH_SIZE = 1024
-    EPOCHS = 500
+    EPOCHS = 2000
     
     # Initialize Model
     model = OdyssNet(

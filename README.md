@@ -48,15 +48,15 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
-| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 98.92%** | `convergence_mnist.py` |
-| **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 94.38%** | `convergence_mnist_embed.py` |
+| **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 98.62%** | `convergence_mnist.py` |
+| **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 94.08%** | `convergence_mnist_embed.py` |
 | **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 90.14%** | `convergence_mnist_record.py` |
 | **MNIST Reverse (Generation)** | Needs Decoder | **The 484-Param Generator** | **93.83% Compression** | `convergence_mnist_reverse_record.py` |
 | **Sine Wave** | Needs Oscillator | **Programmable VCO** | **Perfect Sync** | `convergence_sine_wave.py` |
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective_thinking.py` |
-| **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **3.5x Faster** | `convergence_skill_transfer.py` |
+| **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **3.0x Faster** | `convergence_skill_transfer.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -247,46 +247,46 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 #### 1. The Main Benchmark (Pure Zero-Hidden)
 *   **Target:** Full 28x28 MNIST (784 Pixels).
 *   **Architecture:** 794 Neurons (Input+Output). **0 Hidden Layers.**
-*   **Result:** **98.92% Accuracy** (peak **99.02%** at epoch 48).
+*   **Result:** **98.62% Accuracy**.
     <details>
     <summary>See Training Log</summary>
 
     ```text
-    Epoch 100: Loss 0.0035 | Test Acc 98.92% | FPS: 6348.0
+    Epoch 100: Loss 0.0087 | Test Acc 98.62% | FPS: 6033.3
     ```
 
     ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
-*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (98.92%) without Deep Learning layers, purely through **Temporal Depth**.
+*   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (98.62%) without Deep Learning layers, purely through **Temporal Depth**.
 
 #### 2. The Phoenix Experiment (Continuous Regeneration)
 *   **Hypothesis:** Can we reach 100% parameter efficiency by **reviving** dead synapses (random re-initialization) instead of just killing them?
-*   **Result:** **97.8% Accuracy**.
+*   **Result:** **98.54% Accuracy**.
 *   **Observations:**
-    *   Epoch 1: **19 connections** were deemed "useless" and reborn (0.00% of 629642 total).
-    *   Epoch 100: Rebirth continued with **240 revived** (0.04%).
-    *   Accuracy climbed to **97.8%** during this continuous surgery.
+    *   Epoch 1: **7,980 connections** were deemed "useless" and reborn (1.26% of 633612 total).
+    *   Epoch 100: Rebirth had settled to **11 revived** (0.00%).
+    *   Accuracy climbed to **98.54%** during this continuous surgery.
     <details>
     <summary>See Regeneration Log</summary>
 
     ```text
-    Epoch 1: Loss 0.2859 | Acc 86.50% | Revived: 19/629642 (0.00%)
-    Epoch 100: Loss 0.0021 | Acc 97.80% | Revived: 240/629642 (0.04%)
+    Epoch 1: Loss 0.1038 | Acc 95.39% | Revived: 7980/633612 (1.26%)
+    Epoch 100: Loss 0.0089 | Acc 98.54% | Revived: 11/633612 (0.00%)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_revive.py`
-*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation, achieving 97.8% accuracy.
+*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation, achieving 98.54% accuracy.
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).
 *   **Architecture:** **59 Neurons** total (~3.5k Parameters).
-*   **Result:** **90.2% Accuracy**.
+*   **Result:** **95.15% Accuracy**.
     <details>
     <summary>See Tiny Results</summary>
 
     ```text
-    Epoch 100: Loss 0.0058 | Test Acc 90.20%
+    Epoch 100: Loss 0.0249 | Test Acc 95.15%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
@@ -295,12 +295,12 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 #### 4. The Scaled Test (Medium Constraints)
 *   **Target:** 14x14 Downscaled MNIST.
 *   **Architecture:** ~42k Parameters.
-*   **Result:** **97.0% Accuracy**.
+*   **Result:** **97.38% Accuracy**.
     <details>
     <summary>See Scaled Results</summary>
 
     ```text
-    Epoch 100: Loss 0.0094 | Test Acc 97.00%
+    Epoch 100: Loss 0.0188 | Test Acc 97.38%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_scaled.py`
@@ -309,15 +309,15 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Target:** Full MNIST (784 Pixels) using decoupled projection.
 *   **Architecture:** **10 Neurons** (Thinking Core). Total **~8k Parameters**.
 *   **Strategy:** 784 Pixels $\to$ Project(10) $\to$ RNN(10) $\to$ Decode(10).
-*   **Result:** **94.38% Accuracy**.
+*   **Result:** **94.08% Accuracy**.
     <details>
     <summary>See Training Log</summary>
 
     ```text
     Projected Input: 784 -> 10
     Total Params: 8090
-    Epoch 1: Loss 2.0601 | Test Acc 76.54%
-    Epoch 100: Loss 0.3141 | Test Acc 94.38%
+    Epoch 1: Loss 1.4060 | Test Acc 87.13%
+    Epoch 100: Loss 0.7529 | Test Acc 94.08%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_embed.py`
@@ -372,16 +372,16 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
     ```text
     Frequency 0.15 (Slow Wave):
-      t=1:  Target 0.1494 | OdyssNet 0.3369
-      t=6:  Target 0.7833 | OdyssNet 0.7792
-      t=11: Target 0.9969 | OdyssNet 1.0009
-      t=16: Target 0.6755 | OdyssNet 0.6738
-      t=21: Target -0.0084 | OdyssNet -0.0099
-      t=26: Target -0.6878 | OdyssNet -0.6883
+      t=1:  Target 0.1494 | OdyssNet 0.3411
+      t=6:  Target 0.7833 | OdyssNet 0.7764
+      t=11: Target 0.9969 | OdyssNet 1.0028
+      t=16: Target 0.6755 | OdyssNet 0.6856
+      t=21: Target -0.0084 | OdyssNet -0.0063
+      t=26: Target -0.6878 | OdyssNet -0.6840
 
     Frequency 0.45 (Fast Wave):
-      t=1:  Target 0.4350 | OdyssNet 0.1721
-      t=26: Target -0.7620 | OdyssNet -0.7915
+      t=1:  Target 0.4350 | OdyssNet 0.1495
+      t=26: Target -0.7620 | OdyssNet -0.7772
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_sine_wave.py`
@@ -395,10 +395,10 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <summary>See "Mental Math" Results</summary>
 
     ```text
-    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2124 (Diff: 0.0124)
-     0.5 + 0.2 =  0.70 | OdyssNet:  0.7216 (Diff: 0.0216)
-     0.1 + -0.1 = 0.00 | OdyssNet: -0.0166 (Diff: 0.0166)
-    -0.4 + -0.4 = -0.80 | OdyssNet: -0.8014 (Diff: 0.0014)
+    -0.3 + 0.1 = -0.20 | OdyssNet: -0.2040 (Diff: 0.0040)
+     0.5 + 0.2 =  0.70 | OdyssNet:  0.6526 (Diff: 0.0474)
+     0.1 + -0.1 = 0.00 | OdyssNet:  0.0101 (Diff: 0.0101)
+    -0.4 + -0.4 = -0.80 | OdyssNet: -0.8082 (Diff: 0.0082)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_adder.py`
@@ -413,11 +413,13 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
     ```text
     Trigger sent at t=5
-    t=04 | Out: -0.8587 | OFF 🔴
-    t=05 | Out: -0.8101 | OFF ⚡ TRIGGER!
-    t=06 | Out: 1.0399 | ON  🟢
+    t=04 | Out: -0.9296 | OFF 🔴
+    t=05 | Out: -0.7212 | OFF ⚡ TRIGGER!
+    t=06 | Out: 0.8312 | ON  🟢
     ...
-    t=19 | Out: 1.0291 | ON  🟢
+    t=19 | Out: 0.8948 | ON  🟢
+    ...
+    t=30 | Out: 1.0249 | ON  🟢 (stable plateau reached)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_latch.py`
@@ -432,15 +434,15 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
     ```text
     Target Timer: 10 steps (Input val: 0.50)
-    t=09 | Out: 0.4957 ████
-    t=10 | Out: 1.0118 ██████████ 🎯 TARGET
-    t=11 | Out: 0.5082 █████
+    t=09 | Out: 0.5085 █████
+    t=10 | Out: 0.6978 ██████ 🎯 TARGET
+    t=11 | Out: 0.5259 █████
     Result: Peak at t=10 (Error: 0)
 
     Target Timer: 20 steps (Input val: 1.00)
-    t=19 | Out: 0.4837 ████
-    t=20 | Out: 0.9975 █████████ 🎯 TARGET
-    t=21 | Out: 0.5029 █████
+    t=19 | Out: 0.5508 █████
+    t=20 | Out: 0.8369 ████████ 🎯 TARGET
+    t=21 | Out: 0.5452 █████
     Result: Peak at t=20 (Error: 0)
     ```
     </details>
@@ -457,12 +459,12 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```text
     Time  | Input | Output   | Status
     ----------------------------------------
-    8     | 0     | 0.0256    |
-    12    | 1     | -0.9988   |
-    16    | 1     | 0.0307 🚨 | SHOULD FIRE
-    17    | .     | 0.9866 🚨 | (Thinking...)
-    18    | .     | 0.9892 🚨 | (Thinking...)
-    19    | .     | 0.9919 🚨 | (Thinking...)
+    8     | 0     | -0.0680  |
+    12    | 1     | -0.9009  |
+    16    | 1     | -0.0650  | SHOULD FIRE
+    17    | .     | 0.8835 🚨 | (Thinking...)
+    18    | .     | 0.9051 🚨 | (Thinking...)
+    19    | .     | 0.8961 🚨 | (Thinking...)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_detective_thinking.py`
@@ -476,15 +478,15 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     <summary>See Transfer vs Scratch Log</summary>
 
     ```text
-    Small ADD final loss: 0.004086
-    Transplant copied: 676/9604 (7.0%)
-    MULTIPLY avg loss | transplanted=0.021606 | scratch=0.056580
-    MULTIPLY final loss | transplanted=0.000118 | scratch=0.007560
-    First epoch loss<=0.020 | transplanted=38 | scratch=135
-    Test MAE | transplanted=0.009329 | scratch=0.094381
+    Small ADD final loss: 0.077479
+    Transplant copied: 1972/28612 (6.9%)
+    MULTIPLY avg loss | transplanted=0.077583 | scratch=0.041394
+    MULTIPLY final loss | transplanted=0.001538 | scratch=0.010530
+    First epoch loss<=0.020 | transplanted=90 | scratch=273
+    Test MAE | transplanted=0.059090 | scratch=0.122761
 
     Example predictions (target= a*b):
-    a=-0.80, b=-0.70, target=+0.5600 | transferred=+0.5804 | scratch=+0.5182
+    a=-0.80, b=-0.70, target=+0.5600 | transferred=+0.5648 | scratch=+0.3793
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
