@@ -4,6 +4,27 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.0] — 2026-08-06
+
+### Added
+- **ChaosGrad** — OdyssNet's bespoke zero-config optimizer, rebuilt from first principles and now the default. Combines Adam-style per-synapse preconditioning with online distance adaptation (D-adaptation class estimator): no learning rate is required. Exported as `odyssnet.ChaosGrad`.
+- **Architecture-aware family policy**: parameters are auto-classified into `chaos_core`, `memory_feedback`, `projections`, `plasticity`, and `modulation` families. Weight decay applies only to connective structure; Hebbian logits and gates are never decayed. The chaos core's zero-diagonal constraint is enforced inside the optimizer step.
+- **Anchored traction limit** (`trust_ratio`): the applied step scale is capped at a fraction of the network's initial weight scale, shielding tiny chaotic networks from distance-estimator overshoot (stock Prodigy could not solve the 9-parameter XOR example; ChaosGrad solves it zero-config with the step scale settling at the previously hand-tuned value).
+- **Loss-spike brake** (`brake_factor`): on a statistical loss spike the distance estimate is scaled down and re-grows only if the landscape supports it, fixing late-training divergence on sharpening temporal tasks (delayed adder). The trainer feeds the loss stream automatically; custom loops can call `optimizer.report_loss(loss)`.
+- `trainer.get_diagnostics()` now includes ChaosGrad health metrics under the `optimizer` key, and `current_lr` reports the live step-scale estimate.
+
+### Changed
+- **`OdyssNetTrainer` default optimizer is now ChaosGrad** (`lr=None` → automatic estimation). Passing an explicit `lr` selects ChaosGrad's fixed-rate mode (AdamW-equivalent updates under the family policy) instead of AdamW.
+- All convergence examples now run zero-config (no `lr` argument). Precision-record examples (embed/record/reverse-record/LLM) keep their tuned rates via fixed-rate mode.
+- `Neurogenesis.expand()` migrates ChaosGrad with fresh family grouping while preserving the step-scale estimate.
+
+### Fixed
+- `Neurogenesis.expand()` silently copied shape-tracking optimizer state tensors (`exp_avg`, `exp_avg_sq`, ...) without resizing them, crashing the first optimizer step after expansion.
+- Examples with emoji output crashed on legacy Windows code pages (cp1254); affected scripts now reconfigure stdout to UTF-8.
+
+### Removed
+- `prodigyopt` dependency (Prodigy is superseded by ChaosGrad).
+
 ## [2.5.0] — 2026-04-30
 
 ### Added

@@ -32,6 +32,7 @@ pytest tests/ # but not recommended as it will not see your env setup
 odyssnet/              # Library source code
   core/network.py      # OdyssNet model
   training/trainer.py  # OdyssNetTrainer
+  training/chaos_optimizer.py  # ChaosGrad zero-config optimizer
   utils/               # Data, checkpointing, neurogenesis, history
 tests/                 # Test suite (mirrors odyssnet/ structure)
 examples/              # Core validation scripts (identity, XOR, MNIST)
@@ -197,10 +198,10 @@ model = OdyssNet(
 # Quick experiment — global plasticity
 model = OdyssNet(..., hebb_type='spatial', hebb_res='global')
 
-# Default: Prodigy optimizer — auto-calibrates LR, no tuning needed
+# Default: ChaosGrad — estimates the step scale online, no tuning needed
 trainer = OdyssNetTrainer(model)
 
-# AdamW: pass an explicit learning rate
+# Fixed-rate mode: pass an explicit learning rate (reproducible)
 trainer = OdyssNetTrainer(model, lr=3e-4)
 ```
 
@@ -292,7 +293,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
         *   Data shuffling / batch sampling.
         *   Dropout and stochastic regularization.
         *   CUDA random state (for GPU consistency).
-    *   **Test:** If you run the script twice with the same seed, loss curves and final results should be **identical**, byte-for-byte. Note: this requires passing an explicit `lr` to `OdyssNetTrainer` — the default `lr=None` (Prodigy) adapts its learning rate online and will produce different curves across runs.
+    *   **Test:** If you run the script twice with the same seed, loss curves and final results should be **identical**, byte-for-byte. Note: byte-for-byte identity requires ChaosGrad's fixed-rate mode (explicit `lr`) — the default `lr=None` estimates the step scale online, so curves vary slightly across runs even when seeded.
 
 2.  **Visuals:** Your example should print a cool visualization. Don't just print "Loss: 0.01". Print the timeline.
     *   *Example:* `t=05 | Input: 1 | Output: 0.99 🟢`
@@ -344,7 +345,7 @@ history = TrainingHistory()
 for epoch in range(epochs):
     loss = trainer.train_batch(x, y, thinking_steps=10)
     acc = evaluate_accuracy(...)
-    lr = trainer.optimizer.param_groups[0]['lr'] if hasattr(trainer.optimizer, 'param_groups') else trainer.initial_lr
+    lr = trainer.get_diagnostics()['current_lr']  # ChaosGrad's live estimate
 
     history.record(loss=loss, accuracy=acc, lr=lr)
 
@@ -445,9 +446,14 @@ If loss oscillates or training is unstable:
    trainer = OdyssNetTrainer(model, gradient_persistence=0.1)
    ```
 
-2. **Use AdamW with a lower explicit learning rate** (bypasses Prodigy):
+2. **Pin a lower explicit learning rate** (ChaosGrad fixed-rate mode):
    ```python
    trainer = OdyssNetTrainer(model, lr=1e-4)
+   ```
+   Or keep automatic estimation but make it more cautious:
+   ```python
+   from odyssnet import ChaosGrad
+   trainer = OdyssNetTrainer(model, optimizer=ChaosGrad.from_model(model, d_coef=0.5))
    ```
 
 3. **Try different initialization** if using tiny networks:
@@ -539,11 +545,11 @@ When modifying the library itself (not examples), follow these additional rules:
 
 ### New/modified example scripts (`examples/`)
 1.  [ ] **Does your script call `set_seed(42)` at the START of `main()`?** (MANDATORY for reproducibility)
-2.  [ ] **Does `OdyssNetTrainer` receive an explicit `lr`?** (e.g. `lr=1e-4`). The default `lr=None` activates Prodigy, which adapts LR online and breaks byte-for-byte reproducibility. Examples must pin a float lr.
+2.  [ ] **Is the trainer zero-config (`OdyssNetTrainer(model, device=...)`) unless there is a documented reason to pin `lr`?** Zero-config ChaosGrad is the recommended default for examples. Pin an explicit `lr` only for precision-record scripts whose advertised metrics depend on a specific tuned rate — and say so in a comment.
 3.  [ ] Did you place it in the correct folder (`examples/` for core validations, `examples/advanced/` for complex tasks)?
 4.  [ ] Are you using `OdyssNetTrainer`?
 5.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
-6.  [ ] If you set `hebb_type`, did you review the **Hebbian Optimizer Contract** above and confirm weight decay is not applied to the Hebbian group?
+6.  [ ] If you set `hebb_type`, remember that ChaosGrad automatically classifies Hebbian logits into the `plasticity` family with zero weight decay — never add decay to them via a custom optimizer.
 7.  [ ] Does it converge reliably? (If you see `Loss nan`, see **Troubleshooting** above.)
 8.  [ ] Does the terminal output clearly explain what is happening?
 9.  [ ] Does the script use `TrainingHistory` and call `history.plot()` at the end?

@@ -6,7 +6,7 @@ OdyssNet is a PyTorch-based library that implements **Zero-Hidden Layer** neural
 
 The library is organized into three primary modules:
 1.  **`odyssnet.core.network`**: The recurrent core architecture and update dynamics.
-2.  **`odyssnet.training.trainer`**: Optimization engine with AdamW and bio-inspired regularization.
+2.  **`odyssnet.training.trainer`**: Optimization engine built around **ChaosGrad** with bio-inspired regularization.
 3.  **`odyssnet.utils`**: Data utilities, model persistence (`odyssstore`), and dynamic expansion (`neurogenesis`).
 
 ---
@@ -198,17 +198,18 @@ Runs the dynamic system.
 
 ## OdyssNet Trainer (`odyssnet.training.trainer`)
 
-The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **Prodigy** is the default optimizer (auto-calibrating, no LR tuning required). Pass an explicit `lr` to use AdamW instead.
+The `OdyssNetTrainer` handles the training loop, gradient accumulation, mixed precision (AMP), and experimental features like Ghost Gradients. **ChaosGrad** is the default optimizer — fully zero-config: it estimates the step scale online, so no learning rate is required.
 
 ### Initialization
 
 ```python
 from odyssnet import OdyssNetTrainer
 
-# Quick prototyping: Prodigy — auto-calibrates LR, no tuning needed
+# Zero-config (recommended): ChaosGrad estimates the step scale online
 trainer = OdyssNetTrainer(model, device='cuda')
 
-# Reproducible experiments and production: pin an explicit lr to use AdamW
+# Fixed learning rate: ChaosGrad in fixed-rate mode (AdamW-equivalent,
+# byte-for-byte reproducible loss curves)
 trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
 
 # With optional features
@@ -220,15 +221,19 @@ trainer = OdyssNetTrainer(
     anomaly_hook=my_hook
 )
 
-# Custom optimizer (bypasses both Prodigy and AdamW)
+# Expert overrides on the default optimizer
+from odyssnet import ChaosGrad
+trainer = OdyssNetTrainer(model, optimizer=ChaosGrad.from_model(model, d_coef=0.5))
+
+# Any torch optimizer still works
 import torch
 trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(), lr=1e-4))
 ```
 
 **Parameters:**
 *   `lr` (float or None): Learning rate. Default: `None`.
-    *   `None`: **Prodigy** optimizer is used. Auto-calibrates the learning rate continuously — no manual tuning required. Requires `pip install prodigyopt`. Best for quick prototyping; produces non-deterministic loss curves across runs even with a fixed seed.
-    *   float (e.g. `1e-4`): **AdamW** optimizer is used with `weight_decay=0.01`. Recommended for reproducible experiments, benchmarking, and production runs.
+    *   `None`: **ChaosGrad** estimates the step scale online — no manual tuning required. Recommended default. Loss curves vary slightly across runs because the estimate adapts to the observed landscape.
+    *   float (e.g. `1e-4`): ChaosGrad runs in **fixed-rate mode** (automatic estimation disabled; AdamW-equivalent updates under the same family policy). Use for byte-for-byte reproducibility studies and benchmarking against fixed baselines.
 *   `gradient_persistence` (float): **Ghost Gradients / Persistence**.
     *   `0.0`: Standard behavior (`zero_grad()` after every step).
     *   `> 0.0` (e.g., `0.1`): Keeps a percentage of the previous step's gradient. This creates a "momentum" over time, effectively simulating a larger batch size or longer temporal context. Useful for difficult convergence landscapes.
@@ -285,13 +290,65 @@ Returns comprehensive training diagnostics.
 A dictionary containing:
 *   `step_count`: Number of optimization steps taken
 *   `last_loss`: Most recent loss value
-*   `current_lr`: Current learning rate
+*   `current_lr`: Effective learning rate (ChaosGrad's live estimate when automatic)
 *   `gradient_persistence`: Gradient persistence coefficient
+*   `optimizer`: ChaosGrad health metrics (present when ChaosGrad is active; per-family detail in debug mode)
 *   `persistent_grads_active`: Number of active persistent gradients (debug mode only)
 *   `anomaly_tracking`: Anomaly detection state (debug mode only)
 *   `loss_tracking`: Loss buffer statistics (debug mode only)
 *   `scaler_state`: AMP scaler information (debug mode only)
 *   `gradient_stats`: Gradient norms and means across parameters (debug mode only)
+
+---
+
+## ChaosGrad Optimizer (`odyssnet.training.chaos_optimizer`)
+
+ChaosGrad is OdyssNet's bespoke zero-config optimizer — "the learning teacher." It combines three mechanisms tuned to the chaos core's dynamics:
+
+1.  **Per-synapse preconditioning** (Adam-style second moment): temporal weight reuse across thinking steps makes gradient scales wildly heterogeneous across the NxN matrix; every synapse gets its own effective step size.
+2.  **Online distance adaptation** (D-adaptation class estimator): the global step scale is *estimated* from the observed distance traveled toward the solution. No learning rate is ever required.
+3.  **Architecture-aware policy**: parameters are auto-classified into families — `chaos_core` (W), `memory_feedback`, `projections` (embed/proj/decoder), `plasticity` (Hebbian logits), and `modulation` (gates, scales, bias, norms). Weight decay applies only to connective structure; the chaos core's zero-diagonal constraint is enforced inside the step.
+
+Two safety systems keep the estimator honest on chaotic landscapes:
+
+*   **Traction limit** (`trust_ratio`): the applied step scale never exceeds `trust_ratio × RMS(initial weights)`, anchored at construction. Shields tiny networks (e.g. the 9-parameter XOR core) from early estimator overshoot.
+*   **Loss-spike brake** (`brake_factor`): on a statistical loss spike (3σ and +20% over the running EWMA), the distance estimate is scaled down and re-grows only if the landscape supports it. Counteracts the monotone step-scale growth that destabilizes sharpening temporal tasks. The trainer feeds the loss stream automatically; custom loops call `optimizer.report_loss(loss)`.
+
+### Usage
+
+```python
+from odyssnet import ChaosGrad
+
+# Zero-config (what the trainer does internally)
+optimizer = ChaosGrad.from_model(model)
+
+# Fixed-rate mode: AdamW-equivalent, reproducible
+optimizer = ChaosGrad.from_model(model, lr=1e-4)
+
+# Expert knobs (all optional)
+optimizer = ChaosGrad.from_model(
+    model,
+    d_coef=1.0,            # step-scale multiplier: 0.5 cautious, 2.0 bold
+    d0=1e-6,               # initial step-scale estimate
+    growth_rate=float('inf'),  # finite values (e.g. 1.02) act as warmup
+    d_mode='global',       # 'per_group' = independent estimate per family
+    trust_ratio=0.25,      # traction limit (None disables)
+    brake_factor=0.5,      # loss-spike brake (None disables)
+    betas=(0.9, 0.999),
+    use_bias_correction=True,
+)
+
+# Plain parameter iterables also work (single group, global estimation,
+# but no family policy — prefer from_model for OdyssNet models)
+optimizer = ChaosGrad(model.parameters())
+```
+
+### Key Methods
+
+*   `ChaosGrad.from_model(model, lr=None, **kwargs)`: zero-config entry point with architecture-aware family grouping.
+*   `ChaosGrad.classify_params(model)`: returns the family param-group dicts (useful for custom policies).
+*   `optimizer.report_loss(loss)`: feeds the loss-spike brake. Automatic under `OdyssNetTrainer`.
+*   `optimizer.get_diagnostics(debug=False)`: `global_step`, `effective_lr`, and per-family stats in debug mode.
 
 ---
 
