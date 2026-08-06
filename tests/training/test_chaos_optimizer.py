@@ -83,6 +83,16 @@ class TestValidation:
         with pytest.raises(ValueError):
             ChaosGrad(m.parameters(), d_mode='local')
 
+    def test_invalid_trust_ratio_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), trust_ratio=0.0)
+
+    def test_trust_ratio_none_accepted(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m, trust_ratio=None)
+        assert opt.param_groups[0]['trust_ratio'] is None
+
 
 # ===========================================================================
 # Parameter classification
@@ -206,6 +216,23 @@ class TestStepping:
         opt = ChaosGrad.from_model(m)
         opt.step()  # no backward called; must not raise
         assert opt.param_groups[0]['d'] == opt.param_groups[0]['d0']
+
+    def test_trust_cap_bounds_d(self):
+        # Chaos core is initialized with std 0.02 ('quiet'), so the applied
+        # step scale must never exceed trust_ratio * rms0 of the smallest
+        # anchoring family, regardless of estimator overshoot.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        cap = opt._trust_cap([g for g in opt.param_groups if g['lr'] is None])
+        assert cap is not None and 0.0 < cap < 0.05
+        _train_steps(m, opt, steps=50)
+        assert opt.param_groups[0]['d'] <= cap
+
+    def test_trust_cap_anchors_recorded(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        for group in opt.param_groups:
+            assert 'rms0' in group
 
     def test_closure_is_called(self):
         p = torch.nn.Parameter(torch.ones(3))

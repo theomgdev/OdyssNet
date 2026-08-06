@@ -243,6 +243,7 @@ class Neurogenesis:
                 d_coef=group.get('d_coef', 1.0),
                 growth_rate=group.get('growth_rate', float('inf')),
                 d_mode=group.get('d_mode', 'global'),
+                trust_ratio=group.get('trust_ratio', 0.25),
                 use_bias_correction=group.get('use_bias_correction', True),
                 safeguard_warmup=group.get('safeguard_warmup', False),
             )

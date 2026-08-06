@@ -72,6 +72,14 @@ class ChaosGrad(torch.optim.Optimizer):
         d_mode (str): ``'global'`` (default) shares one step-scale estimate
             across all parameter groups; ``'per_group'`` estimates
             independently per group.
+        trust_ratio (float, optional): Traction limit — the applied step
+            scale is capped at ``trust_ratio × RMS(initial weights)``,
+            where the RMS anchor is the smallest per-group initialization
+            scale (groups initialized at/near zero or exactly one are
+            ignored). On small chaotic networks the distance estimator can
+            overshoot by orders of magnitude during the turbulent early
+            phase; the anchored cap keeps every step proportional to the
+            network's design scale. Set ``None`` to disable. Default 0.25.
         use_bias_correction (bool): Adam bias correction on the step
             magnitude. Default True.
         safeguard_warmup (bool): Use the warmup-robust variant of the
@@ -80,7 +88,7 @@ class ChaosGrad(torch.optim.Optimizer):
 
     def __init__(self, params, lr=None, betas=(0.9, 0.999), beta3=None,
                  eps=1e-8, weight_decay=0.0, d0=1e-6, d_coef=1.0,
-                 growth_rate=float('inf'), d_mode='global',
+                 growth_rate=float('inf'), d_mode='global', trust_ratio=0.25,
                  use_bias_correction=True, safeguard_warmup=False):
         if lr is not None and lr <= 0.0:
             raise ValueError(f"lr must be positive or None, got {lr}")
@@ -98,12 +106,15 @@ class ChaosGrad(torch.optim.Optimizer):
             raise ValueError(f"growth_rate must be > 1.0, got {growth_rate}")
         if d_mode not in ('global', 'per_group'):
             raise ValueError(f"d_mode must be 'global' or 'per_group', got {d_mode!r}")
+        if trust_ratio is not None and trust_ratio <= 0.0:
+            raise ValueError(f"trust_ratio must be positive or None, got {trust_ratio}")
 
         defaults = dict(
             lr=lr, betas=betas, beta3=beta3, eps=eps,
             weight_decay=weight_decay,
             d=d0, d0=d0, d_max=d0, d_numerator=0.0,
             d_coef=d_coef, growth_rate=growth_rate, d_mode=d_mode,
+            trust_ratio=trust_ratio,
             use_bias_correction=use_bias_correction,
             safeguard_warmup=safeguard_warmup,
             zero_diag=False,
@@ -111,6 +122,24 @@ class ChaosGrad(torch.optim.Optimizer):
             k=0,
         )
         super().__init__(params, defaults)
+
+        # Anchor the traction limit to the *initial* weight scale. A cap
+        # referencing live weights would be self-defeating: runaway steps
+        # inflate the weights, which would inflate the cap in turn.
+        if trust_ratio is not None:
+            for group in self.param_groups:
+                group['rms0'] = self._group_rms(group['params'])
+
+    @staticmethod
+    @torch.no_grad()
+    def _group_rms(params):
+        """RMS magnitude of a parameter collection (0.0 when empty)."""
+        total_sq = 0.0
+        total_n = 0
+        for p in params:
+            total_sq += p.detach().float().pow(2).sum().item()
+            total_n += p.numel()
+        return math.sqrt(total_sq / total_n) if total_n else 0.0
 
     # ------------------------------------------------------------------ #
     # Architecture-aware construction                                     #
@@ -277,10 +306,10 @@ class ChaosGrad(torch.optim.Optimizer):
 
         # ---- Single host sync: resolve step-scale estimates ----
         if adaptive_groups:
+            n = len(adaptive_groups)
             stacked = torch.stack(
                 [t.float() for t in numerator_deltas] + [t.float() for t in denominators]
             ).cpu().tolist()
-            n = len(adaptive_groups)
 
             if adaptive_groups[0]['d_mode'] == 'global':
                 self._update_d(adaptive_groups, sum(stacked[:n]), sum(stacked[n:]))
@@ -322,6 +351,23 @@ class ChaosGrad(torch.optim.Optimizer):
 
         return loss
 
+    #: Groups whose initial RMS falls below this are treated as
+    #: deliberately silent inits (zeros / micro-quiet) and do not anchor
+    #: the traction limit; near-1.0 RMS groups are neutral multiplier
+    #: inits (scales, norms) and are excluded for the same reason.
+    _TRUST_RMS_FLOOR = 1e-3
+
+    def _trust_cap(self, groups):
+        """Traction limit for a set of groups sharing a d estimate."""
+        trust_ratio = groups[0]['trust_ratio']
+        if trust_ratio is None:
+            return None
+        anchors = [
+            g['rms0'] for g in groups
+            if g.get('rms0', 0.0) >= self._TRUST_RMS_FLOOR and not 0.9 <= g['rms0'] <= 1.1
+        ]
+        return trust_ratio * min(anchors) if anchors else None
+
     def _update_d(self, groups, numerator_delta, denominator):
         """
         Applies one D-adaptation update to a set of groups sharing an
@@ -340,6 +386,14 @@ class ChaosGrad(torch.optim.Optimizer):
                 d = max(d, d_hat)
             d_max = max(d_max, d_hat)
             d = min(d_max, d * lead['growth_rate'])
+
+        # Traction limit: the applied step scale never exceeds a fixed
+        # fraction of the network's initial weight scale. Shields tiny
+        # chaotic networks from early estimator overshoot; transparent
+        # whenever the estimate is already proportionate.
+        cap = self._trust_cap(groups)
+        if cap is not None:
+            d = min(d, cap)
 
         for group in groups:
             group['d_numerator'] = numerator
