@@ -53,7 +53,7 @@ def xor_model():
 
 @pytest.fixture
 def basic_trainer(tiny_model):
-    """Trainer with default AdamW."""
+    """Trainer with ChaosGrad in fixed-rate mode."""
     return OdyssNetTrainer(tiny_model, device="cpu", lr=1e-4)
 
 

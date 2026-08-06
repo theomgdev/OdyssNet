@@ -225,20 +225,47 @@ class Neurogenesis:
         model.register_buffer('output_pos', torch.tensor(old_output_ids, dtype=torch.long, device=device))
         
         # Optimizer Migration
+        from ..training.chaos_optimizer import ChaosGrad
+
         group = old_opt.param_groups[0]
         optimizer_cls = type(old_opt)
 
-        try:
-            new_opt = optimizer_cls(
-                model.parameters(),
-                lr=group.get('lr', 0.001),
-                weight_decay=group.get('weight_decay', 0),
+        if isinstance(old_opt, ChaosGrad):
+            # Rebuild with fresh architecture-aware grouping, preserving the
+            # optimizer configuration and each family's step-scale estimate.
+            new_opt = ChaosGrad.from_model(
+                model,
+                lr=group.get('lr'),
                 betas=group.get('betas', (0.9, 0.999)),
+                beta3=group.get('beta3'),
                 eps=group.get('eps', 1e-8),
+                d0=group.get('d0', 1e-6),
+                d_coef=group.get('d_coef', 1.0),
+                growth_rate=group.get('growth_rate', float('inf')),
+                d_mode=group.get('d_mode', 'global'),
+                use_bias_correction=group.get('use_bias_correction', True),
+                safeguard_warmup=group.get('safeguard_warmup', False),
             )
-        except Exception as e:
-            print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
-            new_opt = torch.optim.AdamW(model.parameters(), lr=group.get('lr', 0.001))
+            old_by_name = {g.get('group_name'): g for g in old_opt.param_groups}
+            for new_group in new_opt.param_groups:
+                old_group = old_by_name.get(new_group.get('group_name'))
+                if old_group is None:
+                    continue
+                for key in ('d', 'd_max', 'd_numerator', 'k', 'weight_decay'):
+                    if key in old_group:
+                        new_group[key] = old_group[key]
+        else:
+            try:
+                new_opt = optimizer_cls(
+                    model.parameters(),
+                    lr=group.get('lr', 0.001),
+                    weight_decay=group.get('weight_decay', 0),
+                    betas=group.get('betas', (0.9, 0.999)),
+                    eps=group.get('eps', 1e-8),
+                )
+            except Exception as e:
+                print(f"WARNING: Optimizer re-init failed: {e}. Falling back to standard AdamW.")
+                new_opt = torch.optim.AdamW(model.parameters(), lr=group.get('lr', 0.001))
 
         # Migrate internal optimizer state
         def transfer_state(old_p, new_p, is_matrix=False):
@@ -255,8 +282,12 @@ class Neurogenesis:
                     continue
 
                 try:
-                    if val.shape != old_p.shape:
-                        # Tensor needs resizing to match the expanded parameter.
+                    if val.shape == new_p.shape:
+                        # Already matches the expanded parameter — direct copy.
+                        new_s[key] = val.clone()
+                    elif val.shape == old_p.shape and val.dim() >= 1:
+                        # Tensor tracks the parameter shape (exp_avg, s, p0, ...)
+                        # — pad into the top-left corner of the new shape.
                         new_tensor = torch.zeros(new_p.shape, dtype=val.dtype, device=device)
                         if is_matrix:
                             min_rows = min(val.shape[0], new_p.shape[0])
@@ -267,7 +298,7 @@ class Neurogenesis:
                             new_tensor[:min_len] = val[:min_len]
                         new_s[key] = new_tensor
                     else:
-                        # Shape-invariant metadata tensor — direct copy.
+                        # Shape-invariant metadata tensor (e.g. 0-dim step counter).
                         new_s[key] = val.clone()
                 except Exception as e:
                     print(f"      Skipping optimizer state key '{key}': {e}")

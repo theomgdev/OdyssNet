@@ -29,7 +29,6 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "pytorch-lightning",
-    "prodigyopt",
 ]
 
 [project.optional-dependencies]

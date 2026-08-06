@@ -8,6 +8,7 @@ from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
 from ..utils.neurogenesis import Neurogenesis
+from .chaos_optimizer import ChaosGrad
 
 class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device='cpu',
@@ -19,13 +20,14 @@ class OdyssNetTrainer:
         Args:
             model (nn.Module): The OdyssNet model to train.
             optimizer (torch.optim.Optimizer): Custom optimizer (Optional).
-                If None, the default optimizer is selected based on `lr`.
+                If None, ChaosGrad is built from the model automatically.
             loss_fn (callable): Custom loss function (Optional).
             lr (float or None): Learning rate. Default: None.
-                - None: Prodigy optimizer is used. It auto-calibrates the learning
-                  rate continuously and requires no manual tuning. Requires the
-                  'prodigyopt' package (`pip install prodigyopt`).
-                - float (e.g. 1e-4): AdamW optimizer is used with weight_decay=0.01.
+                - None: ChaosGrad estimates the step scale online — no
+                  tuning required. This is the recommended default.
+                - float (e.g. 1e-4): ChaosGrad runs with a fixed AdamW-style
+                  learning rate (automatic estimation disabled). Use for
+                  exact reproducibility studies.
             device (str): Device to run training on.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
@@ -47,20 +49,10 @@ class OdyssNetTrainer:
         if optimizer:
             # User explicitly provided an optimizer — use it directly.
             self.optimizer = optimizer
-        elif lr is None:
-            # Default: Prodigy — auto-calibrating optimizer, no LR tuning required.
-            try:
-                from prodigyopt import Prodigy
-            except ImportError as e:
-                raise ImportError(
-                    "The default optimizer requires the 'prodigyopt' package. "
-                    "Install it with: pip install prodigyopt\n"
-                    "Alternatively, pass an explicit lr (e.g. lr=1e-4) to use AdamW."
-                ) from e
-            self.optimizer = Prodigy(model.parameters())
         else:
-            # Explicit lr provided: use AdamW.
-            self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+            # ChaosGrad: architecture-aware zero-config optimizer.
+            # lr=None → automatic step-scale estimation; float → fixed rate.
+            self.optimizer = ChaosGrad.from_model(model, lr=lr)
 
         self.loss_fn = loss_fn if loss_fn else nn.MSELoss()
 
@@ -472,9 +464,12 @@ class OdyssNetTrainer:
         diag = {
             'step_count': self._step_count,
             'last_loss': self._last_loss,
-            'current_lr': self.optimizer.param_groups[0]['lr'] if getattr(self, 'optimizer', None) and getattr(self.optimizer, 'param_groups', None) else 0,
+            'current_lr': self._current_lr(),
             'gradient_persistence': self.gradient_persistence,
         }
+
+        if isinstance(self.optimizer, ChaosGrad):
+            diag['optimizer'] = self.optimizer.get_diagnostics(debug=debug)
 
         if debug:
             # Persistent gradients info
@@ -515,6 +510,16 @@ class OdyssNetTrainer:
                 diag['gradient_stats'] = grad_stats
 
         return diag
+
+    def _current_lr(self):
+        """Effective learning rate: ChaosGrad's live estimate, or the group lr."""
+        optimizer = getattr(self, 'optimizer', None)
+        if optimizer is None or not getattr(optimizer, 'param_groups', None):
+            return 0
+        if isinstance(optimizer, ChaosGrad):
+            return optimizer.get_diagnostics()['effective_lr']
+        lr = optimizer.param_groups[0].get('lr')
+        return lr if lr is not None else 0
 
     def _compute_gradient_stats(self):
         """Compute gradient statistics across all parameters."""

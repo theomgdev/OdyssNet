@@ -1,0 +1,324 @@
+"""
+Unit tests for odyssnet.training.chaos_optimizer.ChaosGrad.
+
+Covers:
+- Constructor validation
+- Parameter classification (families, policy)
+- from_model construction
+- Adaptive stepping (d growth, convergence)
+- Fixed-lr mode (AdamW-equivalent escape hatch)
+- Zero-diagonal invariant on the chaos core
+- d_mode global vs per_group
+- state_dict round-trip
+- Diagnostics
+- Neurogenesis expansion migration
+"""
+
+import pytest
+import torch
+
+from odyssnet import ChaosGrad, OdyssNet, OdyssNetTrainer
+
+
+def _model(**kwargs):
+    defaults = dict(num_neurons=6, input_ids=[0, 1], output_ids=[4, 5], device="cpu")
+    defaults.update(kwargs)
+    return OdyssNet(**defaults)
+
+
+def _train_steps(model, opt, steps=5, thinking=3):
+    torch.manual_seed(0)
+    x = torch.randn(4, model.num_neurons)
+    losses = []
+    for _ in range(steps):
+        model.reset_state(4)
+        out, _ = model(x, steps=thinking)
+        loss = out[:, -1, model.output_ids].pow(2).mean()
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        losses.append(loss.item())
+    return losses
+
+
+# ===========================================================================
+# Constructor validation
+# ===========================================================================
+
+class TestValidation:
+    def test_negative_lr_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), lr=-1.0)
+
+    def test_zero_lr_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), lr=0.0)
+
+    def test_none_lr_accepted(self):
+        m = _model()
+        opt = ChaosGrad(m.parameters(), lr=None)
+        assert opt.param_groups[0]['lr'] is None
+
+    def test_invalid_d0_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), d0=0.0)
+
+    def test_invalid_betas_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), betas=(1.0, 0.999))
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), betas=(0.9, 1.0))
+
+    def test_invalid_growth_rate_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), growth_rate=1.0)
+
+    def test_invalid_d_mode_rejected(self):
+        m = _model()
+        with pytest.raises(ValueError):
+            ChaosGrad(m.parameters(), d_mode='local')
+
+
+# ===========================================================================
+# Parameter classification
+# ===========================================================================
+
+class TestClassification:
+    def test_families_cover_all_params(self):
+        m = _model(hebb_type='both', gate='sigmoid', vocab_size=7)
+        groups = ChaosGrad.classify_params(m)
+        grouped = sum(len(g['params']) for g in groups)
+        total = sum(1 for p in m.parameters() if p.requires_grad)
+        assert grouped == total
+
+    def test_core_family_flags(self):
+        m = _model()
+        groups = ChaosGrad.classify_params(m)
+        by_name = {g['group_name']: g for g in groups}
+        core = by_name['chaos_core']
+        assert core['zero_diag'] is True
+        assert core['weight_decay'] == ChaosGrad.FAMILY_WEIGHT_DECAY['chaos_core']
+        assert core['params'][0] is m.W
+
+    def test_plasticity_family_has_no_decay(self):
+        m = _model(hebb_type='both')
+        by_name = {g['group_name']: g for g in ChaosGrad.classify_params(m)}
+        assert by_name['plasticity']['weight_decay'] == 0.0
+        leaves = {id(p) for p in by_name['plasticity']['params']}
+        assert id(m.t_hebb_factor) in leaves
+        assert id(m.s_hebb_decay) in leaves
+
+    def test_projections_family(self):
+        m = _model(vocab_size=7)
+        by_name = {g['group_name']: g for g in ChaosGrad.classify_params(m)}
+        proj_params = {id(p) for p in by_name['projections']['params']}
+        assert id(m.embed.weight) in proj_params
+        assert id(m.output_decoder.weight) in proj_params
+
+    def test_from_model_builds_chaosgrad(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        assert isinstance(opt, ChaosGrad)
+        assert all(g['lr'] is None for g in opt.param_groups)
+
+    def test_from_model_with_fixed_lr(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m, lr=1e-3)
+        assert all(g['lr'] == 1e-3 for g in opt.param_groups)
+
+
+# ===========================================================================
+# Stepping
+# ===========================================================================
+
+class TestStepping:
+    def test_adaptive_step_updates_params(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        before = m.W.detach().clone()
+        _train_steps(m, opt, steps=3)
+        assert not torch.equal(before, m.W.detach())
+
+    def test_d_grows_from_d0(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=30)
+        d = opt.param_groups[0]['d']
+        assert d > opt.param_groups[0]['d0']
+
+    def test_fixed_lr_mode_converges(self):
+        torch.manual_seed(1)
+        target = torch.randn(10)
+        p = torch.nn.Parameter(torch.zeros(10))
+        opt = ChaosGrad([p], lr=0.1)
+        for _ in range(200):
+            loss = (p - target).pow(2).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        assert (p - target).pow(2).mean().item() < 1e-2
+
+    def test_adaptive_mode_converges_on_quadratic(self):
+        torch.manual_seed(1)
+        target = torch.randn(10)
+        p = torch.nn.Parameter(torch.zeros(10))
+        opt = ChaosGrad([p])
+        for _ in range(300):
+            loss = (p - target).pow(2).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        assert (p - target).pow(2).mean().item() < 1e-2
+
+    def test_zero_diag_invariant(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=5)
+        assert m.W.detach().diagonal().abs().sum().item() == 0.0
+
+    def test_per_group_mode_runs(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m, d_mode='per_group')
+        losses = _train_steps(m, opt, steps=10)
+        assert all(torch.isfinite(torch.tensor(losses)))
+
+    def test_global_mode_shares_d(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        d_values = {g['d'] for g in opt.param_groups}
+        assert len(d_values) == 1
+
+    def test_sparse_grad_rejected(self):
+        p = torch.nn.Parameter(torch.zeros(4, 4))
+        opt = ChaosGrad([p])
+        p.grad = torch.eye(4).to_sparse()
+        with pytest.raises(RuntimeError):
+            opt.step()
+
+    def test_step_with_no_grads_is_noop(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        opt.step()  # no backward called; must not raise
+        assert opt.param_groups[0]['d'] == opt.param_groups[0]['d0']
+
+    def test_closure_is_called(self):
+        p = torch.nn.Parameter(torch.ones(3))
+        opt = ChaosGrad([p])
+        called = []
+
+        def closure():
+            called.append(True)
+            loss = p.sum()
+            opt.zero_grad()
+            loss.backward()
+            return loss
+
+        loss = opt.step(closure)
+        assert called and loss is not None
+
+
+# ===========================================================================
+# Persistence
+# ===========================================================================
+
+class TestPersistence:
+    def test_state_dict_round_trip(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=25)
+        d_before = opt.param_groups[0]['d']
+
+        sd = opt.state_dict()
+        opt2 = ChaosGrad.from_model(m)
+        opt2.load_state_dict(sd)
+
+        assert opt2.param_groups[0]['d'] == d_before
+        assert opt2.param_groups[0]['k'] == opt.param_groups[0]['k']
+        # Per-parameter tensors restored
+        p = opt2.param_groups[0]['params'][0]
+        assert 'exp_avg' in opt2.state[p]
+        assert 's' in opt2.state[p]
+
+    def test_no_transient_keys_in_state_dict(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=2)
+        sd = opt.state_dict()
+        for group in sd['param_groups']:
+            assert '_dlr' not in group
+        for state in sd['state'].values():
+            assert '_grad_proc' not in state
+
+
+# ===========================================================================
+# Diagnostics
+# ===========================================================================
+
+class TestDiagnostics:
+    def test_basic_diagnostics(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=3)
+        diag = opt.get_diagnostics()
+        assert diag['global_step'] == 3
+        assert diag['effective_lr'] > 0
+
+    def test_debug_diagnostics_groups(self):
+        m = _model(hebb_type='both')
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=2)
+        diag = opt.get_diagnostics(debug=True)
+        names = {g['group_name'] for g in diag['groups']}
+        assert 'chaos_core' in names
+        assert 'plasticity' in names
+
+    def test_trainer_diag_includes_optimizer(self):
+        m = _model()
+        t = OdyssNetTrainer(m, device="cpu")
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        t.train_batch(x, y, thinking_steps=2)
+        diag = t.get_diagnostics()
+        assert 'optimizer' in diag
+        assert diag['current_lr'] == diag['optimizer']['effective_lr']
+
+
+# ===========================================================================
+# Neurogenesis migration
+# ===========================================================================
+
+class TestNeurogenesisMigration:
+    def test_expand_preserves_chaosgrad(self):
+        m = _model()
+        t = OdyssNetTrainer(m, device="cpu")
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        for _ in range(10):
+            t.train_batch(x, y, thinking_steps=2)
+        d_before = t.optimizer.param_groups[0]['d']
+
+        t.expand(amount=2, verbose=False)
+
+        assert isinstance(t.optimizer, ChaosGrad)
+        assert m.num_neurons == 8
+        assert t.optimizer.param_groups[0]['d'] == d_before
+        # Training continues without error on the expanded model
+        x2 = torch.randn(2, 8)
+        loss = t.train_batch(x2, y, thinking_steps=2)
+        assert torch.isfinite(torch.tensor(loss))
+
+    def test_expand_preserves_fixed_lr(self):
+        m = _model()
+        t = OdyssNetTrainer(m, device="cpu", lr=5e-4)
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        t.train_batch(x, y, thinking_steps=2)
+        t.expand(amount=1, verbose=False)
+        assert isinstance(t.optimizer, ChaosGrad)
+        assert all(g['lr'] == 5e-4 for g in t.optimizer.param_groups)

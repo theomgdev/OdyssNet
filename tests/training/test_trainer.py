@@ -16,7 +16,7 @@ Covers:
 - Anomaly hook callbacks
 - get_diagnostics
 - state_dict / load_state_dict round-trip
-- Prodigy optimizer (lr=None default)
+- ChaosGrad optimizer (default)
 """
 
 import pytest
@@ -24,7 +24,7 @@ import torch
 import os
 
 
-from odyssnet import OdyssNet, OdyssNetTrainer
+from odyssnet import ChaosGrad, OdyssNet, OdyssNetTrainer
 
 
 # ---------------------------------------------------------------------------
@@ -61,21 +61,21 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
-    def test_explicit_lr_uses_adamw(self):
-        # Explicit lr → AdamW
+    def test_explicit_lr_uses_fixed_chaosgrad(self):
+        # Explicit lr → ChaosGrad in fixed-rate mode
         t = _trainer()  # _trainer() defaults to lr=1e-4
-        assert isinstance(t.optimizer, torch.optim.AdamW)
+        assert isinstance(t.optimizer, ChaosGrad)
+        assert all(g['lr'] == 1e-4 for g in t.optimizer.param_groups)
 
-    def test_default_lr_none_uses_prodigy(self):
-        # lr=None (default) → Prodigy
-        prodigyopt = pytest.importorskip("prodigyopt", reason="prodigyopt not installed")
+    def test_default_lr_none_uses_adaptive_chaosgrad(self):
+        # lr=None (default) → ChaosGrad with automatic step-scale estimation
         model = _model()
         t = OdyssNetTrainer(model, device="cpu")  # lr=None is the default
-        assert isinstance(t.optimizer, prodigyopt.Prodigy)
+        assert isinstance(t.optimizer, ChaosGrad)
+        assert all(g['lr'] is None for g in t.optimizer.param_groups)
 
-    def test_prodigy_can_train(self):
-        # Verify a full train_batch step completes with the Prodigy optimizer.
-        pytest.importorskip("prodigyopt", reason="prodigyopt not installed")
+    def test_default_optimizer_can_train(self):
+        # Verify a full train_batch step completes with the default optimizer.
         model = _model()
         t = OdyssNetTrainer(model, device="cpu")
         x = _batch()
