@@ -244,6 +244,13 @@ class Neurogenesis:
                 growth_rate=group.get('growth_rate', float('inf')),
                 d_mode=group.get('d_mode', 'global'),
                 trust_ratio=group.get('trust_ratio', 0.25),
+                # Brake config lives entirely per-group -- forward it, or a
+                # user who customized the brake silently loses that
+                # customization the moment their network grows.
+                brake_factor=group.get('brake_factor', 0.5),
+                brake_sigma=group.get('brake_sigma', 3.0),
+                brake_ratio=group.get('brake_ratio', 1.2),
+                brake_ema_alpha=group.get('brake_ema_alpha', 0.05),
                 use_bias_correction=group.get('use_bias_correction', True),
                 safeguard_warmup=group.get('safeguard_warmup', False),
             )
@@ -252,7 +259,7 @@ class Neurogenesis:
                 old_group = old_by_name.get(new_group.get('group_name'))
                 if old_group is None:
                     continue
-                for key in ('d', 'd_max', 'd_numerator', 'k', 'weight_decay'):
+                for key in ('d', 'd_max', 'd_numerator', 'brake_ceiling', 'k', 'weight_decay'):
                     if key in old_group:
                         new_group[key] = old_group[key]
         else:

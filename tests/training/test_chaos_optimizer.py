@@ -234,6 +234,99 @@ class TestStepping:
         for group in opt.param_groups:
             assert 'rms0' in group
 
+    def test_anchor_weight_matches_old_hard_regions(self):
+        # Deep inside what used to be the hard-included region, weight must
+        # still be (near) 1; deep inside what used to be excluded, (near) 0.
+        assert ChaosGrad._anchor_weight(0.02) == pytest.approx(1.0, abs=1e-6)
+        assert ChaosGrad._anchor_weight(0.5) == pytest.approx(1.0, abs=1e-6)
+        assert ChaosGrad._anchor_weight(1e-6) == pytest.approx(0.0, abs=1e-6)
+        assert ChaosGrad._anchor_weight(1.0) == pytest.approx(0.0, abs=1e-6)
+        assert ChaosGrad._anchor_weight(0.0) == 0.0
+
+    @pytest.mark.parametrize("boundary", [1e-3, 1e-2, 0.9, 1.0, 1.1])
+    def test_anchor_weight_continuous_across_old_hard_boundaries(self, boundary):
+        # The old implementation had a hard jump (0 -> 1 or 1 -> 0) exactly at
+        # each of these values. A tiny nudge across any of them must now
+        # produce a tiny change in weight, not a jump.
+        eps = 1e-6
+        w_below = ChaosGrad._anchor_weight(boundary - eps)
+        w_at = ChaosGrad._anchor_weight(boundary)
+        w_above = ChaosGrad._anchor_weight(boundary + eps)
+        assert abs(w_at - w_below) < 1e-3
+        assert abs(w_above - w_at) < 1e-3
+
+    def test_trust_cap_no_jump_sweeping_through_old_boundaries(self):
+        # A fixed, clearly-anchoring group (rms0=0.02, deep inside the old
+        # hard-included region) plus a probe group swept finely across every
+        # old cutoff (0.001, 0.9, 1.0, 1.1). A hard cutoff concentrates its
+        # whole effect into a single infinitesimal step; a smooth ramp spreads
+        # it across the transition width instead -- so no single step should
+        # account for more than a modest share of the total range the sweep
+        # covers.
+        fixed = 0.02
+        trust_ratio = 0.25
+        sweep = [x / 1000.0 for x in range(1, 1200)]  # 0.001 .. 1.199
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        caps = []
+        for probe in sweep:
+            groups = [
+                {'trust_ratio': trust_ratio, 'rms0': fixed},
+                {'trust_ratio': trust_ratio, 'rms0': probe},
+            ]
+            caps.append(opt._trust_cap(groups))
+        assert all(c is not None for c in caps)
+        full_range = max(caps) - min(caps)
+        assert full_range > 0  # sanity: the probe does move the cap
+        max_step = max(abs(b - a) for a, b in zip(caps, caps[1:]))
+        assert max_step < 0.5 * full_range
+
+    def test_trust_cap_never_binds_tighter_than_own_rms0(self):
+        # The invariant that actually holds through the fade ramp: a
+        # partially-trusted group's contribution can never be smaller than
+        # treating it as the sole, fully-trusted anchor at its own rms0 --
+        # contribution(rms0) >= rms0 always, equality at full trust. This is
+        # deliberately *not* a global-monotonicity claim (see _trust_cap's
+        # docstring: that's provably unachievable for any continuous fade
+        # where the trust signal and the value are the same quantity).
+        #
+        # A comfortably-larger, fully-trusted companion group keeps the
+        # all-excluded fallback (see _trust_cap) from firing and makes the
+        # probe group the binding one throughout the sweep, so the resulting
+        # cap isolates the probe's own contribution.
+        trust_ratio = 0.25
+        fixed = 0.05
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        for rms0 in [x / 10000.0 for x in range(1, 101)]:  # 0.0001 .. 0.01
+            cap = opt._trust_cap([
+                {'trust_ratio': trust_ratio, 'rms0': fixed},
+                {'trust_ratio': trust_ratio, 'rms0': rms0},
+            ])
+            assert cap >= trust_ratio * rms0 - 1e-12
+
+    def test_trust_cap_none_when_every_group_fully_excluded(self):
+        # A lone all-zero-initialized parameter (no other family to anchor
+        # against, e.g. raw ChaosGrad([p]) outside from_model's grouping)
+        # must leave the cap disabled, not pin it to an arbitrary floor
+        # value -- there's nothing informative here to constrain against.
+        # This is exactly what test_adaptive_mode_converges_on_quadratic
+        # relies on implicitly.
+        trust_ratio = 0.25
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        assert opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.0}]) is None
+        assert opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 1.0}]) is None
+
+    def test_trust_cap_raising_init_inside_ramp_does_not_tighten(self):
+        # Regression check for the specific user-observable failure mode: an
+        # earlier rms0/weight formula made raising an init's scale *inside*
+        # the fade ramp produce a *tighter* cap (0.005 -> looser than 0.01),
+        # which is backwards -- a bigger, more-trusted design scale should
+        # never tighten the limit relative to a smaller one at full trust.
+        trust_ratio = 0.25
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        cap_small = opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.005}])
+        cap_full_trust = opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.01}])
+        assert cap_small <= cap_full_trust
+
     def test_closure_is_called(self):
         p = torch.nn.Parameter(torch.ones(3))
         opt = ChaosGrad([p])
@@ -262,7 +355,14 @@ class TestBrake:
         with pytest.raises(ValueError):
             ChaosGrad(m.parameters(), brake_factor=0.0)
 
-    def test_spike_shrinks_estimate(self):
+    def test_spike_shrinks_applied_step(self):
+        # Intent changed, not just implementation: the brake used to mutate
+        # `d`/`d_numerator` directly, which permanently scarred the D-adaptation
+        # estimator on every trigger -- fatal on tasks where ordinary minibatch
+        # noise crosses the spike threshold every few hundred steps (see
+        # `_apply_brake`'s docstring). It now throttles a separate transient
+        # `brake_ceiling` and leaves the estimator's own bookkeeping untouched,
+        # so it keeps learning the true scale even while suppressed.
         m = _model()
         opt = ChaosGrad.from_model(m)
         _train_steps(m, opt, steps=20)
@@ -271,10 +371,39 @@ class TestBrake:
             opt.report_loss(1.0)
         d_before = opt.param_groups[0]['d']
         num_before = opt.param_groups[0]['d_numerator']
+        ceiling_before = opt.param_groups[0]['brake_ceiling']
         opt.report_loss(100.0)
-        assert opt.param_groups[0]['d_max'] <= max(
-            opt.param_groups[0]['d0'], d_before)
-        assert abs(opt.param_groups[0]['d_numerator']) <= abs(num_before)
+        assert opt.param_groups[0]['brake_ceiling'] < ceiling_before
+        assert opt.param_groups[0]['d'] == d_before
+        assert opt.param_groups[0]['d_numerator'] == num_before
+
+    def test_ceiling_relaxes_after_isolated_spike(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ceiling_after_spike = opt.param_groups[0]['brake_ceiling']
+        assert ceiling_after_spike < 1.0
+        # An isolated spike should heal: many calm calls relax the ceiling
+        # back up rather than leaving it permanently depressed.
+        for _ in range(300):
+            opt.report_loss(1.0)
+        assert opt.param_groups[0]['brake_ceiling'] > ceiling_after_spike
+
+    def test_cascading_spikes_keep_compounding(self):
+        # A fast cascade (genuine divergence, like the delayed-adder failure
+        # this brake exists for) shouldn't get time to relax between hits.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ceiling_after_first = opt.param_groups[0]['brake_ceiling']
+        opt.report_loss(1000.0)
+        assert opt.param_groups[0]['brake_ceiling'] < ceiling_after_first
 
     def test_steady_loss_never_brakes(self):
         m = _model()
@@ -331,6 +460,26 @@ class TestPersistence:
         p = opt2.param_groups[0]['params'][0]
         assert 'exp_avg' in opt2.state[p]
         assert 's' in opt2.state[p]
+
+    def test_brake_config_survives_state_dict_round_trip(self):
+        # brake_sigma/ratio/ema_alpha live in `defaults` (per-group), same as
+        # brake_factor already did -- if they were instance attributes
+        # instead, a save/load round trip would silently revert a user's
+        # custom brake config back to the defaults baked into `opt2`.
+        m = _model()
+        opt = ChaosGrad.from_model(
+            m, brake_factor=0.3, brake_sigma=2.5, brake_ratio=1.5, brake_ema_alpha=0.1,
+        )
+        sd = opt.state_dict()
+
+        opt2 = ChaosGrad.from_model(m)  # built with the defaults
+        opt2.load_state_dict(sd)
+
+        for g in opt2.param_groups:
+            assert g['brake_factor'] == 0.3
+            assert g['brake_sigma'] == 2.5
+            assert g['brake_ratio'] == 1.5
+            assert g['brake_ema_alpha'] == 0.1
 
     def test_no_transient_keys_in_state_dict(self):
         m = _model()
@@ -399,6 +548,27 @@ class TestNeurogenesisMigration:
         x2 = torch.randn(2, 8)
         loss = t.train_batch(x2, y, thinking_steps=2)
         assert torch.isfinite(torch.tensor(loss))
+
+    def test_expand_preserves_custom_brake_config(self):
+        # Neurogenesis rebuilds ChaosGrad via `from_model` on expansion; if it
+        # doesn't forward the brake config a user constructed with, the
+        # rebuilt optimizer silently reverts to the defaults post-expansion.
+        m = _model()
+        opt = ChaosGrad.from_model(
+            m, brake_factor=0.3, brake_sigma=2.5, brake_ratio=1.5, brake_ema_alpha=0.1,
+        )
+        t = OdyssNetTrainer(m, optimizer=opt, device="cpu")
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        t.train_batch(x, y, thinking_steps=2)
+
+        t.expand(amount=2, verbose=False)
+
+        for g in t.optimizer.param_groups:
+            assert g['brake_factor'] == 0.3
+            assert g['brake_sigma'] == 2.5
+            assert g['brake_ratio'] == 1.5
+            assert g['brake_ema_alpha'] == 0.1
 
     def test_expand_preserves_fixed_lr(self):
         m = _model()

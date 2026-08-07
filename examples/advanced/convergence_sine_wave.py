@@ -39,7 +39,7 @@ def main():
     OUTPUT_IDS = [1] # Output 1: Sine Wave Output
     STEPS = 30 # Length of the wave
     BATCH_SIZE = 128
-    EPOCHS = 10000
+    EPOCHS = 6800
     
     # Initialize Model
     model = OdyssNet(
