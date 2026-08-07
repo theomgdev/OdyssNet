@@ -244,6 +244,15 @@ class Neurogenesis:
                 growth_rate=group.get('growth_rate', float('inf')),
                 d_mode=group.get('d_mode', 'global'),
                 trust_ratio=group.get('trust_ratio', 0.25),
+                # Brake config lives partly per-group (brake_factor) and
+                # partly on the optimizer instance (sigma/ratio/ema_alpha,
+                # one shared loss stream) — both must be forwarded, or a
+                # user who customized the brake silently loses that
+                # customization the moment their network grows.
+                brake_factor=group.get('brake_factor', 0.5),
+                brake_sigma=getattr(old_opt, '_brake_sigma', 3.0),
+                brake_ratio=getattr(old_opt, '_brake_ratio', 1.2),
+                brake_ema_alpha=getattr(old_opt, '_brake_ema_alpha', 0.05),
                 use_bias_correction=group.get('use_bias_correction', True),
                 safeguard_warmup=group.get('safeguard_warmup', False),
             )

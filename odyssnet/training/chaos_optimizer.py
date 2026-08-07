@@ -74,12 +74,13 @@ class ChaosGrad(torch.optim.Optimizer):
             independently per group.
         trust_ratio (float, optional): Traction limit — the applied step
             scale is capped at ``trust_ratio × RMS(initial weights)``,
-            where the RMS anchor is the smallest per-group initialization
-            scale (groups initialized at/near zero or exactly one are
-            ignored). On small chaotic networks the distance estimator can
-            overshoot by orders of magnitude during the turbulent early
-            phase; the anchored cap keeps every step proportional to the
-            network's design scale. Set ``None`` to disable. Default 0.25.
+            where the RMS anchor blends the per-group initialization scales,
+            fading out groups initialized at/near zero or near exactly one
+            (see :meth:`_anchor_weight` — a smooth ramp, not a hard cutoff).
+            On small chaotic networks the distance estimator can overshoot
+            by orders of magnitude during the turbulent early phase; the
+            anchored cap keeps every step proportional to the network's
+            design scale. Set ``None`` to disable. Default 0.25.
         brake_factor (float, optional): Loss-spike brake. When
             :meth:`report_loss` observes a statistical spike in the loss
             stream, a transient ``brake_ceiling`` multiplier (independent of
@@ -88,6 +89,20 @@ class ChaosGrad(torch.optim.Optimizer):
             The ceiling relaxes back toward 1.0 every call, so an isolated
             spike heals in tens of steps while a fast cascade of spikes (real
             divergence) keeps compounding. Set ``None`` to disable. Default 0.5.
+        brake_sigma (float): Spike threshold in standard deviations of the
+            loss EWMA. Dimensionless and, like AdamW's betas, insensitive to
+            its exact value across a wide range — the defaults were validated
+            against OdyssNet's bundled examples but are exposed for problems
+            with a very different loss-noise shape. Default 3.0.
+        brake_ratio (float): Spike also requires the loss to exceed
+            ``brake_ratio × |EWMA|``, guarding the sigma test against a
+            near-zero variance estimate. Default 1.2.
+        brake_ema_alpha (float): Smoothing factor for the loss EWMA/variance
+            (effective memory ≈ ``1/brake_ema_alpha`` steps). Calibrated at
+            OdyssNet's typical example batch sizes (~16-32); a user reporting
+            loss at a very different batch size sees a differently-scaled
+            noise floor and may want to retune it — exposed rather than
+            silently fixed. Default 0.05.
         use_bias_correction (bool): Adam bias correction on the step
             magnitude. Default True.
         safeguard_warmup (bool): Use the warmup-robust variant of the
@@ -97,7 +112,8 @@ class ChaosGrad(torch.optim.Optimizer):
     def __init__(self, params, lr=None, betas=(0.9, 0.999), beta3=None,
                  eps=1e-8, weight_decay=0.0, d0=1e-6, d_coef=1.0,
                  growth_rate=float('inf'), d_mode='global', trust_ratio=0.25,
-                 brake_factor=0.5, use_bias_correction=True,
+                 brake_factor=0.5, brake_sigma=3.0, brake_ratio=1.2,
+                 brake_ema_alpha=0.05, use_bias_correction=True,
                  safeguard_warmup=False):
         if lr is not None and lr <= 0.0:
             raise ValueError(f"lr must be positive or None, got {lr}")
@@ -119,6 +135,12 @@ class ChaosGrad(torch.optim.Optimizer):
             raise ValueError(f"trust_ratio must be positive or None, got {trust_ratio}")
         if brake_factor is not None and not 0.0 < brake_factor < 1.0:
             raise ValueError(f"brake_factor must be in (0, 1) or None, got {brake_factor}")
+        if brake_sigma <= 0.0:
+            raise ValueError(f"brake_sigma must be positive, got {brake_sigma}")
+        if brake_ratio <= 0.0:
+            raise ValueError(f"brake_ratio must be positive, got {brake_ratio}")
+        if not 0.0 < brake_ema_alpha <= 1.0:
+            raise ValueError(f"brake_ema_alpha must be in (0, 1], got {brake_ema_alpha}")
 
         defaults = dict(
             lr=lr, betas=betas, beta3=beta3, eps=eps,
@@ -137,9 +159,15 @@ class ChaosGrad(torch.optim.Optimizer):
         # Loss-stream statistics for the spike brake. Transient by design:
         # after a checkpoint reload the EWMA re-seeds from the first
         # reported loss, which is harmless (the braked d/d_max persist via
-        # the param groups).
+        # the param groups). One loss stream per optimizer instance (unlike
+        # brake_factor, which is per-group), so these live here, not in
+        # `defaults`.
+        self._brake_sigma = brake_sigma
+        self._brake_ratio = brake_ratio
+        self._brake_ema_alpha = brake_ema_alpha
         self._loss_ema = None
         self._loss_var = 0.0
+        self._brake_step = 0
 
         # Anchor the traction limit to the *initial* weight scale. A cap
         # referencing live weights would be self-defeating: runaway steps
@@ -373,22 +401,65 @@ class ChaosGrad(torch.optim.Optimizer):
 
         return loss
 
-    #: Groups whose initial RMS falls below this are treated as
-    #: deliberately silent inits (zeros / micro-quiet) and do not anchor
-    #: the traction limit; near-1.0 RMS groups are neutral multiplier
-    #: inits (scales, norms) and are excluded for the same reason.
+    #: Groups whose initial RMS sits below this are deliberately silent inits
+    #: (zeros / micro-quiet) and fade out of the traction anchor; groups
+    #: whose RMS lands within `_TRUST_RMS_NEUTRAL_BAND` of exactly 1.0 are
+    #: neutral multiplier inits (scales, norms) and fade out for the same
+    #: reason. Both boundaries used to be hard cutoffs: a custom init landing
+    #: one float off either edge (rms0=0.0009 vs 0.0011, or 1.05 vs 1.15)
+    #: got a silently different cap with no warning — and this floor sits
+    #: exactly on the init std of `micro_quiet_warm` (network.py, std=1e-3),
+    #: one of this library's own bundled init strategies, so groups using it
+    #: land squarely on the old cliff by construction, not by edge case:
+    #: measured on `convergence_mnist_record.py` (which uses it), the same
+    #: seed produced a 16.8x different cap on CPU vs CUDA under the old hard
+    #: cutoff, purely from which side of 1e-3 the RNG noise landed a group's
+    #: rms0 on. `_anchor_weight` turns both boundaries into ramps over the
+    #: same numbers instead of adding new ones.
     _TRUST_RMS_FLOOR = 1e-3
+    #: One decade above the floor: full confidence is reached, not at the
+    #: floor itself. RMS naturally spans decades, so "one decade" is the
+    #: scale-natural ramp width — not a fitted number.
+    _TRUST_RMS_FLOOR_HIGH = _TRUST_RMS_FLOOR * 10
+    #: Same half-width as the old hard band ([0.9, 1.1] around 1.0).
+    _TRUST_RMS_NEUTRAL_BAND = 0.1
+
+    @staticmethod
+    def _smoothstep(x, edge0, edge1):
+        """0 at/below edge0, 1 at/above edge1, cubic ease between — turns a
+        hard threshold into a continuous ramp without moving where it lands."""
+        if edge1 <= edge0:
+            return 0.0 if x < edge0 else 1.0
+        t = min(1.0, max(0.0, (x - edge0) / (edge1 - edge0)))
+        return t * t * (3.0 - 2.0 * t)
+
+    @classmethod
+    def _anchor_weight(cls, rms0):
+        """How much a group's rms0 should count toward the traction anchor,
+        in [0, 1]. Smoothly fades to 0 for near-zero (silent) and near-1.0
+        (neutral multiplier) inits instead of hard-excluding them."""
+        if rms0 <= 0.0:
+            return 0.0
+        w_floor = cls._smoothstep(rms0, cls._TRUST_RMS_FLOOR, cls._TRUST_RMS_FLOOR_HIGH)
+        w_neutral = cls._smoothstep(abs(rms0 - 1.0), 0.0, cls._TRUST_RMS_NEUTRAL_BAND)
+        return w_floor * w_neutral
 
     def _trust_cap(self, groups):
         """Traction limit for a set of groups sharing a d estimate."""
         trust_ratio = groups[0]['trust_ratio']
         if trust_ratio is None:
             return None
-        anchors = [
-            g['rms0'] for g in groups
-            if g.get('rms0', 0.0) >= self._TRUST_RMS_FLOOR and not 0.9 <= g['rms0'] <= 1.1
-        ]
-        return trust_ratio * min(anchors) if anchors else None
+        # Each group contributes rms0 / weight: a fully-trusted group
+        # (weight 1) contributes exactly its rms0, matching the old hard
+        # inclusion; a fading-out group contributes a value that grows
+        # without bound as its weight -> 0, so it stops being the minimum
+        # continuously instead of being dropped from the set outright.
+        effective = []
+        for g in groups:
+            weight = self._anchor_weight(g.get('rms0', 0.0))
+            if weight > 1e-9:
+                effective.append(g['rms0'] / weight)
+        return trust_ratio * min(effective) if effective else None
 
     def _update_d(self, groups, numerator_delta, denominator):
         """
@@ -426,11 +497,6 @@ class ChaosGrad(torch.optim.Optimizer):
     # Loss-spike brake                                                    #
     # ------------------------------------------------------------------ #
 
-    #: EWMA smoothing for the loss stream (≈ 20-step memory).
-    _BRAKE_EMA_ALPHA = 0.05
-    #: A spike is a loss exceeding EWMA by 3 sigma AND by 20 percent.
-    _BRAKE_SIGMA = 3.0
-    _BRAKE_RATIO = 1.2
     #: Per-call relaxation of `brake_ceiling` back toward 1.0. Geometric, not
     #: a fixed window: an isolated spike heals in tens of calls; a fast
     #: cascade of spikes (genuine divergence) doesn't get time to recover
@@ -443,9 +509,9 @@ class ChaosGrad(torch.optim.Optimizer):
         ``OdyssNetTrainer`` after every optimization step; call it manually
         in custom loops to enable the brake.
 
-        A statistical spike (loss above the running EWMA by 3 sigma and by
-        20 percent) cuts a transient ``brake_ceiling`` multiplier by
-        ``brake_factor``, throttling the applied step without touching the
+        A statistical spike (loss above the running EWMA by ``brake_sigma``
+        and by ``brake_ratio``) cuts a transient ``brake_ceiling`` multiplier
+        by ``brake_factor``, throttling the applied step without touching the
         distance estimator's own bookkeeping (see :meth:`_apply_brake`). The
         ceiling relaxes back toward 1.0 on every call.
         """
@@ -462,12 +528,20 @@ class ChaosGrad(torch.optim.Optimizer):
         diff = loss_value - self._loss_ema
         std = math.sqrt(self._loss_var) + 1e-12
         is_spike = (
-            diff > self._BRAKE_SIGMA * std
-            and loss_value > self._BRAKE_RATIO * abs(self._loss_ema)
+            diff > self._brake_sigma * std
+            and loss_value > self._brake_ratio * abs(self._loss_ema)
         )
 
         pre_var = self._loss_var
-        alpha = self._BRAKE_EMA_ALPHA
+        self._brake_step += 1
+        # Bias-correction-style warmup (same technique already used for Adam
+        # above, driven by an observable step count rather than a new
+        # parameter): the first ~1/alpha calls average over everything seen
+        # so far instead of committing to the steady-state window immediately,
+        # so the variance estimate isn't built from a handful of noisy early
+        # samples. Not reset on a spike reseed — that would fight the
+        # pre-spike variance retention just below.
+        alpha = max(self._brake_ema_alpha, 1.0 / (self._brake_step + 1))
         self._loss_ema += alpha * diff
         self._loss_var = (1 - alpha) * (self._loss_var + alpha * diff * diff)
 
