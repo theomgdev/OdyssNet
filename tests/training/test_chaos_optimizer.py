@@ -280,6 +280,53 @@ class TestStepping:
         max_step = max(abs(b - a) for a, b in zip(caps, caps[1:]))
         assert max_step < 0.5 * full_range
 
+    def test_trust_cap_never_binds_tighter_than_own_rms0(self):
+        # The invariant that actually holds through the fade ramp: a
+        # partially-trusted group's contribution can never be smaller than
+        # treating it as the sole, fully-trusted anchor at its own rms0 --
+        # contribution(rms0) >= rms0 always, equality at full trust. This is
+        # deliberately *not* a global-monotonicity claim (see _trust_cap's
+        # docstring: that's provably unachievable for any continuous fade
+        # where the trust signal and the value are the same quantity).
+        #
+        # A comfortably-larger, fully-trusted companion group keeps the
+        # all-excluded fallback (see _trust_cap) from firing and makes the
+        # probe group the binding one throughout the sweep, so the resulting
+        # cap isolates the probe's own contribution.
+        trust_ratio = 0.25
+        fixed = 0.05
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        for rms0 in [x / 10000.0 for x in range(1, 101)]:  # 0.0001 .. 0.01
+            cap = opt._trust_cap([
+                {'trust_ratio': trust_ratio, 'rms0': fixed},
+                {'trust_ratio': trust_ratio, 'rms0': rms0},
+            ])
+            assert cap >= trust_ratio * rms0 - 1e-12
+
+    def test_trust_cap_none_when_every_group_fully_excluded(self):
+        # A lone all-zero-initialized parameter (no other family to anchor
+        # against, e.g. raw ChaosGrad([p]) outside from_model's grouping)
+        # must leave the cap disabled, not pin it to an arbitrary floor
+        # value -- there's nothing informative here to constrain against.
+        # This is exactly what test_adaptive_mode_converges_on_quadratic
+        # relies on implicitly.
+        trust_ratio = 0.25
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        assert opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.0}]) is None
+        assert opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 1.0}]) is None
+
+    def test_trust_cap_raising_init_inside_ramp_does_not_tighten(self):
+        # Regression check for the specific user-observable failure mode: an
+        # earlier rms0/weight formula made raising an init's scale *inside*
+        # the fade ramp produce a *tighter* cap (0.005 -> looser than 0.01),
+        # which is backwards -- a bigger, more-trusted design scale should
+        # never tighten the limit relative to a smaller one at full trust.
+        trust_ratio = 0.25
+        opt = ChaosGrad([torch.nn.Parameter(torch.zeros(1))], trust_ratio=trust_ratio)
+        cap_small = opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.005}])
+        cap_full_trust = opt._trust_cap([{'trust_ratio': trust_ratio, 'rms0': 0.01}])
+        assert cap_small <= cap_full_trust
+
     def test_closure_is_called(self):
         p = torch.nn.Parameter(torch.ones(3))
         opt = ChaosGrad([p])
@@ -414,6 +461,26 @@ class TestPersistence:
         assert 'exp_avg' in opt2.state[p]
         assert 's' in opt2.state[p]
 
+    def test_brake_config_survives_state_dict_round_trip(self):
+        # brake_sigma/ratio/ema_alpha live in `defaults` (per-group), same as
+        # brake_factor already did -- if they were instance attributes
+        # instead, a save/load round trip would silently revert a user's
+        # custom brake config back to the defaults baked into `opt2`.
+        m = _model()
+        opt = ChaosGrad.from_model(
+            m, brake_factor=0.3, brake_sigma=2.5, brake_ratio=1.5, brake_ema_alpha=0.1,
+        )
+        sd = opt.state_dict()
+
+        opt2 = ChaosGrad.from_model(m)  # built with the defaults
+        opt2.load_state_dict(sd)
+
+        for g in opt2.param_groups:
+            assert g['brake_factor'] == 0.3
+            assert g['brake_sigma'] == 2.5
+            assert g['brake_ratio'] == 1.5
+            assert g['brake_ema_alpha'] == 0.1
+
     def test_no_transient_keys_in_state_dict(self):
         m = _model()
         opt = ChaosGrad.from_model(m)
@@ -497,10 +564,11 @@ class TestNeurogenesisMigration:
 
         t.expand(amount=2, verbose=False)
 
-        assert all(g['brake_factor'] == 0.3 for g in t.optimizer.param_groups)
-        assert t.optimizer._brake_sigma == 2.5
-        assert t.optimizer._brake_ratio == 1.5
-        assert t.optimizer._brake_ema_alpha == 0.1
+        for g in t.optimizer.param_groups:
+            assert g['brake_factor'] == 0.3
+            assert g['brake_sigma'] == 2.5
+            assert g['brake_ratio'] == 1.5
+            assert g['brake_ema_alpha'] == 0.1
 
     def test_expand_preserves_fixed_lr(self):
         m = _model()

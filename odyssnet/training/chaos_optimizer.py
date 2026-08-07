@@ -77,10 +77,15 @@ class ChaosGrad(torch.optim.Optimizer):
             where the RMS anchor blends the per-group initialization scales,
             fading out groups initialized at/near zero or near exactly one
             (see :meth:`_anchor_weight` — a smooth ramp, not a hard cutoff).
-            On small chaotic networks the distance estimator can overshoot
-            by orders of magnitude during the turbulent early phase; the
-            anchored cap keeps every step proportional to the network's
-            design scale. Set ``None`` to disable. Default 0.25.
+            If literally every group is fully excluded (e.g. a single
+            all-zero-initialized parameter with no other family to anchor
+            against), the cap is left disabled rather than pinned to an
+            arbitrary value — there being nothing informative to anchor to
+            is different from being partially trusted. On small chaotic
+            networks the distance estimator can overshoot by orders of
+            magnitude during the turbulent early phase; the anchored cap
+            keeps every step proportional to the network's design scale.
+            Set ``None`` to disable. Default 0.25.
         brake_factor (float, optional): Loss-spike brake. When
             :meth:`report_loss` observes a statistical spike in the loss
             stream, a transient ``brake_ceiling`` multiplier (independent of
@@ -148,6 +153,8 @@ class ChaosGrad(torch.optim.Optimizer):
             d=d0, d0=d0, d_max=d0, d_numerator=0.0, brake_ceiling=1.0,
             d_coef=d_coef, growth_rate=growth_rate, d_mode=d_mode,
             trust_ratio=trust_ratio, brake_factor=brake_factor,
+            brake_sigma=brake_sigma, brake_ratio=brake_ratio,
+            brake_ema_alpha=brake_ema_alpha,
             use_bias_correction=use_bias_correction,
             safeguard_warmup=safeguard_warmup,
             zero_diag=False,
@@ -159,12 +166,9 @@ class ChaosGrad(torch.optim.Optimizer):
         # Loss-stream statistics for the spike brake. Transient by design:
         # after a checkpoint reload the EWMA re-seeds from the first
         # reported loss, which is harmless (the braked d/d_max persist via
-        # the param groups). One loss stream per optimizer instance (unlike
-        # brake_factor, which is per-group), so these live here, not in
-        # `defaults`.
-        self._brake_sigma = brake_sigma
-        self._brake_ratio = brake_ratio
-        self._brake_ema_alpha = brake_ema_alpha
+        # the param groups). brake_sigma/ratio/ema_alpha live in `defaults`
+        # (per-group, like brake_factor) so they round-trip through
+        # state_dict; only the live stream state below is instance-local.
         self._loss_ema = None
         self._loss_var = 0.0
         self._brake_step = 0
@@ -419,7 +423,10 @@ class ChaosGrad(torch.optim.Optimizer):
     _TRUST_RMS_FLOOR = 1e-3
     #: One decade above the floor: full confidence is reached, not at the
     #: floor itself. RMS naturally spans decades, so "one decade" is the
-    #: scale-natural ramp width — not a fitted number.
+    #: scale-natural ramp width — not a fitted number. Does double duty as
+    #: `_trust_cap`'s last-resort reference when no group is fully trusted
+    #: yet (see there) — a second, unrelated role that happens to reuse this
+    #: constant rather than invent another one.
     _TRUST_RMS_FLOOR_HIGH = _TRUST_RMS_FLOOR * 10
     #: Same half-width as the old hard band ([0.9, 1.1] around 1.0).
     _TRUST_RMS_NEUTRAL_BAND = 0.1
@@ -445,21 +452,64 @@ class ChaosGrad(torch.optim.Optimizer):
         return w_floor * w_neutral
 
     def _trust_cap(self, groups):
-        """Traction limit for a set of groups sharing a d estimate."""
+        """Traction limit for a set of groups sharing a d estimate.
+
+        Each group contributes ``max(rms0, blend)``, where ``blend`` slides
+        rms0 toward a non-binding reference as `_anchor_weight` fades toward
+        0. The ``max`` guarantees the one invariant that actually matters
+        here — a partially-trusted group can never bind *tighter* than its
+        own rms0 (``contribution >= rms0`` always, with equality at full
+        trust). It is *not* globally monotone in rms0 (a first version used
+        ``rms0 / weight``; monotonicity across the whole ramp is provably
+        impossible for any continuous relaxation of a threshold where the
+        trust signal and the value being anchored are the same quantity —
+        the transition must run from "non-binding" down toward a small true
+        value, and any such path dips somewhere in between).
+
+        The reference itself is the smallest rms0 among groups already at
+        full trust, not a fixed constant. A fixed reference
+        (`_TRUST_RMS_FLOOR_HIGH` — tried and rejected) is "non-binding" only
+        relative to itself: if some other, genuinely-trusted group's own
+        rms0 is smaller than that constant (a perfectly normal "quiet"
+        init), an excluded group's fallback would undercut it and tighten
+        the cap for a reason that has nothing to do with the excluded
+        group's own scale. Measured on `convergence_mnist_record.py`: under
+        the fixed reference, `chaos_core`/`projections` (excluded,
+        near-zero) fell back to 0.01, undercutting `memory_feedback`'s real
+        0.024 and moving the cap from 0.006 to 0.0025 — a regression on an
+        already-validated example. Anchoring to the trusted set's own
+        minimum instead reproduces the old value exactly whenever nothing
+        sits mid-ramp (every bundled example), and degrades gracefully
+        (falls back to `_TRUST_RMS_FLOOR_HIGH`) only when no group is fully
+        trusted yet.
+        """
         trust_ratio = groups[0]['trust_ratio']
         if trust_ratio is None:
             return None
-        # Each group contributes rms0 / weight: a fully-trusted group
-        # (weight 1) contributes exactly its rms0, matching the old hard
-        # inclusion; a fading-out group contributes a value that grows
-        # without bound as its weight -> 0, so it stops being the minimum
-        # continuously instead of being dropped from the set outright.
-        effective = []
-        for g in groups:
-            weight = self._anchor_weight(g.get('rms0', 0.0))
-            if weight > 1e-9:
-                effective.append(g['rms0'] / weight)
-        return trust_ratio * min(effective) if effective else None
+        weights = [self._anchor_weight(g.get('rms0', 0.0)) for g in groups]
+        if max(weights, default=0.0) <= 1e-9:
+            # No group has any real trust in its rms0 as a design-scale
+            # signal (e.g. a lone all-zero-initialized parameter passed
+            # straight to ChaosGrad, outside from_model's multi-family
+            # grouping) -- there's nothing informative to anchor a cap to,
+            # so disable rather than impose an arbitrary one. This is a
+            # deliberate hard fallback, not a threshold to smooth: it only
+            # fires when literally every group is fully excluded, and in
+            # any real multi-family model at least one family (chaos_core,
+            # memory_feedback, ...) is robustly trusted, so this can't
+            # reproduce the CPU/CUDA cap-value nondeterminism the smoothing
+            # below exists to fix.
+            return None
+
+        trusted = [g['rms0'] for g, w in zip(groups, weights) if w >= 1.0 - 1e-9]
+        reference = min(trusted) if trusted else self._TRUST_RMS_FLOOR_HIGH
+
+        contributions = []
+        for g, w in zip(groups, weights):
+            rms0 = g.get('rms0', 0.0)
+            blend = reference + w * (rms0 - reference)
+            contributions.append(max(rms0, blend))
+        return trust_ratio * min(contributions)
 
     def _update_d(self, groups, numerator_delta, denominator):
         """
@@ -525,11 +575,17 @@ class ChaosGrad(torch.optim.Optimizer):
             self._loss_var = 0.0
             return
 
+        # One shared loss stream per optimizer instance, but sigma/ratio/
+        # ema_alpha live per-group (like brake_factor) so they round-trip
+        # through state_dict. All groups get the same values from the
+        # constructor; the lead group is the canonical read, same pattern
+        # `_trust_cap`/`_update_d` already use for `trust_ratio`.
+        lead = self.param_groups[0]
         diff = loss_value - self._loss_ema
         std = math.sqrt(self._loss_var) + 1e-12
         is_spike = (
-            diff > self._brake_sigma * std
-            and loss_value > self._brake_ratio * abs(self._loss_ema)
+            diff > lead['brake_sigma'] * std
+            and loss_value > lead['brake_ratio'] * abs(self._loss_ema)
         )
 
         pre_var = self._loss_var
@@ -541,7 +597,7 @@ class ChaosGrad(torch.optim.Optimizer):
         # so the variance estimate isn't built from a handful of noisy early
         # samples. Not reset on a spike reseed — that would fight the
         # pre-spike variance retention just below.
-        alpha = max(self._brake_ema_alpha, 1.0 / (self._brake_step + 1))
+        alpha = max(lead['brake_ema_alpha'], 1.0 / (self._brake_step + 1))
         self._loss_ema += alpha * diff
         self._loss_var = (1 - alpha) * (self._loss_var + alpha * diff * diff)
 
