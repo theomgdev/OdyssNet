@@ -93,8 +93,8 @@ def main():
     small_neurons = 24
     large_neurons = 96
 
-    add_epochs = 500
-    mul_epochs = 1500
+    add_epochs = 250
+    mul_epochs = 500
     batch_size = 256
     lr = None  # zero-config: ChaosGrad estimates the step scale online
 

@@ -14,7 +14,7 @@ from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 SEED = 42
 NUM_EPOCHS = 100
 BATCH_SIZE = 32
-LR = 1e-2
+LR = None
 
 # Architecture
 NUM_NEURONS = 10

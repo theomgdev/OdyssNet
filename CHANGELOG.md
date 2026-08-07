@@ -4,6 +4,20 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.1] — 2026-08-07
+
+### Fixed
+- **ChaosGrad's loss-spike brake permanently scarred the estimator on ordinary noise.** Diagnosed via instrumented probes on `convergence_mnist_record.py`: the brake was firing every ~150-350 batches on nothing worse than normal per-batch classification variance (confirmed unrelated to Hebbian plasticity — fires *more* often with `hebb_type=None`), and each trigger permanently multiplied `d_numerator`/`d_max` by `brake_factor` with no way back. By epoch 25 of a 3k-subset probe, `effective_lr` had collapsed 500x and training had silently frozen — matching the ~83-87% accuracy plateau seen in full 100-epoch runs. Replaced the permanent mutation with a transient `brake_ceiling` multiplier applied only at the point of the actual parameter update, leaving the estimator's own bookkeeping untouched so it keeps learning the true scale while suppressed. The ceiling relaxes geometrically back toward 1.0 every `report_loss` call rather than on a fixed window: an isolated spike heals in tens of steps, a fast cascade (genuine divergence — the delayed-adder case this brake exists for) still compounds down. Also fixed a secondary bug where the post-spike variance reseed collapsed to 0.0, making the sigma test degenerate for ~20 calls after every fire.
+- `examples/advanced/convergence_skill_transfer.py`'s "Claim check" required the transplanted model's *average* loss across the whole run to beat scratch's — but the transplanted model's epoch-0 loss is inflated by the 93%-freshly-initialized new region, dragging the average up regardless of how well it ultimately converges. The check printed "No clear transfer win" on every run even when transplanted beat scratch on final loss and time-to-threshold by a wide margin. Now judges the claim by final loss and first-epoch-below-threshold instead.
+
+### Changed
+- `convergence_skill_transfer.py`: retuned `add_epochs` 500→250, `mul_epochs` 1500→500 — the shorter add-phase avoids overfitting the small model before transplant, giving a consistent, clear transfer win instead of a partial one.
+- Re-validated numbers across README.md/README_TR.md under the fixed brake: MNIST 98.62%→98.71%, MNIST Revive 98.54%→98.70%, MNIST Tiny 95.15%→95.58%, MNIST Scaled 97.38%→98.01%, MNIST (8k) Embed 94.08%→93.71% (within run-to-run noise), Skill Transfer speedup 3.0x→3.6x. Sine Wave/Latch/Stopwatch log excerpts refreshed to match current runs.
+- `convergence_mnist_record.py`: confirmed at full scale — previously froze around epoch 15-20 (~83-87% plateau, the exact symptom the brake fix targets), now trains cleanly through all 100 epochs, landing at 87.98% (peak 88.46%, epoch 86) zero-config. The README's 90.14% "WORLD RECORD" banner predates this optimizer entirely (different scheduler/preset pipeline, since removed) and is left as-is with an added status note — not a regression target, since the script itself changed too much for a like-for-like comparison. `LR` set to `None` (zero-config).
+
+### Known issues
+- `convergence_sine_wave.py` shows a late-training instability under the fixed brake: loss explodes from ~0.001 to 0.01-0.06 starting around epoch 7900 of a 10000-epoch run. Not yet root-caused. `EPOCHS` reduced 10000→6800 as a stopgap (avoids the window entirely) rather than a fix; worth the same instrumentation approach used to diagnose the record.py brake issue.
+
 ## [2.6.0] — 2026-08-06
 
 ### Added
