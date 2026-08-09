@@ -22,6 +22,11 @@ flag is what keeps a long run's progress visible through a pipe.
 
 Design notes
 ------------
+* **Two tokenizers, one flag.** ``--tokenizer bpe`` (the default) trains a
+  byte-level BPE on the corpus itself, once, and pins it. ``--tokenizer
+  cl100k_base`` (or any other tiktoken encoding) skips that step entirely —
+  nothing to train, nothing to cache, no ``tokenizers`` dependency. See
+  "Choosing a tokenizer" below for why the default is the small trained one.
 * **Offline + instant restart.** The corpus is tokenized once, streaming, into
   a flat integer memmap next to ``data/`` (element width chosen from the
   vocabulary size); later runs mmap it in milliseconds. Peak memory during
@@ -39,6 +44,44 @@ Design notes
 * **Budget-matched comparison.** Sweep arms are given equal wall-clock, and
   both val PPL and tokens-consumed are reported, so "learns more per token"
   can be told apart from "simply runs faster".
+
+Choosing a tokenizer
+--------------------
+The industrial answer to "which vocabulary" is a large one: Llama 3 uses a
+128k tiktoken-style BPE, Qwen ~151k, Gemma a 256k SentencePiece, and even the
+deliberately small models (Mistral, Phi-3, SmolLM) sit at 32k-49k. That answer
+does not transfer here, and the reason is arithmetic rather than taste. Those
+models carry a hidden width of 2048 or more, so an embedding table amortizes
+against a large body of compute; this one is a 1024-neuron core, and the table
+would *become* the model.
+
+Measured on a held-out 906 KB slice of ``tinystories.txt`` — bytes per token,
+higher is better compression:
+
+    tokenizer                vocabulary   bytes/token   embed+decoder
+    -----------------------------------------------------------------
+    trained BPE                   1,024         3.079          0.79M
+    trained BPE (the default)     2,048         3.601          1.57M
+    trained BPE                   4,096         3.908          3.15M
+    tiktoken gpt2                50,257         3.914         38.6M
+    tiktoken cl100k_base        100,277         4.146         77.1M
+    tiktoken o200k_base         200,019         4.190        153.8M
+
+A 4,096-token BPE trained on this corpus matches GPT-2's 50k vocabulary to
+within 0.2% (3.908 vs 3.914 bytes/token) at one twelfth the ids, because an
+in-domain vocabulary spends every merge on text the model will actually see.
+``cl100k_base`` buys 6% more compression for 24x the embedding parameters: at
+the defaults that is 2.6M parameters (1.05M of them the chaos core) becoming
+78M, 98% of it lookup table — and unrunnable at the documented batch, since
+the logits tensor alone is ``batch x chunk x vocab``, or 4.9 GB in fp32 at
+256 x 48 x 100,277.
+
+So the default stays ``--tokenizer bpe --vocab-size 2048``, and the reference
+run below is defined against it. The tiktoken path is for the cases where the
+trade goes the other way: skipping the training step, comparing against a
+standard vocabulary, or scaling the core up to where a large table pays for
+itself. Bits-per-byte is reported so those runs stay comparable — perplexity
+is not, across vocabularies.
 
 What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
 ----------------------------------------------------------------------------
@@ -63,7 +106,9 @@ Reference run — ``--mode train --minutes 25 --batch 256`` at the defaults
 above, 2,625,280 parameters: held-out **loss 2.2009, ppl 9.03,
 bits/byte 0.8764**, median cold start 2.3154, **0.0% collapsed cold starts**,
 226.15M tokens at 150,761 tok/s. Reproduce with that command; `--mode eval
---tag base` re-scores the saved checkpoint.
+--tag base` re-scores the saved checkpoint. Those figures are defined against
+the exact token cache that run was trained on: a rebuilt cache moves the
+held-out split, and the score with it (see CHANGELOG 2.6.4).
 """
 
 import sys
@@ -118,7 +163,10 @@ FAIL_NATS = 15.0
 class Cfg:
     # --- corpus ---
     text_path: str = os.path.join(DATA_DIR, "tinystories.txt")
-    vocab_size: int = 2048
+    tokenizer: str = "bpe"           # "bpe" = train on the corpus; otherwise
+                                     # the name of a tiktoken encoding
+    vocab_size: int = 2048           # only a knob for "bpe"; a tiktoken
+                                     # encoding brings its own and overwrites it
     val_chars: int = 1_500_000       # held-out tail of the raw text
     train_chars: int = -1            # -1 = all remaining text
 
@@ -174,21 +222,155 @@ class Cfg:
 
 
 # --------------------------------------------------------------------------- #
-# Corpus: tokenizer + uint16 memmap cache                                     #
+# Tokenizers                                                                  #
 # --------------------------------------------------------------------------- #
 
+#: Ready-made tiktoken encodings offered by `--tokenizer`: no training pass,
+#: and a vocabulary fixed by the encoding rather than chosen. See "Choosing a
+#: tokenizer" in the module docstring for why the default is a small in-domain
+#: BPE instead.
+TIKTOKEN_ENCODINGS = ("gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base")
+
+
+class TokenizerBase:
+    """
+    The tokenizer interface this script uses. The cache builder, validator and
+    generator talk to this and never to `tokenizers` or `tiktoken` directly,
+    so a third backend is a class rather than a grep.
+
+    Subclasses provide `encode(text) -> [id]`, `encode_batch([text]) -> [[id]]`
+    (plain lists — the `tokenizers` `Encoding` wrapper is unwrapped here),
+    `decode([id]) -> text`, `get_vocab_size()`, and a `bos_id` to fall back on
+    when a prompt encodes to nothing.
+
+    `get_vocab_size` is the id space the model must cover, which is not always
+    the size requested: special tokens can sit above the nominal vocabulary.
+    `bos_id` has no default on purpose — id 0 is `<s>` in one backend and an
+    ordinary byte in the other, so omitting it should raise, not guess.
+
+    Named `TokenizerBase` because `tokenizers` exports a `Tokenizer` this file
+    imports.
+    """
+
+    def encode(self, text):
+        raise NotImplementedError
+
+    def encode_batch(self, texts):
+        raise NotImplementedError
+
+    def decode(self, ids):
+        raise NotImplementedError
+
+    def get_vocab_size(self):
+        raise NotImplementedError
+
+
+class TrainedBPE(TokenizerBase):
+    """Byte-level BPE trained on the corpus itself and pinned to a file."""
+
+    def __init__(self, tok):
+        self._tok = tok
+        tid = tok.token_to_id("<s>")
+        self.bos_id = 0 if tid is None else tid
+
+    def encode(self, text):
+        return self._tok.encode(text).ids
+
+    def encode_batch(self, texts):
+        return [e.ids for e in self._tok.encode_batch(texts)]
+
+    def decode(self, ids):
+        return self._tok.decode(ids)
+
+    def get_vocab_size(self):
+        return self._tok.get_vocab_size()
+
+
+class TikToken(TokenizerBase):
+    """
+    A pretrained tiktoken encoding — no training pass, no tokenizer file.
+
+    Encoding goes through `encode_ordinary`, not `encode`: the latter raises
+    on a special-token string such as `<|endoftext|>`, and a corpus is text
+    rather than a prompt template.
+    """
+
+    def __init__(self, name):
+        self._enc = load_tiktoken(name)
+        # These encodings have no <s>, and their reserved special ids are not
+        # safe to feed a model that has never seen them. A newline is a real
+        # token and a plausible document start.
+        self.bos_id = self._enc.encode_ordinary("\n")[0]
+
+    def encode(self, text):
+        return self._enc.encode_ordinary(text)
+
+    def encode_batch(self, texts):
+        return self._enc.encode_ordinary_batch(texts)
+
+    def decode(self, ids):
+        return self._enc.decode(list(ids))
+
+    def get_vocab_size(self):
+        # n_vocab spans the special tokens, so the decoder covers every id the
+        # encoder can emit. Slightly wasteful, never out of range.
+        return self._enc.n_vocab
+
+
+def load_tiktoken(name):
+    """Fetch a tiktoken encoding, with an install hint instead of a traceback."""
+    try:
+        import tiktoken
+    except ImportError as e:
+        raise SystemExit(
+            f"\n✋ --tokenizer {name} needs tiktoken, which is not installed.\n"
+            f"     pip install tiktoken        (or: pip install -e \".[llm]\")\n"
+            f"   Or use the zero-dependency default: --tokenizer bpe\n"
+        ) from e
+    # tiktoken caches encodings internally, so repeated calls are free.
+    return tiktoken.get_encoding(name)
+
+
+def resolve_vocab(cfg):
+    """
+    Pin `cfg.vocab_size` to the tokenizer's actual id space.
+
+    A tiktoken vocabulary is a property of the encoding, not a choice, and must
+    be known before the corpus is tokenized: the cache's element width derives
+    from it, and a 100k vocabulary written as uint16 is silently wrong rather
+    than an error.
+    """
+    if cfg.tokenizer == "bpe":
+        return cfg
+    return replace(cfg, vocab_size=load_tiktoken(cfg.tokenizer).n_vocab)
+
+
+def bpe_path(cfg):
+    """Where this vocab size's trained tokenizer is pinned."""
+    if cfg.vocab_size % 1000:
+        return os.path.join(CKPT_DIR, f"poc_tokenizer_{cfg.vocab_size}.json")
+    return os.path.join(CKPT_DIR, f"poc_tokenizer_{cfg.vocab_size // 1000}k.json")
+
+
 def get_tokenizer(cfg, blocks=None):
-    """Load the pinned BPE tokenizer for this vocab size, training it once."""
-    from tokenizers import Tokenizer
+    """
+    The tokenizer for this config: pretrained, or trained once and pinned.
+
+    `blocks` is text to train a BPE vocabulary from, used only when this config
+    asks for one and no pinned file exists yet. The tiktoken path never
+    consumes it.
+    """
+    if cfg.tokenizer != "bpe":
+        return TikToken(cfg.tokenizer)
+
+    from tokenizers import Tokenizer as HFTokenizer
     from tokenizers.implementations import ByteLevelBPETokenizer
 
     os.makedirs(CKPT_DIR, exist_ok=True)
-    path = os.path.join(CKPT_DIR, f"poc_tokenizer_{cfg.vocab_size // 1000}k.json")
-    if cfg.vocab_size % 1000:
-        path = os.path.join(CKPT_DIR, f"poc_tokenizer_{cfg.vocab_size}.json")
+    path = bpe_path(cfg)
 
     if os.path.exists(path):
-        return Tokenizer.from_file(path)
+        return TrainedBPE(HFTokenizer.from_file(path))
 
     if blocks is None:
         raise FileNotFoundError(f"Tokenizer {path} missing and no text to train it on.")
@@ -201,7 +383,48 @@ def get_tokenizer(cfg, blocks=None):
                             special_tokens=["<s>", "<pad>", "</s>", "<unk>", "<mask>"])
     tok.save(path)
     print(f"✅ Tokenizer saved: {path}")
-    return Tokenizer.from_file(path)
+    return TrainedBPE(HFTokenizer.from_file(path))
+
+
+def vocab_advisory(cfg, vocab):
+    """
+    Where the parameters went, plus a warning when the vocabulary is about to
+    dominate the run. Advisory, not a limit: a large table is the right call on
+    a large core, which is what the tiktoken path exists for.
+    """
+    table = vocab * cfg.n_in + vocab * cfg.n_out + vocab      # embed + decoder
+    # W only. B and memory_feedback are O(N) beside it, but --hebb-res synapse
+    # adds two more NxN tensors, so on that setting the core is understated ~3x
+    # and the share below reads higher than it is.
+    core = cfg.neurons * cfg.neurons
+    share = table / max(table + core, 1)
+    print(f"🔤 tokenizer {cfg.tokenizer} | vocab {vocab:,} | "
+          f"embed+decoder {table/1e6:.2f}M vs core {core/1e6:.2f}M "
+          f"({share:.0%} of the model is lookup table)")
+
+    # batch x chunk x vocab floats, kept by autograd for the backward pass. On
+    # a large vocabulary this tensor, not the weights, decides whether the run
+    # fits.
+    logits_gb = cfg.batch * cfg.chunk * vocab * 4 / 1e9
+    if logits_gb > 0.5:
+        suggest = max(1, int(0.5e9 / (cfg.chunk * vocab * 4)))
+        print(f"⚠️  logits tensor is {logits_gb:.1f} GB per step "
+              f"({cfg.batch} x {cfg.chunk} x {vocab:,} fp32). If this OOMs, "
+              f"try --batch {suggest} or a shorter --chunk.")
+    # Gated on the vocabulary being the large half of the imbalance, not on the
+    # ratio alone: a deliberately tiny core puts any vocabulary above 90% and
+    # needs no advice — least of all to switch to the tokenizer already in use.
+    if share > 0.9 and vocab > 4096:
+        print(f"⚠️  {share:.0%} of the parameters are the vocabulary table. "
+              f"This measures the tokenizer more than the chaos core — either "
+              f"grow --neurons to match, or use the default "
+              f"--tokenizer bpe --vocab-size 2048 that the reference numbers "
+              f"are defined against.")
+
+
+# --------------------------------------------------------------------------- #
+# Corpus: uint16/uint32 memmap cache                                          #
+# --------------------------------------------------------------------------- #
 
 
 def _iter_blocks(path, start=0, end=None, target=200_000):
@@ -307,16 +530,17 @@ def _encode_to_file(tok, blocks, out_path, dtype=np.uint16, label="", verbose=Fa
             if not batch:
                 return
             for enc in tok.encode_batch(batch):
-                ids = np.asarray(enc.ids, dtype=np.int64)
+                ids = np.asarray(enc, dtype=np.int64)
                 # Special tokens are not always inside the nominal vocab size,
                 # so check the ids actually produced rather than trusting the
                 # declared vocabulary. One vectorized max per block.
                 if ids.size and ids.max() > limit:
                     raise ValueError(
                         f"token id {int(ids.max())} exceeds {np.dtype(dtype).name} "
-                        f"(max {limit}). The corpus would be silently corrupted; "
-                        f"the cache dtype is chosen from --vocab-size, so raise it "
-                        f"to match the tokenizer."
+                        f"(max {limit}). The corpus would be silently corrupted. "
+                        f"The cache's element width is derived from the "
+                        f"tokenizer's reported vocabulary size, so this means "
+                        f"the tokenizer emits ids outside the range it declares."
                     )
                 ids.astype(dtype, copy=False).tofile(out)
                 total += ids.size
@@ -347,7 +571,15 @@ def load_corpus(cfg, verbose=True):
     token can leak into training via a shared BPE merge boundary.
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    stamp = f"{os.path.basename(cfg.text_path)}.v{cfg.vocab_size}.val{cfg.val_chars}"
+    # The tokenizer is part of the cache's identity, but the trained-BPE stamp
+    # keeps its historical `.v<size>` form byte-for-byte so existing caches —
+    # and the numbers measured against them — stay valid. Do not unify these
+    # two branches; no encoding name can collide with `v<digits>`.
+    base = os.path.basename(cfg.text_path)
+    if cfg.tokenizer == "bpe":
+        stamp = f"{base}.v{cfg.vocab_size}.val{cfg.val_chars}"
+    else:
+        stamp = f"{base}.{cfg.tokenizer}.val{cfg.val_chars}"
     # The element width is part of the cache's identity: a flat token file
     # carries no header, so reading uint32 bytes as uint16 yields plausible
     # garbage rather than an error.
@@ -360,6 +592,22 @@ def load_corpus(cfg, verbose=True):
     # cache — and every score already measured against it — stays valid.
     train_npy = os.path.join(CACHE_DIR, f"{stamp}.train.npy")
     val_npy = os.path.join(CACHE_DIR, f"{stamp}.val.npy")
+    # Token ids are only meaningful next to the tokenizer that produced them,
+    # and a trained BPE lives in a file that can go missing (cleaning ckpt/ is
+    # enough). Retraining it is not a repair: nothing records what an existing
+    # cache's tokenizer was trained on, and a retrained one measurably differs
+    # (CHANGELOG 2.6.4). A missing tokenizer therefore invalidates the cache,
+    # and the two are rebuilt together.
+    usable = cfg.tokenizer != "bpe" or os.path.exists(bpe_path(cfg))
+    if not usable and any(os.path.exists(p) for p in (train_bin, train_npy)):
+        print(f"⚠️  Token cache found, but the tokenizer that built it "
+              f"({os.path.basename(bpe_path(cfg))}) is gone. Its ids cannot be "
+              f"decoded, so the cache is being rebuilt from the corpus.")
+        if os.path.exists(train_npy):
+            print(f"   Also delete the legacy cache {train_npy} (and its .val "
+                  f"pair): .npy takes priority on the next run and a rebuilt "
+                  f"tokenizer will not match it.")
+
     # .npy first: if a user already has one, every number they have measured
     # was measured against it, and a format upgrade must not move their metric.
     # Delete the .npy pair to re-tokenize under the streaming scheme (which
@@ -368,7 +616,7 @@ def load_corpus(cfg, verbose=True):
                             lambda p: np.load(p, mmap_mode="r")),
                            (train_bin, val_bin,
                             lambda p: _open_tokens(p, dtype))):
-        if os.path.exists(tp) and os.path.exists(vp):
+        if usable and os.path.exists(tp) and os.path.exists(vp):
             tok = get_tokenizer(cfg)
             train, val = opener(tp), opener(vp)
             if verbose:
@@ -649,7 +897,10 @@ def generate(model, tokenizer, cfg, prompt="Once upon a time", length=160,
     snap = snapshot_state(model)
     model.eval()
 
-    ids = tokenizer.encode(prompt).ids or [0]
+    # A prompt that encodes to nothing still needs a starting token. Ask the
+    # tokenizer: id 0 is "<s>" in the trained BPE and an ordinary byte under
+    # tiktoken.
+    ids = tokenizer.encode(prompt) or [tokenizer.bos_id]
     gap = cfg.think_gap + 1
     model.reset_state(batch_size=1)
 
@@ -768,19 +1019,38 @@ def _empty_cache(device):
 # Training session                                                            #
 # --------------------------------------------------------------------------- #
 
-#: Fields that must match the saved weights bit-for-bit to load them at all.
-ARCH_FIELDS = ("neurons", "n_in", "n_out", "vocab_size", "activation",
-               "weight_init", "gates", "hebb_type", "hebb_res",
+#: Everything that defines how a checkpoint was built and scored; adopted by
+#: `eval`/`gen`, whose job is to reproduce that. `tokenizer` is here for a
+#: different reason than the rest: it changes no tensor shape, but decoding
+#: with the wrong one yields fluent-looking garbage and no error.
+ARCH_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
+               "activation", "weight_init", "gates", "hebb_type", "hebb_res",
                "tie_embeddings", "think_gap")
 
+#: The subset `--resume` adopts: what `build()` allocates, plus which corpus is
+#: read. The rest cannot change the state dict, so pinning them would only take
+#: away a knob — `weight_init` is dead once weights load, `think_gap` is a
+#: forward-pass argument, and every accepted activation is parameter-free.
+#: `gates` is not in that group and is adopted: it adds or removes `core_gate`,
+#: `input_gate`, `output_gate` and `memory_gate`.
+RESUME_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
+                 "gates", "hebb_type", "hebb_res", "tie_embeddings")
 
-def adopt_saved_arch(cfg, path):
-    """Override architecture fields with the ones stored in a checkpoint."""
+
+def adopt_saved_arch(cfg, path, fields):
+    """
+    Override architecture fields with the ones stored in a checkpoint.
+
+    `fields` is required, not defaulted: the two callers want different sets,
+    and a third silently inheriting the broader one would over-adopt — failing
+    in the direction that removes a knob quietly rather than the one that
+    raises.
+    """
     saved = torch.load(path, map_location="cpu").get("cfg")
     if not saved:
         return cfg
     changes = {}
-    for k in ARCH_FIELDS:
+    for k in fields:
         if k not in saved:
             continue
         want = tuple(saved[k]) if isinstance(getattr(cfg, k), tuple) else saved[k]
@@ -853,32 +1123,58 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
         print(f"ℹ️  --resume given but no checkpoint at {latest_path}; "
               f"starting fresh.")
     if resume and os.path.exists(latest_path):
+        # Loading the weights must not fail softly. --resume bypasses
+        # guard_overwrite, so a run that continues past a failed load trains a
+        # randomly initialized model and, at the first validation, saves it
+        # over the checkpoint it could not read.
         try:
             data = load_checkpoint(model, trainer.optimizer, latest_path,
                                    device=cfg.device, strict=True, lr=cfg.lr)
-            if cfg.lr is None and cfg.lr_force_auto:
-                # Explicit `--lr auto`: return a fixed-rate checkpoint to the
-                # estimator. load_checkpoint(lr=None) means "don't touch", so
-                # this is the only path back to auto; ChaosGrad lazily builds
-                # the estimator state it never created under fixed rate.
-                switched = any(g.get('lr') is not None
-                               for g in trainer.optimizer.param_groups)
-                for g in trainer.optimizer.param_groups:
-                    g['lr'] = None
-                if switched:
-                    print("🔁 --lr auto: checkpoint was fixed-rate; optimizer "
-                          "returned to ChaosGrad's online estimate.")
-            extra = data.get("stream", {})
-            shards.restore(extra.get("pos", []), extra.get("wraps", 0))
-            best_val = data.get("best_val", float("inf"))
-            start_step = int(data.get("step", 0))
-            ts = data.get("trainer_state_dict")
-            if ts:
-                trainer.load_state_dict(ts)
-            print(f"📂 Resumed at step {start_step:,} "
-                  f"(best val PPL {math.exp(min(best_val,30)):.2f})")
         except Exception as e:
-            print(f"⚠️  Resume failed ({e}); starting fresh.")
+            raise SystemExit(
+                f"\n✋ Could not load the checkpoint for tag '{cfg.tag}':\n"
+                f"     {e}\n\n"
+                f"   The file is intact; this run refuses to overwrite it with "
+                f"a fresh model.\n"
+                f"   Architecture is read from the checkpoint, so a shape "
+                f"mismatch here usually means the\n"
+                f"   file predates that record or was written by a different "
+                f"version.\n"
+                f"   Train elsewhere:   --mode train --tag {cfg.tag}_v2\n"
+                f"   Start over anyway: --mode train --tag {cfg.tag} --overwrite "
+                f"(destroys it)\n"
+            ) from e
+
+        if cfg.lr is None and cfg.lr_force_auto:
+            # Explicit `--lr auto`: return a fixed-rate checkpoint to the
+            # estimator. load_checkpoint(lr=None) means "don't touch", so
+            # this is the only path back to auto; ChaosGrad lazily builds
+            # the estimator state it never created under fixed rate.
+            switched = any(g.get('lr') is not None
+                           for g in trainer.optimizer.param_groups)
+            for g in trainer.optimizer.param_groups:
+                g['lr'] = None
+            if switched:
+                print("🔁 --lr auto: checkpoint was fixed-rate; optimizer "
+                      "returned to ChaosGrad's online estimate.")
+        extra = data.get("stream", {})
+        shards.restore(extra.get("pos", []), extra.get("wraps", 0))
+        best_val = data.get("best_val", float("inf"))
+        start_step = int(data.get("step", 0))
+
+        # Deliberately outside the fatal guard: this payload can gain or lose
+        # keys between versions, and a failure here costs counters rather than
+        # weights, with nothing trained yet.
+        ts = data.get("trainer_state_dict")
+        if ts:
+            try:
+                trainer.load_state_dict(ts)
+            except Exception as e:
+                print(f"⚠️  Weights and optimizer resumed, but the trainer "
+                      f"state did not ({e}). Continuing with the loaded model; "
+                      f"AMP scaler and anomaly-detector history restart.")
+        print(f"📂 Resumed at step {start_step:,} "
+              f"(best val PPL {math.exp(min(best_val,30)):.2f})")
 
     # Report the mode the optimizer is ACTUALLY in, not what the CLI asked
     # for. Under the default `--lr keep`, a resumed checkpoint keeps its own
@@ -889,6 +1185,7 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
     live_lr = trainer.optimizer.param_groups[0].get('lr') \
         if trainer.optimizer.param_groups else cfg.lr
     if not quiet:
+        vocab_advisory(cfg, vocab_size)
         print(f"\n🧠 {model.get_num_params():,} trainable params | "
               f"{cfg.neurons} neurons | in {cfg.n_in} / out {cfg.n_out} | "
               f"gap {cfg.think_gap} | chunk {cfg.chunk} | batch {cfg.batch} | "
@@ -1274,6 +1571,14 @@ examples:
 
   # another corpus entirely
   %(prog)s --mode train --tag shake --text ../../data/shakespeare.txt
+
+  # skip the BPE training pass and use a ready-made tiktoken vocabulary --
+  # note the vocabulary table then dwarfs the core, so shrink the batch
+  %(prog)s --mode smoke --tokenizer cl100k_base
+  %(prog)s --mode train --tag tk --tokenizer cl100k_base --batch 16 --chunk 32
+
+  # a bigger in-domain vocabulary instead (still cheaper than any tiktoken one)
+  %(prog)s --mode train --tag v4k --vocab-size 4096
 """
 
 
@@ -1302,10 +1607,21 @@ def parse_args():
     g.add_argument("--text", default=d.text_path, metavar="PATH",
                    help="UTF-8 corpus; tokenized once into a memmap cache "
                         "(default: data/tinystories.txt)")
-    g.add_argument("--vocab-size", type=int, default=d.vocab_size, metavar="N",
+    g.add_argument("--tokenizer", default=d.tokenizer,
+                   choices=("bpe",) + TIKTOKEN_ENCODINGS,
+                   help="'bpe' trains a byte-level BPE on the corpus itself "
+                        "(once, then pinned) at --vocab-size; the others are "
+                        "ready-made tiktoken encodings with no training step "
+                        "and a fixed vocabulary. The default is small and "
+                        "in-domain on purpose -- a 4096-token corpus BPE "
+                        "matches gpt2's 50k vocabulary on TinyStories at 1/12 "
+                        "the embedding cost; see 'Choosing a tokenizer' in "
+                        "--help's description. (default: %(default)s)")
+    g.add_argument("--vocab-size", type=int, default=None, metavar="N",
                    help="BPE vocabulary size; trained once and pinned per size. "
+                        "Ignored for tiktoken tokenizers, which bring their own. "
                         "Perplexity is only comparable within one vocab -- use "
-                        "bits/byte across vocabs. (default: %(default)s)")
+                        f"bits/byte across vocabs. (default: {d.vocab_size})")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons, metavar="N",
@@ -1400,6 +1716,15 @@ def parse_args():
 
     a = p.parse_args()
 
+    # `--vocab-size` defaults to None so an explicit request is distinguishable
+    # from silence, which decides whether a tiktoken run should say the flag
+    # does nothing.
+    if a.vocab_size is None:
+        a.vocab_size = d.vocab_size
+    elif a.tokenizer != "bpe":
+        print(f"ℹ️  --vocab-size {a.vocab_size} ignored: {a.tokenizer} is a "
+              f"pretrained encoding and carries its own vocabulary.")
+
     # Validate here rather than at model-construction time so a typo costs a
     # second and an error message, not a corpus tokenization and a CUDA init.
     for name in ("neurons", "n_in", "n_out", "chunk", "vocab_size", "val_tokens"):
@@ -1427,7 +1752,8 @@ def parse_args():
 
 def cfg_from_args(a):
     return Cfg(
-        text_path=a.text, vocab_size=a.vocab_size, neurons=a.neurons,
+        text_path=a.text, tokenizer=a.tokenizer,
+        vocab_size=a.vocab_size, neurons=a.neurons,
         n_in=a.n_in, n_out=a.n_out, think_gap=a.think_gap, chunk=a.chunk,
         cold_start_every=a.cold_start_every, val_amp=a.val_amp,
         batch=a.batch,
@@ -1455,8 +1781,38 @@ def main():
     print("🚀 OdyssNet-LLM — temporal depth on TinyStories")
     print(f"   mode {a.mode} | device {cfg.device} | seed {cfg.seed}")
 
-    if a.mode == "smoke":
+    # A smoke test wants the cheapest vocabulary that still exercises the
+    # pipeline, but only the trained BPE has one to choose. A tiktoken smoke
+    # run is testing that path specifically and keeps its encoding's real size;
+    # the smoke config's small n_in/n_out is what keeps the table affordable.
+    if a.mode == "smoke" and cfg.tokenizer == "bpe":
         cfg = replace(cfg, vocab_size=1024)
+
+    # Rebuild from the architecture a checkpoint was trained with, not from
+    # whatever flags are on this command line, and do it before the corpus is
+    # loaded: `tokenizer` and `vocab_size` decide which token cache is read and
+    # which tokenizer decodes it. An architecture flag omitted on --resume
+    # otherwise reverts to a CLI default, fails the strict load, and leaves a
+    # run that --resume has already excused from guard_overwrite free to
+    # overwrite the checkpoint.
+    #
+    # `path` is what eval/gen load below; the resume branch only adopts a
+    # config, since run_session opens the checkpoint itself.
+    path = None
+    if a.mode in ("eval", "gen"):
+        latest, best = ckpt_paths(cfg)
+        path = best if os.path.exists(best) else latest
+        if not os.path.exists(path):
+            raise SystemExit(f"No checkpoint for tag '{cfg.tag}' (looked for {path})")
+        cfg = adopt_saved_arch(cfg, path, fields=ARCH_FIELDS)
+    elif a.mode == "train" and a.resume:
+        latest, _ = ckpt_paths(cfg)
+        if os.path.exists(latest):
+            cfg = adopt_saved_arch(cfg, latest, fields=RESUME_FIELDS)
+
+    # A tiktoken vocabulary belongs to its encoding; pin it before the cache
+    # path and element width are derived from it.
+    cfg = resolve_vocab(cfg)
 
     corpus = load_corpus(cfg)
     vocab = corpus[2].get_vocab_size()
@@ -1469,14 +1825,6 @@ def main():
         return
 
     if a.mode in ("eval", "gen"):
-        latest, best = ckpt_paths(cfg)
-        path = best if os.path.exists(best) else latest
-        if not os.path.exists(path):
-            raise SystemExit(f"No checkpoint for tag '{cfg.tag}' (looked for {path})")
-        # Rebuild from the architecture the checkpoint was *trained* with, not
-        # from whatever flags happen to be on this command line — otherwise a
-        # forgotten --neurons turns into an opaque state_dict shape error.
-        cfg = adopt_saved_arch(cfg, path)
         set_seed(cfg.seed)
         model, trainer = build(cfg, vocab)
         load_checkpoint(model, trainer.optimizer, path, device=cfg.device, strict=True)
