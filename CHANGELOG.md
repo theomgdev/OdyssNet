@@ -4,6 +4,17 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **`experiment_llm.py` could not tokenize a corpus larger than roughly a tenth of available RAM.** The cache builder read the whole file into a string, split it, re-joined it into blocks, and accumulated token ids in a Python list — boxed ints at ~36 bytes each. Measured on `data/wikisent2.txt` (934 MB): the old path was killed at **46.4 GB resident and still climbing**; the streaming replacement finishes in 84 s at **0.81 GB peak** (417.5M tokens). The file is now read line-by-line in binary from a byte range, encoded in batches, and written straight through to a flat `uint16` file that is memory-mapped for training, so peak cost is one encode batch regardless of corpus size.
+  Reading a byte range instead of a decoded string moves three boundary concerns into the caller's hands; the streaming rewrite got each of them wrong before it got them right, so they are recorded here as guidance rather than as discoveries. **Line endings:** binary reads preserve the CR of a CRLF file and a byte-level BPE makes every one its own token — one wasted token per line, ~5% of `tinystories.txt`, and a silent shift of every metric against a text-mode tokenization; newlines are normalized at the single decode site. **Split alignment:** searching raw bytes for `b"\n\n"` never matches CRLF (`b"\r\n\r\n"`), and three of the four corpora in `data/` are CRLF or have no blank lines, so a paragraph-aligned split lands mid-line and potentially mid-UTF-8; aligning on a bare `b"\n"` is correct under both conventions, whereas a preference-ordered separator list matched at the *end* of the search window on `wikisent2.txt` and produced an empty validation set. **Budget:** `val_chars` is capped at a fifth of the corpus so a small file plus the default budget cannot leave an empty training half.
+
+- **The token cache would have silently corrupted any vocabulary above 65535 ids.** Ids were written as `uint16` unconditionally, and numpy does not warn on an out-of-range cast — a tiktoken-scale vocabulary (`o200k_base` is ~200k) would have wrapped around into plausible-looking garbage with no error anywhere in the pipeline. The element width is now chosen from the vocabulary size, recorded in the cache filename (a flat token file has no header, so reading `uint32` bytes as `uint16` is not detectable after the fact), and the ids actually produced are range-checked per block — special tokens are not always inside the nominal vocab size, so the declared size alone is not trustworthy.
+
+### Changed
+- Token cache format is a flat `.bin` (memory-mapped, `uint16` or `uint32`) rather than `.npy`. **Pre-existing `.npy` caches are still read and take priority**, so numbers already measured against one stay valid; delete the `.npy` pair to re-tokenize under the new scheme. On `tinystories.txt` a fresh cache yields 12,301,242 train tokens against the old 12,294,433 (0.06%), and the reference checkpoint scores val loss 2.0791 (ppl 8.00) on it versus 2.0996 (ppl 8.16) on the original cache. Those two numbers are **not comparable** — same weights, different held-out split — and the published reference stays defined by the original cache.
+
 ## [2.6.2] — 2026-08-09
 
 ### Added

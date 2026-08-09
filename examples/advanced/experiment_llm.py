@@ -22,9 +22,11 @@ flag is what keeps a long run's progress visible through a pipe.
 
 Design notes
 ------------
-* **Offline + instant restart.** The corpus is tokenized once into a uint16
-  memmap next to ``data/``; later runs mmap it in milliseconds. No network,
-  no HuggingFace streaming, no per-run tokenizer cost.
+* **Offline + instant restart.** The corpus is tokenized once, streaming, into
+  a flat integer memmap next to ``data/`` (element width chosen from the
+  vocabulary size); later runs mmap it in milliseconds. Peak memory during
+  tokenization is one encode batch, so corpus size is bounded by disk rather
+  than by RAM. No network, no HuggingFace streaming, no per-run tokenizer cost.
 * **Stateful contiguous streams.** The batch is B parallel readers, each
   walking its own contiguous shard of the corpus. Hidden state carries across
   chunks (``keep_state=True``) and the model detaches it internally, which is
@@ -172,7 +174,7 @@ class Cfg:
 # Corpus: tokenizer + uint16 memmap cache                                     #
 # --------------------------------------------------------------------------- #
 
-def get_tokenizer(cfg, text_for_training=None):
+def get_tokenizer(cfg, blocks=None):
     """Load the pinned BPE tokenizer for this vocab size, training it once."""
     from tokenizers import Tokenizer
     from tokenizers.implementations import ByteLevelBPETokenizer
@@ -185,41 +187,152 @@ def get_tokenizer(cfg, text_for_training=None):
     if os.path.exists(path):
         return Tokenizer.from_file(path)
 
-    if text_for_training is None:
+    if blocks is None:
         raise FileNotFoundError(f"Tokenizer {path} missing and no text to train it on.")
 
     print(f"📚 Training {cfg.vocab_size}-token BPE tokenizer...")
     tok = ByteLevelBPETokenizer()
-    blocks = _blocks(text_for_training[:20_000_000])
-    tok.train_from_iterator(iter(blocks), vocab_size=cfg.vocab_size, min_frequency=2,
+    # train_from_iterator consumes the block stream lazily — the sample the
+    # vocabulary is learned from is never materialized as one string.
+    tok.train_from_iterator(blocks, vocab_size=cfg.vocab_size, min_frequency=2,
                             special_tokens=["<s>", "<pad>", "</s>", "<unk>", "<mask>"])
     tok.save(path)
     print(f"✅ Tokenizer saved: {path}")
     return Tokenizer.from_file(path)
 
 
-def _blocks(text, target=200_000):
-    """Split text into ~target-sized blocks on paragraph boundaries."""
-    out, buf, size = [], [], 0
-    for para in text.split("\n\n"):
-        buf.append(para)
-        size += len(para) + 2
-        if size >= target:
-            out.append("\n\n".join(buf))
-            buf, size = [], 0
+def _iter_blocks(path, start=0, end=None, target=200_000):
+    """
+    Yield ~target-sized text blocks from a byte range of a file.
+
+    Reads line by line in binary and decodes per line: a corpus is never held
+    in memory, and line boundaries are safe UTF-8 split points (``\\n`` cannot
+    occur inside a multi-byte sequence). Peak cost is one block.
+    """
+    end = os.path.getsize(path) if end is None else end
+    buf, size, pos = [], 0, start
+    with open(path, "rb") as f:
+        f.seek(start)
+        while pos < end:
+            line = f.readline()
+            if not line:
+                break
+            pos += len(line)
+            # Normalize newlines exactly as text-mode reads would. Reading in
+            # binary is what keeps memory flat, but it also preserves the CR of
+            # a CRLF file — and a byte-level BPE turns every one of those into
+            # its own token. On a CRLF corpus that is one wasted token per
+            # line: ~5% of the whole stream, and it silently shifts every
+            # metric relative to a text-mode tokenization of the same file.
+            s = line.decode("utf-8", errors="replace").replace("\r\n", "\n")
+            buf.append(s)
+            size += len(s)
+            if size >= target:
+                yield "".join(buf)
+                buf, size = [], 0
     if buf:
-        out.append("\n\n".join(buf))
-    return out
+        yield "".join(buf)
 
 
-def _encode_corpus(tok, text):
-    """Tokenize a large string block-wise into a flat uint16 array."""
-    blocks = _blocks(text)
-    ids = []
-    for i in range(0, len(blocks), 64):
-        for enc in tok.encode_batch(blocks[i:i + 64]):
-            ids.extend(enc.ids)
-    return np.asarray(ids, dtype=np.uint16)
+def _tail_offset(path, val_chars):
+    """
+    Byte offset where the held-out tail starts, aligned to a line boundary.
+
+    `val_chars` is a character budget; for ASCII-heavy text one byte is one
+    character, so the byte offset approximates it and the alignment only ever
+    trims. Non-Latin corpora get a slightly smaller held-out set than asked
+    for, never a larger one.
+
+    Aligning on a bare b"\\n" is deliberate and covers both line-ending
+    conventions: in CRLF the b"\\n" is the second byte, so the offset after it
+    is still the start of a line. Searching for a paragraph break instead
+    looks tidier and is a trap — b"\\n\\n" never matches CRLF bytes (they read
+    b"\\r\\n\\r\\n"), and three of the four corpora in data/ have no blank
+    lines at all, which left the split mid-line and potentially mid-UTF-8.
+    """
+    size = os.path.getsize(path)
+    # Never hand back a corpus with no training half: a small file plus the
+    # default val budget would otherwise make the whole thing validation.
+    budget = min(val_chars, size // 5)
+    start = max(0, size - budget)
+    if start <= 0:
+        return 0
+    with open(path, "rb") as f:
+        f.seek(start)
+        window = f.read(min(4_000_000, size - start))
+    idx = window.find(b"\n")
+    if idx >= 0:
+        return start + idx + 1
+    # No line break at all in 4 MB. Vanishingly unlikely, but at least refuse
+    # to cut a multi-byte character in half.
+    off = 0
+    while off < len(window) and (window[off] & 0xC0) == 0x80:
+        off += 1
+    return start + off
+
+
+def _token_dtype(vocab_size):
+    """
+    Narrowest integer type that can hold every id of this vocabulary.
+
+    uint16 covers ids up to 65535, which is every BPE vocabulary this example
+    ships with — but a tiktoken-scale vocabulary (100k+) would wrap around
+    silently, corrupting the corpus with no error anywhere. numpy does not
+    warn on out-of-range casts, so the guard has to be the type choice itself.
+    """
+    return np.uint16 if vocab_size <= np.iinfo(np.uint16).max + 1 else np.uint32
+
+
+def _encode_to_file(tok, blocks, out_path, dtype=np.uint16, label="", verbose=False):
+    """
+    Tokenize an iterable of text blocks straight to a flat uint16 file.
+
+    Nothing accumulates in RAM: each batch of blocks is encoded and written
+    through. The previous version built a Python list of token ids, which at
+    full-corpus scale (~490M tokens) is 13+ GB of boxed ints before the array
+    conversion even starts. Peak here is one encode batch, a few MB, so the
+    corpus size a user can train on stops being bounded by their RAM.
+    """
+    total, batch = 0, []
+    t0 = time.time()
+    tmp = out_path + ".part"
+    with open(tmp, "wb") as out:
+        limit = np.iinfo(dtype).max
+
+        def flush():
+            nonlocal total
+            if not batch:
+                return
+            for enc in tok.encode_batch(batch):
+                ids = np.asarray(enc.ids, dtype=np.int64)
+                # Special tokens are not always inside the nominal vocab size,
+                # so check the ids actually produced rather than trusting the
+                # declared vocabulary. One vectorized max per block.
+                if ids.size and ids.max() > limit:
+                    raise ValueError(
+                        f"token id {int(ids.max())} exceeds {np.dtype(dtype).name} "
+                        f"(max {limit}). The corpus would be silently corrupted; "
+                        f"the cache dtype is chosen from --vocab-size, so raise it "
+                        f"to match the tokenizer."
+                    )
+                ids.astype(dtype, copy=False).tofile(out)
+                total += ids.size
+            batch.clear()
+
+        for i, block in enumerate(blocks):
+            batch.append(block)
+            if len(batch) >= 64:
+                flush()
+                if verbose and i % 2560 == 0 and i:
+                    print(f"   {label}: {total/1e6:8.1f}M tokens  {time.time()-t0:5.0f}s")
+        flush()
+    os.replace(tmp, out_path)
+    return total
+
+
+def _open_tokens(path, dtype=np.uint16):
+    """Memory-map a flat token file."""
+    return np.memmap(path, dtype=dtype, mode="r")
 
 
 def load_corpus(cfg, verbose=True):
@@ -232,48 +345,68 @@ def load_corpus(cfg, verbose=True):
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
     stamp = f"{os.path.basename(cfg.text_path)}.v{cfg.vocab_size}.val{cfg.val_chars}"
+    # The element width is part of the cache's identity: a flat token file
+    # carries no header, so reading uint32 bytes as uint16 yields plausible
+    # garbage rather than an error.
+    dtype = _token_dtype(cfg.vocab_size)
+    width = np.dtype(dtype).name
+    train_bin = os.path.join(CACHE_DIR, f"{stamp}.{width}.train.bin")
+    val_bin = os.path.join(CACHE_DIR, f"{stamp}.{width}.val.bin")
+
+    # .npy is the pre-2.6.3 cache format. Still read if present, so an existing
+    # cache — and every score already measured against it — stays valid.
     train_npy = os.path.join(CACHE_DIR, f"{stamp}.train.npy")
     val_npy = os.path.join(CACHE_DIR, f"{stamp}.val.npy")
-
-    if os.path.exists(train_npy) and os.path.exists(val_npy):
-        tok = get_tokenizer(cfg)
-        train = np.load(train_npy, mmap_mode="r")
-        val = np.load(val_npy, mmap_mode="r")
-        if verbose:
-            print(f"💾 Token cache: {len(train):,} train / {len(val):,} val tokens "
-                  f"(vocab {cfg.vocab_size})")
-        return train, val, tok
+    # .npy first: if a user already has one, every number they have measured
+    # was measured against it, and a format upgrade must not move their metric.
+    # Delete the .npy pair to re-tokenize under the streaming scheme (which
+    # normalizes CRLF, so a fresh cache differs from a pre-2.6.3 one by ~0.3%).
+    for tp, vp, opener in ((train_npy, val_npy,
+                            lambda p: np.load(p, mmap_mode="r")),
+                           (train_bin, val_bin,
+                            lambda p: _open_tokens(p, dtype))):
+        if os.path.exists(tp) and os.path.exists(vp):
+            tok = get_tokenizer(cfg)
+            train, val = opener(tp), opener(vp)
+            if verbose:
+                print(f"💾 Token cache: {len(train):,} train / {len(val):,} val "
+                      f"tokens (vocab {cfg.vocab_size})")
+            return train, val, tok
 
     if not os.path.exists(cfg.text_path):
         raise FileNotFoundError(
             f"Corpus not found: {cfg.text_path}\n"
-            f"   Point --text at a UTF-8 text file, or fetch TinyStories with:\n"
-            f"   python -c \"from datasets import load_dataset as L; "
-            f"open(r'{cfg.text_path}','w',encoding='utf-8').write("
-            f"'\\n\\n'.join(r['text'] for r in L('roneneldan/TinyStories',split='train[:400000]')))\""
+            f"   Point --text at a UTF-8 text file."
         )
 
-    print(f"📖 Reading corpus: {cfg.text_path}")
-    with open(cfg.text_path, encoding="utf-8", errors="replace") as f:
-        text = f.read()
+    # A crashed or interrupted tokenization leaves a .part behind; it is never
+    # read, so clear it rather than accumulating dead files in the cache dir.
+    for stale in glob.glob(os.path.join(CACHE_DIR, "*.part")):
+        os.remove(stale)
 
-    split = max(0, len(text) - cfg.val_chars)
-    train_text, val_text = text[:split], text[split:]
-    if cfg.train_chars > 0:
-        train_text = train_text[:cfg.train_chars]
+    # Split at a line boundary and tokenize each side independently, so no
+    # validation token reaches training through a shared BPE merge. Neither
+    # side is ever read into memory whole. `train_chars` is compared against a
+    # byte offset here, so on a multi-byte corpus it trims slightly more text
+    # than its name suggests.
+    size = os.path.getsize(cfg.text_path)
+    split = _tail_offset(cfg.text_path, cfg.val_chars)
+    train_end = min(split, cfg.train_chars) if cfg.train_chars > 0 else split
 
-    tok = get_tokenizer(cfg, text_for_training=train_text)
+    tok = get_tokenizer(cfg, blocks=_iter_blocks(cfg.text_path, 0,
+                                                 min(train_end, 20_000_000)))
 
-    print(f"🔤 Tokenizing {len(train_text)/1e6:.1f}M chars (train) "
-          f"+ {len(val_text)/1e6:.1f}M chars (val)...")
+    print(f"🔤 Tokenizing {cfg.text_path} "
+          f"({train_end/1e6:.1f}MB train + {(size-split)/1e6:.1f}MB val)...")
     t0 = time.time()
-    train = _encode_corpus(tok, train_text)
-    val = _encode_corpus(tok, val_text)
-    np.save(train_npy, train)
-    np.save(val_npy, val)
-    print(f"✅ Cached in {time.time()-t0:.1f}s: {len(train):,} train / {len(val):,} val tokens")
+    n_train = _encode_to_file(tok, _iter_blocks(cfg.text_path, 0, train_end),
+                              train_bin, dtype, "train", verbose=True)
+    n_val = _encode_to_file(tok, _iter_blocks(cfg.text_path, split, size),
+                            val_bin, dtype, "val", verbose=True)
+    print(f"✅ Cached in {time.time()-t0:.0f}s: {n_train:,} train / {n_val:,} val "
+          f"tokens ({width})")
 
-    return np.load(train_npy, mmap_mode="r"), np.load(val_npy, mmap_mode="r"), tok
+    return _open_tokens(train_bin, dtype), _open_tokens(val_bin, dtype), tok
 
 
 class StreamShards:
