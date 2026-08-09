@@ -9,21 +9,16 @@ reused every step — so the interesting question is not "how many layers" but
 
 This script is built to answer that question rather than to assert it.
 
-    # end-to-end self-test, exercises every code path (~40s CUDA, ~15s CPU)
-    python -u experiment_llm.py --mode smoke
-    python -u experiment_llm.py --mode smoke --device cpu
+    python -u experiment_llm.py --mode smoke                    # ~40s self-test
+    python -u experiment_llm.py --mode train --tag base --batch 256 --minutes 25
+    python -u experiment_llm.py --mode train --tag base --resume --batch 256
+    python -u experiment_llm.py --mode sweep --sweep gap --minutes 3 --batch 128
+    python -u experiment_llm.py --mode eval  --tag base
+    python -u experiment_llm.py --mode gen   --tag base --prompt "Once upon a time"
 
-    # compute-matched ablation: every arm gets the same wall-clock budget
-    python -u experiment_llm.py --mode sweep --sweep gap  --minutes 3
-    python -u experiment_llm.py --mode sweep --sweep arch --minutes 3
-
-    # the long run (resumable; Ctrl-C is safe, it checkpoints on exit)
-    python -u experiment_llm.py --mode train
-    python -u experiment_llm.py --mode train --minutes 60
-
-    # inspect a trained checkpoint
-    python -u experiment_llm.py --mode eval --resume
-    python -u experiment_llm.py --mode gen  --resume --prompt "Once upon a time"
+`--help` lists every flag with its default and a fuller set of examples. Use
+`python -u` when piping: this script line-buffers stdout, but the interpreter
+flag is what keeps a long run's progress visible through a pipe.
 
 Design notes
 ------------
@@ -75,15 +70,19 @@ import sys
 # line_buffering=True is not optional: reconfigure() rebuilds the TextIOWrapper
 # and would otherwise discard `python -u`'s write-through, leaving a long
 # training run's progress invisible until the process exits.
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+# stderr too: argparse errors and SystemExit messages go there, and on a
+# legacy code page they came out backslash-escaped ("✋ Refusing to...").
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 import argparse
+import glob
 import json
 import math
 import os
 import time
-from dataclasses import dataclass, field, asdict, replace
+from dataclasses import dataclass, asdict, replace
 
 import numpy as np
 import torch
@@ -662,6 +661,35 @@ def ckpt_paths(cfg):
     return base + "_latest.pth", base + "_best.pth"
 
 
+def guard_overwrite(cfg, overwrite=False):
+    """
+    Refuse to start a fresh run on top of an existing tag's checkpoints.
+
+    Without this, `--mode train --tag base` (no --resume) rebuilds the model
+    from scratch with best_val = inf, so the very first validation counts as a
+    new record and overwrites both <tag>_best.pth and <tag>_latest.pth — a
+    25-minute run destroyed ~35 seconds in, with nothing in the logs to warn
+    you. Checked before the batch autotune so it fails in a second rather than
+    after a two-minute probe.
+
+    Deliberately a hard exit and not an interactive prompt: the blocking
+    input() this rewrite removed is exactly what made the old script
+    unusable from a script or a CI job.
+    """
+    latest, best = ckpt_paths(cfg)
+    existing = [p for p in (latest, best) if os.path.exists(p)]
+    if not existing or overwrite:
+        return
+    raise SystemExit(
+        f"\n✋ Refusing to overwrite existing checkpoints for tag '{cfg.tag}':\n"
+        + "".join(f"     {p}\n" for p in existing)
+        + f"\n   Continue that run:   --mode train --tag {cfg.tag} --resume "
+          f"--batch <same as checkpoint>\n"
+        f"   Start somewhere new: --mode train --tag {cfg.tag}_v2\n"
+        f"   Overwrite anyway:    --mode train --tag {cfg.tag} --overwrite\n"
+    )
+
+
 def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
                 sample_every=0, save=True):
     """
@@ -685,6 +713,9 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
 
     best_val = float("inf")
     start_step = 0
+    if resume and not os.path.exists(latest_path):
+        print(f"ℹ️  --resume given but no checkpoint at {latest_path}; "
+              f"starting fresh.")
     if resume and os.path.exists(latest_path):
         try:
             data = load_checkpoint(model, trainer.optimizer, latest_path,
@@ -976,6 +1007,13 @@ def run_smoke(cfg, corpus):
     print("🔥 SMOKE TEST")
     print(f"{'='*78}")
 
+    # Clear our own litter first. The round-trip below trains with save=True
+    # and no --resume, so leftovers from a previous smoke run would trip
+    # guard_overwrite and fail the test on the second invocation. Running
+    # smoke twice in a row has to be a no-op, or it isn't a smoke test.
+    for stale in glob.glob(os.path.join(CKPT_DIR, "llm_odyss_smoke*.pth")):
+        os.remove(stale)
+
     base = replace(
         cfg, neurons=96, n_in=32, n_out=48, chunk=8, batch=4, think_gap=1,
         max_steps=12, eval_every=6, log_every=6, val_tokens=20000, val_batch=8,
@@ -1047,49 +1085,181 @@ def run_smoke(cfg, corpus):
 # CLI                                                                         #
 # --------------------------------------------------------------------------- #
 
+EPILOG = """\
+examples:
+  # end-to-end self-test; safe to run twice, touches no real checkpoint
+  %(prog)s --mode smoke
+  %(prog)s --mode smoke --device cpu
+
+  # start a fresh run under a new tag (refuses to clobber an existing one)
+  %(prog)s --mode train --tag base --batch 256 --minutes 25
+
+  # continue it -- --batch must match the checkpoint or the corpus rewinds
+  %(prog)s --mode train --tag base --resume --batch 256 --minutes 25
+
+  # continue with a pinned rate instead of ChaosGrad's estimate
+  %(prog)s --mode train --tag base --resume --batch 256 --lr 1.5e-3
+
+  # continue with the state never reset (longer context, riskier dynamics --
+  # watch the val_coldfail column)
+  %(prog)s --mode train --tag base --resume --batch 256 --cold-start-every 0
+
+  # compute-matched ablations; every arm gets the same wall-clock
+  %(prog)s --mode sweep --sweep gap  --minutes 3 --batch 128
+  %(prog)s --mode sweep --sweep coldstart --arms never,c32 --minutes 2
+
+  # score or sample a saved checkpoint (architecture is read from the file)
+  %(prog)s --mode eval --tag base
+  %(prog)s --mode gen  --tag base --prompt "Once upon a time" --length 200
+
+  # another corpus entirely
+  %(prog)s --mode train --tag shake --text ../../data/shakespeare.txt
+"""
+
+
 def parse_args():
     d = Cfg()
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--mode", default="train",
-                   choices=["train", "sweep", "smoke", "eval", "gen"])
-    p.add_argument("--sweep", default="gap", choices=sorted(SWEEPS))
-    p.add_argument("--arms", default=None, help="comma-separated arm subset")
+    p = argparse.ArgumentParser(
+        prog="experiment_llm.py",
+        description=__doc__,
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-    p.add_argument("--text", default=d.text_path)
-    p.add_argument("--vocab-size", type=int, default=d.vocab_size)
-    p.add_argument("--neurons", type=int, default=d.neurons)
-    p.add_argument("--n-in", type=int, default=d.n_in)
-    p.add_argument("--n-out", type=int, default=d.n_out)
-    p.add_argument("--think-gap", type=int, default=d.think_gap)
-    p.add_argument("--chunk", type=int, default=d.chunk)
-    p.add_argument("--cold-start-every", type=int, default=d.cold_start_every,
-                   help="mean chunks before a row's state resets (0 = never)")
-    p.add_argument("--val-amp", action="store_true",
-                   help="evaluate under AMP (faster; measured to agree with fp32 to ~4 decimals)")
-    p.add_argument("--batch", type=int, default=d.batch, help="-1 autotunes")
-    p.add_argument("--lr", default="auto", help="'auto' (ChaosGrad) or a float")
-    p.add_argument("--dropout", type=float, default=d.dropout)
-    p.add_argument("--label-smoothing", type=float, default=d.label_smoothing)
-    p.add_argument("--hebb", default=None, choices=[None, "temporal", "spatial", "both"])
-    p.add_argument("--hebb-res", default=d.hebb_res, choices=["global", "neuron", "synapse"])
-    p.add_argument("--grad-ckpt", action="store_true")
-    p.add_argument("--tie-embeddings", action="store_true")
+    g = p.add_argument_group("mode")
+    g.add_argument("--mode", default="train",
+                   choices=["train", "sweep", "smoke", "eval", "gen"],
+                   help="train: (resumable) training loop. sweep: compute-matched "
+                        "ablation. smoke: fast self-test. eval/gen: score or sample "
+                        "a saved checkpoint. (default: %(default)s)")
+    g.add_argument("--sweep", default="gap", choices=sorted(SWEEPS),
+                   help="which ablation preset to run in --mode sweep "
+                        "(default: %(default)s)")
+    g.add_argument("--arms", default=None, metavar="A,B",
+                   help="comma-separated subset of the preset's arms, e.g. never,c32")
 
-    p.add_argument("--minutes", type=float, default=d.minutes, help="0 = unlimited")
-    p.add_argument("--max-steps", type=int, default=d.max_steps)
-    p.add_argument("--eval-every", type=int, default=d.eval_every)
-    p.add_argument("--log-every", type=int, default=d.log_every)
-    p.add_argument("--val-tokens", type=int, default=d.val_tokens)
-    p.add_argument("--sample-every", type=int, default=2,
-                   help="generate a sample every N validations (0 = never)")
-    p.add_argument("--seed", type=int, default=d.seed)
-    p.add_argument("--device", default=d.device)
-    p.add_argument("--tag", default=d.tag)
-    p.add_argument("--resume", action="store_true")
-    p.add_argument("--prompt", default="Once upon a time")
-    p.add_argument("--length", type=int, default=200)
-    return p.parse_args()
+    g = p.add_argument_group("corpus")
+    g.add_argument("--text", default=d.text_path, metavar="PATH",
+                   help="UTF-8 corpus; tokenized once into a memmap cache "
+                        "(default: data/tinystories.txt)")
+    g.add_argument("--vocab-size", type=int, default=d.vocab_size, metavar="N",
+                   help="BPE vocabulary size; trained once and pinned per size. "
+                        "Perplexity is only comparable within one vocab -- use "
+                        "bits/byte across vocabs. (default: %(default)s)")
+
+    g = p.add_argument_group("architecture")
+    g.add_argument("--neurons", type=int, default=d.neurons, metavar="N",
+                   help="size of the NxN chaos core (default: %(default)s)")
+    g.add_argument("--n-in", type=int, default=d.n_in, metavar="N",
+                   help="neurons receiving the token embedding (default: %(default)s)")
+    g.add_argument("--n-out", type=int, default=d.n_out, metavar="N",
+                   help="neurons the vocab decoder reads; n_in + n_out must be "
+                        "<= --neurons (default: %(default)s)")
+    g.add_argument("--think-gap", type=int, default=d.think_gap, metavar="N",
+                   help="extra echo steps per token; total steps per token is N+1. "
+                        "Measured best at 1 for equal wall-clock. (default: %(default)s)")
+    g.add_argument("--hebb", default="none",
+                   choices=["none", "temporal", "spatial", "both"],
+                   help="Hebbian plasticity mechanism. Note this is the one thing "
+                        "that couples batch rows. (default: %(default)s)")
+    g.add_argument("--hebb-res", default=d.hebb_res,
+                   choices=["global", "neuron", "synapse"],
+                   help="plasticity resolution; 'synapse' adds two NxN tensors "
+                        "(default: %(default)s)")
+    g.add_argument("--tie-embeddings", action="store_true",
+                   help="share embed/decoder weights; requires n_in == n_out")
+    g.add_argument("--dropout", type=float, default=d.dropout, metavar="P",
+                   help="dropout applied every thinking step (default: %(default)s)")
+
+    g = p.add_argument_group("optimization")
+    g.add_argument("--batch", type=int, default=d.batch, metavar="N",
+                   help="parallel corpus streams; -1 measures throughput and picks "
+                        "the fastest. Must match the checkpoint when resuming. "
+                        "(default: %(default)s)")
+    g.add_argument("--chunk", type=int, default=d.chunk, metavar="N",
+                   help="tokens per optimizer step; this is the truncated-BPTT "
+                        "window the gradient sees (default: %(default)s)")
+    g.add_argument("--cold-start-every", type=int, default=d.cold_start_every,
+                   metavar="N",
+                   help="each row's state is zeroed with probability 1/N per step, "
+                        "so mean context is N*chunk tokens; 0 never resets, which "
+                        "measurably invites cold-start collapse (default: %(default)s)")
+    g.add_argument("--lr", default="auto", metavar="RATE",
+                   help="'auto' for ChaosGrad's online estimate, or a float for "
+                        "fixed-rate mode (default: %(default)s)")
+    g.add_argument("--label-smoothing", type=float, default=d.label_smoothing,
+                   metavar="P",
+                   help="applied to the training loss only; reported perplexity is "
+                        "always unsmoothed (default: %(default)s)")
+    g.add_argument("--grad-ckpt", action="store_true",
+                   help="gradient checkpointing: less memory, one extra sequential "
+                        "forward per step")
+
+    g = p.add_argument_group("run control")
+    g.add_argument("--minutes", type=float, default=d.minutes, metavar="M",
+                   help="wall-clock budget; 0 runs until Ctrl-C, which checkpoints "
+                        "cleanly on the way out (default: %(default)s)")
+    g.add_argument("--max-steps", type=int, default=d.max_steps, metavar="N",
+                   help="optimizer-step budget; 0 is unlimited (default: %(default)s)")
+    g.add_argument("--tag", default=d.tag, metavar="NAME",
+                   help="names the checkpoint pair llm_odyss_<NAME>_{latest,best}.pth "
+                        "(default: %(default)s)")
+    g.add_argument("--resume", action="store_true",
+                   help="continue --tag's latest checkpoint, restoring weights, "
+                        "optimizer and per-row stream positions")
+    g.add_argument("--overwrite", action="store_true",
+                   help="allow a fresh run to destroy an existing tag's checkpoints")
+    g.add_argument("--seed", type=int, default=d.seed, metavar="N",
+                   help="seeds init, shuffling and cold-start draws (default: %(default)s)")
+    g.add_argument("--device", default=d.device, metavar="DEV",
+                   help="cuda or cpu (default: %(default)s)")
+
+    g = p.add_argument_group("evaluation and logging")
+    g.add_argument("--eval-every", type=int, default=d.eval_every, metavar="N",
+                   help="steps between held-out validations; 0 disables mid-run "
+                        "scoring (default: %(default)s)")
+    g.add_argument("--log-every", type=int, default=d.log_every, metavar="N",
+                   help="steps between progress lines; 0 is silent (default: %(default)s)")
+    g.add_argument("--sample-every", type=int, default=2, metavar="N",
+                   help="print a generated sample every N validations; 0 never "
+                        "(default: %(default)s)")
+    g.add_argument("--val-tokens", type=int, default=d.val_tokens, metavar="N",
+                   help="held-out tokens scored per validation (default: %(default)s)")
+    g.add_argument("--val-amp", action="store_true",
+                   help="evaluate under AMP; faster, and measured to agree with the "
+                        "fp32 default to ~4 decimals")
+
+    g = p.add_argument_group("generation")
+    g.add_argument("--prompt", default="Once upon a time", metavar="TEXT",
+                   help="seed text for --mode gen (default: %(default)s)")
+    g.add_argument("--length", type=int, default=200, metavar="N",
+                   help="tokens to generate in --mode gen (default: %(default)s)")
+
+    a = p.parse_args()
+
+    # Validate here rather than at model-construction time so a typo costs a
+    # second and an error message, not a corpus tokenization and a CUDA init.
+    for name in ("neurons", "n_in", "n_out", "chunk", "vocab_size", "val_tokens"):
+        if getattr(a, name) <= 0:
+            p.error(f"--{name.replace('_', '-')} must be positive, "
+                    f"got {getattr(a, name)}")
+    if a.n_in + a.n_out > a.neurons:
+        p.error(f"--n-in ({a.n_in}) + --n-out ({a.n_out}) = {a.n_in + a.n_out} "
+                f"exceeds --neurons ({a.neurons})")
+    if str(a.lr) != "auto":
+        try:
+            if float(a.lr) <= 0:
+                raise ValueError
+        except ValueError:
+            p.error(f"--lr must be 'auto' or a positive float, got {a.lr!r}")
+    if a.think_gap < 0:
+        p.error(f"--think-gap must be >= 0, got {a.think_gap}")
+    if a.cold_start_every < 0:
+        p.error(f"--cold-start-every must be >= 0, got {a.cold_start_every}")
+    if a.tie_embeddings and a.n_in != a.n_out:
+        p.error(f"--tie-embeddings requires --n-in == --n-out, "
+                f"got {a.n_in} and {a.n_out}")
+    return a
 
 
 def cfg_from_args(a):
@@ -1099,7 +1269,8 @@ def cfg_from_args(a):
         cold_start_every=a.cold_start_every, val_amp=a.val_amp,
         batch=a.batch, lr=None if str(a.lr) == "auto" else float(a.lr),
         dropout=a.dropout, label_smoothing=a.label_smoothing,
-        hebb_type=a.hebb, hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,
+        hebb_type=None if a.hebb == "none" else a.hebb,
+        hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,
         tie_embeddings=a.tie_embeddings, minutes=a.minutes, max_steps=a.max_steps,
         eval_every=a.eval_every, log_every=a.log_every,
         val_tokens=a.val_tokens, seed=a.seed, device=a.device, tag=a.tag,
@@ -1158,6 +1329,9 @@ def main():
         return
 
     # --- train ---
+    if not a.resume:
+        guard_overwrite(cfg, overwrite=a.overwrite)
+
     metrics, model, trainer, tok = run_session(
         cfg, corpus, budget_sec=cfg.minutes * 60.0, resume=a.resume,
         sample_every=a.sample_every)
