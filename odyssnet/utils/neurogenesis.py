@@ -259,7 +259,11 @@ class Neurogenesis:
                 old_group = old_by_name.get(new_group.get('group_name'))
                 if old_group is None:
                     continue
-                for key in ('d', 'd_max', 'd_numerator', 'brake_ceiling', 'k', 'weight_decay'):
+                # brake_ref rides along with brake_ceiling: dropping it would
+                # turn a held brake into a fast-releasing one right after an
+                # expansion, exactly when the loss stream is most turbulent.
+                for key in ('d', 'd_max', 'd_numerator', 'brake_ceiling', 'brake_ref',
+                            'k', 'weight_decay'):
                     if key in old_group:
                         new_group[key] = old_group[key]
         else:

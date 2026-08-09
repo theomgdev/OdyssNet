@@ -91,9 +91,15 @@ class ChaosGrad(torch.optim.Optimizer):
             stream, a transient ``brake_ceiling`` multiplier (independent of
             the D-adaptation estimate ``d``) is cut by this factor, throttling
             the *applied* step without touching the estimator's bookkeeping.
-            The ceiling relaxes back toward 1.0 every call, so an isolated
-            spike heals in tens of steps while a fast cascade of spikes (real
-            divergence) keeps compounding. Set ``None`` to disable. Default 0.5.
+            The ceiling relaxes back toward 1.0 only once the loss EWMA has
+            recovered to the pre-spike reference band; while the loss remains
+            elevated it barely moves (a slow escape crawl, so a permanent
+            regime shift cannot pin training forever). An isolated spike thus
+            heals in tens of steps after the loss settles, a fast cascade of
+            spikes (real divergence) keeps compounding, and a slow divergence
+            that never re-triggers the spike test stays braked instead of
+            being handed its step size back mid-climb. Set ``None`` to
+            disable. Default 0.5.
         brake_sigma (float): Spike threshold in standard deviations of the
             loss EWMA. Dimensionless and, like AdamW's betas, insensitive to
             its exact value across a wide range — the defaults were validated
@@ -151,6 +157,7 @@ class ChaosGrad(torch.optim.Optimizer):
             lr=lr, betas=betas, beta3=beta3, eps=eps,
             weight_decay=weight_decay,
             d=d0, d0=d0, d_max=d0, d_numerator=0.0, brake_ceiling=1.0,
+            brake_ref=None,
             d_coef=d_coef, growth_rate=growth_rate, d_mode=d_mode,
             trust_ratio=trust_ratio, brake_factor=brake_factor,
             brake_sigma=brake_sigma, brake_ratio=brake_ratio,
@@ -266,6 +273,34 @@ class ChaosGrad(torch.optim.Optimizer):
         return cls(cls.classify_params(model), lr=lr, **kwargs)
 
     # ------------------------------------------------------------------ #
+    # Persistence                                                         #
+    # ------------------------------------------------------------------ #
+
+    def load_state_dict(self, state_dict):
+        """
+        Restores optimizer state, backfilling per-group keys a checkpoint
+        from an older ChaosGrad doesn't carry.
+
+        ``torch.optim.Optimizer.load_state_dict`` replaces the group dicts
+        wholesale with the saved ones, so any key added to ``defaults``
+        after a checkpoint was written would silently vanish and resurface
+        as a ``KeyError`` mid-training (this exact gap has shipped before —
+        the brake-config fields once fell out of a round-trip). Missing
+        keys are filled from ``defaults``; ``rms0`` (computed at
+        construction, not part of ``defaults``) is preserved from the
+        pre-load groups by position — the traction anchor must keep
+        pointing at the *initial* weight scale, and torch already requires
+        the group count to match.
+        """
+        pre_rms0 = [g.get('rms0') for g in self.param_groups]
+        super().load_state_dict(state_dict)
+        for group, rms0 in zip(self.param_groups, pre_rms0):
+            for key, value in self.defaults.items():
+                group.setdefault(key, value)
+            if 'rms0' not in group and rms0 is not None:
+                group['rms0'] = rms0
+
+    # ------------------------------------------------------------------ #
     # Step                                                                #
     # ------------------------------------------------------------------ #
 
@@ -325,9 +360,16 @@ class ChaosGrad(torch.optim.Optimizer):
                     state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(p)
                     state['exp_avg_sq'] = torch.zeros_like(p)
-                    if adaptive:
-                        state['s'] = torch.zeros_like(p)
-                        state['p0'] = p.detach().clone()
+                if adaptive and 's' not in state:
+                    # Covers both fresh state and a fixed-lr history switched
+                    # to adaptive afterwards (e.g. a checkpoint trained under
+                    # `lr=<float>` resumed with the estimator on): fixed-rate
+                    # mode never creates `s`/`p0`, and indexing them here
+                    # used to crash the first adaptive step with a KeyError.
+                    # The reference point is wherever the weights are *now* —
+                    # for a warm start that is the correct distance origin.
+                    state['s'] = torch.zeros_like(p)
+                    state['p0'] = p.detach().clone()
 
                 state['step'] += 1
                 state['_grad_proc'] = grad
@@ -547,11 +589,21 @@ class ChaosGrad(torch.optim.Optimizer):
     # Loss-spike brake                                                    #
     # ------------------------------------------------------------------ #
 
-    #: Per-call relaxation of `brake_ceiling` back toward 1.0. Geometric, not
-    #: a fixed window: an isolated spike heals in tens of calls; a fast
-    #: cascade of spikes (genuine divergence) doesn't get time to recover
-    #: between hits and keeps compounding down.
+    #: Per-call relaxation of `brake_ceiling` back toward 1.0 once the loss
+    #: EWMA is back inside the pre-spike reference band. Geometric, not a
+    #: fixed window: an isolated spike heals in tens of calls; a fast cascade
+    #: of spikes (genuine divergence) doesn't get time to recover between
+    #: hits and keeps compounding down.
     _BRAKE_RELEASE = 0.99
+    #: Relaxation while the loss is still elevated above the pre-spike
+    #: reference. Deliberately glacial (~1400 calls to undo one brake hit):
+    #: an unconditional release was measured handing a diverging LLM run its
+    #: full step size back within 200 steps of the brake firing, while the
+    #: loss was still climbing — the brake must not let go just because time
+    #: passed. Nonzero rather than a hard hold so a permanent regime shift
+    #: (loss legitimately settling at a higher level, e.g. a task change)
+    #: eventually frees the step size instead of pinning it forever.
+    _BRAKE_RELEASE_HELD = 0.9995
 
     def report_loss(self, loss_value):
         """
@@ -563,7 +615,9 @@ class ChaosGrad(torch.optim.Optimizer):
         and by ``brake_ratio``) cuts a transient ``brake_ceiling`` multiplier
         by ``brake_factor``, throttling the applied step without touching the
         distance estimator's own bookkeeping (see :meth:`_apply_brake`). The
-        ceiling relaxes back toward 1.0 on every call.
+        pre-spike EWMA is kept as a recovery reference: the ceiling relaxes
+        back toward 1.0 only while the loss EWMA sits inside the reference
+        band again, and merely crawls while the loss remains elevated.
         """
         if isinstance(loss_value, torch.Tensor):
             loss_value = loss_value.item()
@@ -588,6 +642,7 @@ class ChaosGrad(torch.optim.Optimizer):
             and loss_value > lead['brake_ratio'] * abs(self._loss_ema)
         )
 
+        pre_ema = self._loss_ema
         pre_var = self._loss_var
         self._brake_step += 1
         # Bias-correction-style warmup (same technique already used for Adam
@@ -601,13 +656,39 @@ class ChaosGrad(torch.optim.Optimizer):
         self._loss_ema += alpha * diff
         self._loss_var = (1 - alpha) * (self._loss_var + alpha * diff * diff)
 
-        # Continuous recovery on every call, spike or not.
+        # Conditional recovery. Fast release only once the loss EWMA is back
+        # inside the reference band the spike departed from; while it is
+        # still elevated, crawl (`_BRAKE_RELEASE_HELD`). The band reuses
+        # `brake_ratio` — recovered means "back within the same relative
+        # margin the spike test itself uses" — and is floored at the loss
+        # stream's own noise scale (σ) so a near-zero or asymptotically
+        # approached reference can't hold the brake hostage forever: an EWMA
+        # decaying toward the reference gets within one noise-width of it in
+        # finitely many calls even though it never crosses it exactly. The
+        # σ floor cuts the other way too: a very noisy divergence on a task
+        # whose healthy loss sits near zero (σ > |ref|) can be declared
+        # recovered early — accepted, because in that regime the crawl vs
+        # fast-release distinction matters less than never releasing at all
+        # did, and |ref| dominates σ in every workload measured so far.
+        std = math.sqrt(self._loss_var)
         for group in self.param_groups:
-            if group['brake_factor'] is not None:
-                group['brake_ceiling'] = min(1.0, group['brake_ceiling'] / self._BRAKE_RELEASE)
+            if group['brake_factor'] is None:
+                continue
+            ref = group['brake_ref']
+            # max(0, ...): brake_ratio is validated as > 0, not > 1; a
+            # sub-1.0 ratio must degrade to a zero-width band, not invert it.
+            recovered = ref is None or self._loss_ema <= ref + (
+                max(0.0, lead['brake_ratio'] - 1.0) * max(abs(ref), std)
+            )
+            release = self._BRAKE_RELEASE if recovered else self._BRAKE_RELEASE_HELD
+            group['brake_ceiling'] = min(1.0, group['brake_ceiling'] / release)
+            if group['brake_ceiling'] >= 1.0:
+                # Fully healed: drop the reference so the next spike measures
+                # from its own fresh pre-spike level.
+                group['brake_ref'] = None
 
         if is_spike:
-            self._apply_brake()
+            self._apply_brake(pre_ema)
             # Re-seed the mean at the spike level so a single plateau shift
             # doesn't itself look like a spike next call, but keep the
             # pre-spike variance estimate — collapsing it to 0 made the sigma
@@ -615,7 +696,7 @@ class ChaosGrad(torch.optim.Optimizer):
             self._loss_ema = loss_value
             self._loss_var = pre_var
 
-    def _apply_brake(self):
+    def _apply_brake(self, reference):
         """
         Cuts `brake_ceiling` by `brake_factor` — a transient multiplier on
         the applied step, separate from `d`/`d_numerator`/`d_max`. Earlier
@@ -628,12 +709,21 @@ class ChaosGrad(torch.optim.Optimizer):
         keeps the same protection for genuine fast-onset divergence (the
         delayed-adder case this brake was built for) while letting isolated
         noise wash out.
+
+        ``reference`` is the pre-spike loss EWMA — the last known healthy
+        level. It is kept (per group, so it round-trips through state_dict)
+        as the recovery target that gates the fast release in
+        :meth:`report_loss`. Repeated spikes keep the *lowest* reference
+        seen: a staircase divergence must come all the way back down to the
+        original healthy level, not merely to the previous stair.
         """
         for group in self.param_groups:
             brake = group['brake_factor']
             if brake is None or group['lr'] is not None:
                 continue
             group['brake_ceiling'] *= brake
+            ref = group['brake_ref']
+            group['brake_ref'] = reference if ref is None else min(ref, reference)
 
     # ------------------------------------------------------------------ #
     # Diagnostics                                                         #
@@ -671,6 +761,7 @@ class ChaosGrad(torch.optim.Optimizer):
                     'effective_lr': d_eff,
                     'd_max': group['d_max'],
                     'brake_ceiling': group['brake_ceiling'],
+                    'brake_ref': group['brake_ref'],
                     'weight_decay': group['weight_decay'],
                 })
 

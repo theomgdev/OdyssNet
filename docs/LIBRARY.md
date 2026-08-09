@@ -312,7 +312,7 @@ ChaosGrad is OdyssNet's bespoke zero-config optimizer — "the learning teacher.
 Two safety systems keep the estimator honest on chaotic landscapes:
 
 *   **Traction limit** (`trust_ratio`): the applied step scale never exceeds `trust_ratio × RMS(initial weights)`, anchored at construction. Shields tiny networks (e.g. the 9-parameter XOR core) from early estimator overshoot.
-*   **Loss-spike brake** (`brake_factor`): on a statistical loss spike (3σ and +20% over the running EWMA), the distance estimate is scaled down and re-grows only if the landscape supports it. Counteracts the monotone step-scale growth that destabilizes sharpening temporal tasks. The trainer feeds the loss stream automatically; custom loops call `optimizer.report_loss(loss)`.
+*   **Loss-spike brake** (`brake_factor`): on a statistical loss spike (3σ and +20% over the running EWMA), a transient ceiling on the *applied* step is cut — the estimator's own bookkeeping is never touched, so it keeps learning the true scale while suppressed. The ceiling releases back toward 1.0 only once the loss has recovered to its pre-spike level; while the loss stays elevated it barely moves, so a slow divergence can't win its step size back just by avoiding further spikes. Counteracts the monotone step-scale growth that destabilizes sharpening temporal tasks. The trainer feeds the loss stream automatically; custom loops call `optimizer.report_loss(loss)`.
 
 ### Usage
 

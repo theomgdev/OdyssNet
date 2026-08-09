@@ -318,15 +318,21 @@ class OdyssNetTrainer:
                 self._anomaly_var = 0.0
             else:
                 alpha = 0.05
+                pre_var = self._anomaly_var
                 diff = loss_val - self._anomaly_ewma
                 self._anomaly_ewma += alpha * diff
                 self._anomaly_var = (1 - alpha) * (self._anomaly_var + alpha * diff ** 2)
                 std = math.sqrt(self._anomaly_var) + 1e-8
-                
+
                 if diff > 3 * std and loss_val > 1.2 * self._anomaly_ewma:
                     hook("spike", loss_val)
-                    self._anomaly_ewma = loss_val 
-                    self._anomaly_var = 0.0
+                    # Re-seed the mean at the spike level but keep the
+                    # pre-spike variance — zeroing it made the 3σ test
+                    # degenerate (trivially satisfied) for the next ~20
+                    # calls, spamming the hook. Same fix as
+                    # ChaosGrad.report_loss.
+                    self._anomaly_ewma = loss_val
+                    self._anomaly_var = pre_var
 
             # Plateau logic on time buffer
             if len(self._loss_time_buffer) >= 20:

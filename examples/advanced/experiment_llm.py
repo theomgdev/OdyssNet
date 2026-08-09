@@ -143,6 +143,9 @@ class Cfg:
     # --- optimization ---
     batch: int = -1                  # -1 = empirical autotune
     lr: float | None = None          # None = zero-config ChaosGrad
+    lr_force_auto: bool = False      # explicit `--lr auto`: on resume, move a
+                                     # fixed-rate checkpoint back to the
+                                     # estimator instead of keeping its mode
     label_smoothing: float = 0.0
     grad_ckpt: bool = False
 
@@ -853,6 +856,18 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
         try:
             data = load_checkpoint(model, trainer.optimizer, latest_path,
                                    device=cfg.device, strict=True, lr=cfg.lr)
+            if cfg.lr is None and cfg.lr_force_auto:
+                # Explicit `--lr auto`: return a fixed-rate checkpoint to the
+                # estimator. load_checkpoint(lr=None) means "don't touch", so
+                # this is the only path back to auto; ChaosGrad lazily builds
+                # the estimator state it never created under fixed rate.
+                switched = any(g.get('lr') is not None
+                               for g in trainer.optimizer.param_groups)
+                for g in trainer.optimizer.param_groups:
+                    g['lr'] = None
+                if switched:
+                    print("🔁 --lr auto: checkpoint was fixed-rate; optimizer "
+                          "returned to ChaosGrad's online estimate.")
             extra = data.get("stream", {})
             shards.restore(extra.get("pos", []), extra.get("wraps", 0))
             best_val = data.get("best_val", float("inf"))
@@ -865,12 +880,24 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
         except Exception as e:
             print(f"⚠️  Resume failed ({e}); starting fresh.")
 
+    # Report the mode the optimizer is ACTUALLY in, not what the CLI asked
+    # for. Under the default `--lr keep`, a resumed checkpoint keeps its own
+    # mode (`load_checkpoint(lr=None)` means "don't touch"), so printing
+    # cfg.lr here once claimed "lr auto" over a run that was really
+    # fixed-rate. Explicit `--lr auto` / `--lr <float>` do override, and the
+    # resume path above already announced any switch.
+    live_lr = trainer.optimizer.param_groups[0].get('lr') \
+        if trainer.optimizer.param_groups else cfg.lr
     if not quiet:
         print(f"\n🧠 {model.get_num_params():,} trainable params | "
               f"{cfg.neurons} neurons | in {cfg.n_in} / out {cfg.n_out} | "
               f"gap {cfg.think_gap} | chunk {cfg.chunk} | batch {cfg.batch} | "
-              f"lr {'auto' if cfg.lr is None else cfg.lr}"
+              f"lr {'auto' if live_lr is None else live_lr}"
               + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else ""))
+        if (live_lr is None) != (cfg.lr is None):
+            print(f"ℹ️  Resumed optimizer keeps the checkpoint's "
+                  f"{'auto' if live_lr is None else f'fixed-rate ({live_lr})'} "
+                  f"mode; pass an explicit --lr to change it.")
 
     steps_per_chunk = cfg.chunk * (cfg.think_gap + 1)
     flatten = lambda o: o.reshape(-1, o.shape[-1])
@@ -1317,9 +1344,12 @@ def parse_args():
                    help="each row's state is zeroed with probability 1/N per step, "
                         "so mean context is N*chunk tokens; 0 never resets, which "
                         "measurably invites cold-start collapse (default: %(default)s)")
-    g.add_argument("--lr", default="auto", metavar="RATE",
-                   help="'auto' for ChaosGrad's online estimate, or a float for "
-                        "fixed-rate mode (default: %(default)s)")
+    g.add_argument("--lr", default="keep", metavar="RATE",
+                   help="'auto' for ChaosGrad's online estimate, a float for "
+                        "fixed-rate mode. Default 'keep': a fresh run uses auto; "
+                        "--resume keeps the mode stored in the checkpoint. Pass "
+                        "'auto' explicitly to move a fixed-rate checkpoint back "
+                        "to the estimator on resume.")
     g.add_argument("--label-smoothing", type=float, default=d.label_smoothing,
                    metavar="P",
                    help="applied to the training loss only; reported perplexity is "
@@ -1379,12 +1409,12 @@ def parse_args():
     if a.n_in + a.n_out > a.neurons:
         p.error(f"--n-in ({a.n_in}) + --n-out ({a.n_out}) = {a.n_in + a.n_out} "
                 f"exceeds --neurons ({a.neurons})")
-    if str(a.lr) != "auto":
+    if str(a.lr) not in ("auto", "keep"):
         try:
             if float(a.lr) <= 0:
                 raise ValueError
         except ValueError:
-            p.error(f"--lr must be 'auto' or a positive float, got {a.lr!r}")
+            p.error(f"--lr must be 'auto', 'keep' or a positive float, got {a.lr!r}")
     if a.think_gap < 0:
         p.error(f"--think-gap must be >= 0, got {a.think_gap}")
     if a.cold_start_every < 0:
@@ -1400,7 +1430,9 @@ def cfg_from_args(a):
         text_path=a.text, vocab_size=a.vocab_size, neurons=a.neurons,
         n_in=a.n_in, n_out=a.n_out, think_gap=a.think_gap, chunk=a.chunk,
         cold_start_every=a.cold_start_every, val_amp=a.val_amp,
-        batch=a.batch, lr=None if str(a.lr) == "auto" else float(a.lr),
+        batch=a.batch,
+        lr=None if str(a.lr) in ("auto", "keep") else float(a.lr),
+        lr_force_auto=(str(a.lr) == "auto"),
         dropout=a.dropout, label_smoothing=a.label_smoothing,
         hebb_type=None if a.hebb == "none" else a.hebb,
         hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,

@@ -438,6 +438,94 @@ class TestBrake:
         t.train_batch(x, y, thinking_steps=2)
         assert t.optimizer._loss_ema is not None
 
+    def test_ceiling_holds_while_loss_stays_elevated(self):
+        # The failure this exists for (observed on an LLM run): the brake
+        # fired, then the old unconditional geometric release handed the full
+        # step size back within ~200 calls while the loss was still climbing,
+        # and the run diverged. A slow climb that never re-trips the 1.2x
+        # ratio test must stay braked, not get released by the passage of
+        # time.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)  # spike -> brake, EWMA reseeds at 100
+        ceiling_after_spike = opt.param_groups[0]['brake_ceiling']
+        assert ceiling_after_spike < 1.0
+        # Elevated and creeping up, but each value stays under 1.2x the
+        # reseeded EWMA, so no further spikes fire -- exactly the regime the
+        # old release logic lost the run in.
+        loss = 100.0
+        for _ in range(200):
+            loss += 0.1
+            opt.report_loss(loss)
+        ceiling = opt.param_groups[0]['brake_ceiling']
+        # Old behavior: 0.5 / 0.99^200 -> capped at 1.0 (full release).
+        # New behavior: crawl only, 0.5 / 0.9995^200 ~ 0.55.
+        assert ceiling < 0.6
+        assert opt.param_groups[0]['brake_ref'] is not None
+
+    def test_ceiling_releases_after_recovery(self):
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        assert opt.param_groups[0]['brake_ceiling'] < 1.0
+        # The loss comes back down to the healthy level: the EWMA decays into
+        # the reference band, the fast release resumes, and the brake heals
+        # completely, clearing the reference.
+        for _ in range(300):
+            opt.report_loss(1.0)
+        assert opt.param_groups[0]['brake_ceiling'] == 1.0
+        assert opt.param_groups[0]['brake_ref'] is None
+
+    def test_staircase_divergence_keeps_lowest_reference(self):
+        # Two spikes in a row: recovery must be measured from the original
+        # healthy level, not from the previous stair of the staircase.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ref_after_first = opt.param_groups[0]['brake_ref']
+        opt.report_loss(1000.0)
+        ref_after_second = opt.param_groups[0]['brake_ref']
+        assert ref_after_second == ref_after_first  # min() kept the old one
+        assert ref_after_second < 2.0  # the pre-first-spike EWMA, ~1.0
+
+    def test_permanent_plateau_eventually_escapes(self):
+        # A loss that legitimately settles at a higher level (regime shift)
+        # must not pin the brake forever: the held-state crawl frees it over
+        # thousands of calls.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        assert opt.param_groups[0]['brake_ceiling'] < 1.0
+        for _ in range(2000):
+            opt.report_loss(105.0)  # never recovers toward the reference
+        assert opt.param_groups[0]['brake_ceiling'] == 1.0
+        assert opt.param_groups[0]['brake_ref'] is None
+
+    def test_fixed_lr_mode_brake_is_inert(self):
+        # The documented AdamW-equivalent escape hatch: reported losses,
+        # spikes and all, must leave the applied step untouched.
+        m = _model()
+        opt = ChaosGrad.from_model(m, lr=1e-3)
+        _train_steps(m, opt, steps=5)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(1000.0)
+        for g in opt.param_groups:
+            assert g['brake_ceiling'] == 1.0
+            assert g['brake_ref'] is None
+
 
 # ===========================================================================
 # Persistence
@@ -480,6 +568,50 @@ class TestPersistence:
             assert g['brake_sigma'] == 2.5
             assert g['brake_ratio'] == 1.5
             assert g['brake_ema_alpha'] == 0.1
+
+    def test_brake_hold_survives_state_dict_round_trip(self):
+        # A checkpoint saved mid-hold (brake fired, loss still elevated) must
+        # resume held: losing brake_ref would turn the crawl back into the
+        # fast release the moment training resumes.
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=20)
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)
+        ceiling = opt.param_groups[0]['brake_ceiling']
+        ref = opt.param_groups[0]['brake_ref']
+        assert ceiling < 1.0 and ref is not None
+
+        sd = opt.state_dict()
+        opt2 = ChaosGrad.from_model(m)
+        opt2.load_state_dict(sd)
+        assert opt2.param_groups[0]['brake_ceiling'] == ceiling
+        assert opt2.param_groups[0]['brake_ref'] == ref
+
+    def test_old_checkpoint_without_new_keys_backfills(self):
+        # Simulates loading a checkpoint written by an older ChaosGrad that
+        # predates brake_ref: torch replaces group dicts wholesale, so
+        # without backfill the missing key would explode as a KeyError on
+        # the next report_loss/step (the exact gap that shipped once with
+        # the brake-config fields).
+        m = _model()
+        opt = ChaosGrad.from_model(m)
+        _train_steps(m, opt, steps=5)
+        sd = opt.state_dict()
+        for group in sd['param_groups']:
+            group.pop('brake_ref', None)
+            group.pop('rms0', None)  # even older: predates the traction anchor
+
+        opt2 = ChaosGrad.from_model(m)
+        expected_rms0 = [g['rms0'] for g in opt2.param_groups]
+        opt2.load_state_dict(sd)
+        for g, rms0 in zip(opt2.param_groups, expected_rms0):
+            assert g['brake_ref'] is None  # backfilled from defaults
+            assert g['rms0'] == rms0  # anchor preserved from construction
+        _train_steps(m, opt2, steps=2)  # must not raise
+        opt2.report_loss(1.0)
+        opt2.report_loss(1.0)
 
     def test_no_transient_keys_in_state_dict(self):
         m = _model()
@@ -570,6 +702,29 @@ class TestNeurogenesisMigration:
             assert g['brake_ratio'] == 1.5
             assert g['brake_ema_alpha'] == 0.1
 
+    def test_expand_preserves_held_brake(self):
+        # A brake that fired mid-hold must ride through neurogenesis:
+        # dropping brake_ref would turn the crawl back into the fast release
+        # right after an expansion, when the loss stream is most turbulent.
+        m = _model()
+        t = OdyssNetTrainer(m, device="cpu")
+        x = torch.randn(2, 6)
+        y = torch.randn(2, 2)
+        t.train_batch(x, y, thinking_steps=2)
+        opt = t.optimizer
+        for _ in range(30):
+            opt.report_loss(1.0)
+        opt.report_loss(100.0)  # spike -> held brake
+        old = {g.get('group_name'): (g['brake_ceiling'], g['brake_ref'])
+               for g in opt.param_groups}
+        assert any(c < 1.0 and r is not None for c, r in old.values())
+
+        t.expand(amount=2, verbose=False)
+        for g in t.optimizer.param_groups:
+            name = g.get('group_name')
+            if name in old:
+                assert (g['brake_ceiling'], g['brake_ref']) == old[name]
+
     def test_expand_preserves_fixed_lr(self):
         m = _model()
         t = OdyssNetTrainer(m, device="cpu", lr=5e-4)
@@ -579,3 +734,19 @@ class TestNeurogenesisMigration:
         t.expand(amount=1, verbose=False)
         assert isinstance(t.optimizer, ChaosGrad)
         assert all(g['lr'] == 5e-4 for g in t.optimizer.param_groups)
+
+    def test_fixed_lr_history_switches_to_adaptive(self):
+        # A checkpoint trained under a fixed rate, later switched to the
+        # estimator (groups' lr set back to None): fixed-rate mode never
+        # created the estimator state `s`/`p0`, and the first adaptive step
+        # used to crash with a KeyError. They are now lazily initialized at
+        # the switch, with the reference point at the current (warm) weights.
+        m = _model()
+        opt = ChaosGrad.from_model(m, lr=1e-3)
+        _train_steps(m, opt, steps=5)
+        for g in opt.param_groups:
+            g['lr'] = None
+        _train_steps(m, opt, steps=5)  # must not raise
+        p = opt.param_groups[0]['params'][0]
+        assert 's' in opt.state[p] and 'p0' in opt.state[p]
+        assert opt.param_groups[0]['d'] > 0
