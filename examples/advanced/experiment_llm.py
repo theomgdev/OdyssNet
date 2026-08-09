@@ -305,10 +305,20 @@ class StreamShards:
         return self.pos.tolist(), self.wraps
 
     def restore(self, pos, wraps=0):
+        """Restore per-row cursors. Only valid if the batch size still matches."""
         pos = np.asarray(pos, dtype=np.int64)
-        if pos.shape == self.pos.shape:
-            self.pos = np.clip(pos, self.starts, self.limits - self.chunk - 1)
-            self.wraps = wraps
+        if pos.shape != self.pos.shape:
+            # Silently ignoring this would resume the *weights* while quietly
+            # rewinding the *data* to token 0 — the model would re-read text it
+            # has already seen and nothing in the logs would say so.
+            print(f"⚠️  Stream position not restored: checkpoint has "
+                  f"{pos.shape[0] if pos.ndim else 0} rows, this run has "
+                  f"{self.batch}. Re-run with the checkpoint's batch size to "
+                  f"continue where it left off; training will otherwise "
+                  f"restart the corpus from the beginning.")
+            return
+        self.pos = np.clip(pos, self.starts, self.limits - self.chunk - 1)
+        self.wraps = wraps
 
     def next(self):
         """Returns (x, y, wrapped) — wrapped rows need their state reset."""
