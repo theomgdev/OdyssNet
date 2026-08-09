@@ -61,6 +61,12 @@ What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
   removed at no measurable cost in fit quality.
 * Batch is nearly free: throughput scaled ~linearly 6k -> 274k tok/s from
   batch 8 to 512, because the model is latency-bound on sequential steps.
+
+Reference run — ``--mode train --minutes 25 --batch 256`` at the defaults
+above, 2,625,280 parameters: held-out **loss 2.2009, ppl 9.03,
+bits/byte 0.8764**, median cold start 2.3154, **0.0% collapsed cold starts**,
+226.15M tokens at 150,761 tok/s. Reproduce with that command; `--mode eval
+--tag base` re-scores the saved checkpoint.
 """
 
 import sys
