@@ -1338,6 +1338,7 @@ SWEEPS = {
         ("core_gate",  dict(gates=("none", "sigmoid", "identity"))),
         ("mem_off",    dict(gates=("none", "none", "none"))),
         ("hebb_temp",  dict(hebb_type="temporal", hebb_res="neuron")),
+        ("hebb_both",  dict(hebb_type="both", hebb_res="neuron")),
         ("lr_fixed",   dict(lr=1e-4)),
         ("tied_embed", dict(tie_embeddings=True, n_in=256, n_out=256)),
     ],
