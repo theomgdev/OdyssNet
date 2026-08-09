@@ -685,8 +685,12 @@ class OdyssNet(nn.Module):
 
             # Gradient checkpointing
             if self.gradient_checkpointing and self.training:
+                # `t` is passed as a plain int: use_reentrant=False accepts
+                # non-tensor arguments, and wrapping it in torch.tensor(t)
+                # allocated a throwaway CPU tensor on every one of the
+                # (tokens x thinking-steps) iterations a long sequence takes.
                 h_t = checkpoint.checkpoint(
-                    _single_step, h_t, torch.tensor(t), x_step_info,
+                    _single_step, h_t, t, x_step_info,
                     cur_hebb_W, cur_hebb_mem,
                     use_reentrant=False,
                 )
@@ -768,19 +772,21 @@ class OdyssNet(nn.Module):
             # Avoid allocating (B, T, N) when only the final state is needed.
             stacked_outputs = h_t.unsqueeze(1)
             
-        stacked_outputs = stacked_outputs * output_scale_vec.unsqueeze(0).unsqueeze(0)
-
         # Vocab Decoding
         if self.output_decoder is not None:
-            # Extract only the output neurons
-            out_activity = stacked_outputs[:, :, output_pos]
+            # Slice the output neurons *before* scaling. Mathematically
+            # identical (output_scale_vec is 1.0 outside output_pos), but it
+            # avoids a multiply over the full (B, T, N) activity tensor when
+            # only len(output_ids) columns are ever read — on long sequences
+            # that tensor is the largest allocation in the forward pass.
+            out_activity = stacked_outputs[:, :, output_pos] * self._get_output_scale(stacked_outputs.dtype)
             # Project to Vocab
             # Shape: (Batch, Steps, OutNeurons) -> (Batch, Steps, Vocab)
             decoded = self.output_decoder(out_activity)
             decoded = self.enc_dec_act(decoded)
             return decoded, h_t
 
-        return stacked_outputs, h_t
+        return stacked_outputs * output_scale_vec.unsqueeze(0).unsqueeze(0), h_t
 
     def reset_state(self, batch_size=1):
         self.state = torch.zeros(batch_size, self.num_neurons, device=self.device)
