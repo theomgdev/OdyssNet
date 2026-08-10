@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.5] — 2026-08-10
+
+### Added
+- **`--tokenizer byte`: one id per byte, 256 ids, nothing to train and nothing to pin.** Chosen for a different reason than the other options rather than as a cheaper one. It is the only vocabulary under which a character is reliably its own token, which is what character-level work requires — a subword merge hides the units the model has to manipulate, so a model that has only ever seen `100` as a single id has learned nothing about the three digits inside it. It also makes the vocabulary table negligible: 0.20M parameters against the 1.05M core at 1024 neurons, where the default 2048-token BPE costs 1.57M and is the larger half of the model, leaving the chaos core as most of what is being measured. The price is sequence length — 1.0 byte/token against the trained BPE's 3.6 on TinyStories, so the same text is ~3.6x more timesteps and this architecture is latency-bound on sequential steps; it is a deliberate choice for tasks where the token boundary matters, not a general default. Decoding tolerates a window that begins partway through a multi-byte character, which is normal when scoring fixed-size token windows and must not raise.
+
 ## [2.6.4] — 2026-08-10
 
 ### Added

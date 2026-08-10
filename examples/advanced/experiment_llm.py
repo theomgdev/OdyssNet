@@ -60,6 +60,7 @@ higher is better compression:
 
     tokenizer                vocabulary   bytes/token   embed+decoder
     -----------------------------------------------------------------
+    byte                            256         1.000          0.20M
     trained BPE                   1,024         3.079          0.79M
     trained BPE (the default)     2,048         3.601          1.57M
     trained BPE                   4,096         3.908          3.15M
@@ -82,6 +83,17 @@ trade goes the other way: skipping the training step, comparing against a
 standard vocabulary, or scaling the core up to where a large table pays for
 itself. Bits-per-byte is reported so those runs stay comparable — perplexity
 is not, across vocabularies.
+
+``--tokenizer byte`` sits at the opposite end and is chosen for a different
+reason than cost. It is the only option under which a character is reliably
+its own token, which is what character-level work needs: a subword merge hides
+the units the model has to manipulate, so a model that has only ever seen
+``100`` as one id has learned nothing about the three digits in it. The
+vocabulary table nearly vanishes (0.20M against a 1.05M core), leaving the
+chaos core as most of what is being measured. The price is sequence length —
+one byte per token against the BPE's 3.6, so the same text is ~3.6x more
+timesteps, and this architecture is latency-bound on sequential steps. Reach
+for it when the token boundary matters, not as a general default.
 
 What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
 ----------------------------------------------------------------------------
@@ -317,6 +329,45 @@ class TikToken(TokenizerBase):
         return self._enc.n_vocab
 
 
+class ByteTokenizer(TokenizerBase):
+    """
+    One id per byte: 256 ids, nothing to train, nothing to pin.
+
+    Worth choosing for two reasons rather than one. It is the only vocabulary
+    under which a character is reliably its own token, which matters whenever
+    the task is character-level — arithmetic, spelling, transliteration,
+    anything where a subword merge would hide the units the model has to
+    manipulate. And it makes the vocabulary table negligible: 0.20M parameters
+    against a 1.05M core at 1024 neurons, where the 2048-token BPE costs 1.57M
+    and is the larger half of the model.
+
+    What it costs is sequence length. Bytes compress far worse than a trained
+    BPE — on TinyStories, 1.0 byte/token against 3.6 — so the same text is
+    ~3.6x more timesteps, and this architecture is latency-bound on sequential
+    steps. Use it when the token boundary matters or when the core is small
+    enough that a large table would dominate; not as a general default.
+    """
+
+    def __init__(self):
+        # No <s> exists here. A newline is a real, decodable byte and a
+        # plausible document start.
+        self.bos_id = ord("\n")
+
+    def encode(self, text):
+        return list(text.encode("utf-8"))
+
+    def encode_batch(self, texts):
+        return [list(t.encode("utf-8")) for t in texts]
+
+    def decode(self, ids):
+        # A scored window can begin partway through a multi-byte character, so
+        # an invalid UTF-8 prefix is normal here and must not raise.
+        return bytes(bytearray(ids)).decode("utf-8", errors="replace")
+
+    def get_vocab_size(self):
+        return 256
+
+
 def load_tiktoken(name):
     """Fetch a tiktoken encoding, with an install hint instead of a traceback."""
     try:
@@ -335,13 +386,15 @@ def resolve_vocab(cfg):
     """
     Pin `cfg.vocab_size` to the tokenizer's actual id space.
 
-    A tiktoken vocabulary is a property of the encoding, not a choice, and must
-    be known before the corpus is tokenized: the cache's element width derives
-    from it, and a 100k vocabulary written as uint16 is silently wrong rather
-    than an error.
+    Only `bpe` has a vocabulary to choose; the others carry their own, and it
+    must be known before the corpus is tokenized because the cache's element
+    width derives from it — a 100k vocabulary written as uint16 is silently
+    wrong rather than an error.
     """
     if cfg.tokenizer == "bpe":
         return cfg
+    if cfg.tokenizer == "byte":
+        return replace(cfg, vocab_size=ByteTokenizer().get_vocab_size())
     return replace(cfg, vocab_size=load_tiktoken(cfg.tokenizer).n_vocab)
 
 
@@ -360,6 +413,8 @@ def get_tokenizer(cfg, blocks=None):
     asks for one and no pinned file exists yet. The tiktoken path never
     consumes it.
     """
+    if cfg.tokenizer == "byte":
+        return ByteTokenizer()
     if cfg.tokenizer != "bpe":
         return TikToken(cfg.tokenizer)
 
@@ -1580,6 +1635,10 @@ examples:
 
   # a bigger in-domain vocabulary instead (still cheaper than any tiktoken one)
   %(prog)s --mode train --tag v4k --vocab-size 4096
+
+  # one id per byte: every character its own token, negligible embedding table,
+  # ~3.6x more timesteps for the same text
+  %(prog)s --mode train --tag bytes --tokenizer byte
 """
 
 
@@ -1609,14 +1668,15 @@ def parse_args():
                    help="UTF-8 corpus; tokenized once into a memmap cache "
                         "(default: data/tinystories.txt)")
     g.add_argument("--tokenizer", default=d.tokenizer,
-                   choices=("bpe",) + TIKTOKEN_ENCODINGS,
+                   choices=("bpe", "byte") + TIKTOKEN_ENCODINGS,
                    help="'bpe' trains a byte-level BPE on the corpus itself "
-                        "(once, then pinned) at --vocab-size; the others are "
-                        "ready-made tiktoken encodings with no training step "
-                        "and a fixed vocabulary. The default is small and "
-                        "in-domain on purpose -- a 4096-token corpus BPE "
-                        "matches gpt2's 50k vocabulary on TinyStories at 1/12 "
-                        "the embedding cost; see 'Choosing a tokenizer' in "
+                        "(once, then pinned) at --vocab-size; 'byte' is one id "
+                        "per byte, which keeps every character its own token "
+                        "and costs ~3.6x more timesteps for the same text; the "
+                        "rest are ready-made tiktoken encodings. The default is "
+                        "small and in-domain on purpose -- a 4096-token corpus "
+                        "BPE matches gpt2's 50k vocabulary on TinyStories at "
+                        "1/12 the embedding cost; see 'Choosing a tokenizer' in "
                         "--help's description. (default: %(default)s)")
     g.add_argument("--vocab-size", type=int, default=None, metavar="N",
                    help="BPE vocabulary size; trained once and pinned per size. "
