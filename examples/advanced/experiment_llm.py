@@ -1695,6 +1695,15 @@ def parse_args():
     g.add_argument("--think-gap", type=int, default=d.think_gap, metavar="N",
                    help="extra echo steps per token; total steps per token is N+1. "
                         "Measured best at 1 for equal wall-clock. (default: %(default)s)")
+    g.add_argument("--gates", default=",".join(d.gates), metavar="IN,CORE,MEM",
+                   help="three gate activations, applied to input/output "
+                        "scaling, the core signal, and memory feedback. 'none' "
+                        "disables a gate outright and creates no parameter for "
+                        "it; any other value is an activation name, in practice "
+                        "'sigmoid' or 'identity'. Measured best on TinyStories: "
+                        "none,sigmoid,identity, which beat the default on both "
+                        "loss and tokens consumed (--sweep arch). "
+                        "(default: %(default)s)")
     g.add_argument("--hebb", default="none",
                    choices=["none", "temporal", "spatial", "both"],
                    help="Hebbian plasticity mechanism. Note this is the one thing "
@@ -1801,6 +1810,20 @@ def parse_args():
                 raise ValueError
         except ValueError:
             p.error(f"--lr must be 'auto', 'keep' or a positive float, got {a.lr!r}")
+    # Validated here, with the other flags, rather than at construction: an
+    # unknown activation would otherwise surface only after the corpus is
+    # tokenized and CUDA is initialized. The accepted set is OdyssNet's
+    # `_build_activation`, plus 'none', which means "no gate at all".
+    a.gates = tuple(s.strip() for s in a.gates.split(","))
+    if len(a.gates) != 3:
+        p.error(f"--gates needs exactly three comma-separated entries "
+                f"(input,core,memory), got {len(a.gates)}: {','.join(a.gates)}")
+    known = ("none", "identity", "tanh", "relu", "leaky_relu", "sigmoid",
+             "gelu", "gelu_tanh", "silu")
+    unknown = [g for g in a.gates if g.lower() not in known]
+    if unknown:
+        p.error(f"--gates: unknown activation(s) {unknown}; "
+                f"choose from {list(known)}")
     if a.think_gap < 0:
         p.error(f"--think-gap must be >= 0, got {a.think_gap}")
     if a.cold_start_every < 0:
@@ -1816,7 +1839,7 @@ def cfg_from_args(a):
         text_path=a.text, tokenizer=a.tokenizer,
         vocab_size=a.vocab_size, neurons=a.neurons,
         n_in=a.n_in, n_out=a.n_out, think_gap=a.think_gap, chunk=a.chunk,
-        cold_start_every=a.cold_start_every, val_amp=a.val_amp,
+        cold_start_every=a.cold_start_every, val_amp=a.val_amp, gates=a.gates,
         batch=a.batch,
         lr=None if str(a.lr) in ("auto", "keep") else float(a.lr),
         lr_force_auto=(str(a.lr) == "auto"),

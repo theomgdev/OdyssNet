@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.6] — 2026-08-10
+
+### Added
+- **`--gates` on the command line.** The three gate activations — input/output scaling, the core signal, and memory feedback — were reachable only from inside a sweep preset, so the `arch` sweep's best arm could be measured but not trained. `none,sigmoid,identity` beat the default on *both* held-out loss and tokens consumed (2.6204 against 2.6495 at 25% fewer tokens), which made it the one configuration a user would most want and the one they could not select. `none` disables a gate outright and creates no parameter for it, so the flag changes the model's parameter set rather than only its behaviour; the values are validated against OdyssNet's accepted activations before the corpus is tokenized, so a typo costs a second instead of a tokenization pass and a CUDA init.
+
 ## [2.6.5] — 2026-08-10
 
 ### Added
