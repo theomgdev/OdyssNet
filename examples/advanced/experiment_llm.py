@@ -195,6 +195,11 @@ class Cfg:
     tie_embeddings: bool = False
 
     # --- temporal depth ---
+    pulse_mode: bool = True          # True injects a token's embedding only on
+                                     # the step it arrives, leaving the echo
+                                     # steps to run on state alone; False holds
+                                     # it across all of them. Identical at
+                                     # think_gap 0, divergent above it.
     think_gap: int = 1               # extra echo steps per token
     chunk: int = 48                  # tokens per optimizer step (TBPTT window)
     cold_start_every: int = 32       # mean chunks before a row's state is
@@ -793,6 +798,7 @@ def build(cfg, vocab_size):
         input_ids=input_ids,
         output_ids=output_ids,
         device=cfg.device,
+        pulse_mode=cfg.pulse_mode,
         activation=list(cfg.activation),
         weight_init=list(cfg.weight_init),
         gate=list(cfg.gates),
@@ -1080,12 +1086,13 @@ def _empty_cache(device):
 #: with the wrong one yields fluent-looking garbage and no error.
 ARCH_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
                "activation", "weight_init", "gates", "hebb_type", "hebb_res",
-               "tie_embeddings", "think_gap")
+               "tie_embeddings", "think_gap", "pulse_mode")
 
 #: The subset `--resume` adopts: what `build()` allocates, plus which corpus is
 #: read. The rest cannot change the state dict, so pinning them would only take
-#: away a knob — `weight_init` is dead once weights load, `think_gap` is a
-#: forward-pass argument, and every accepted activation is parameter-free.
+#: away a knob — `weight_init` is dead once weights load, `think_gap` and
+#: `pulse_mode` are forward-pass arguments, and every accepted activation is
+#: parameter-free.
 #: `gates` is not in that group and is adopted: it adds or removes `core_gate`,
 #: `input_gate`, `output_gate` and `memory_gate`.
 RESUME_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
@@ -1695,6 +1702,27 @@ def parse_args():
     g.add_argument("--think-gap", type=int, default=d.think_gap, metavar="N",
                    help="extra echo steps per token; total steps per token is N+1. "
                         "Measured best at 1 for equal wall-clock. (default: %(default)s)")
+    g.add_argument("--injection", default="pulse" if d.pulse_mode else "continuous",
+                   choices=("pulse", "continuous"),
+                   help="sets the model's pulse_mode. 'pulse' injects a token's "
+                        "embedding only on the step it arrives, leaving the "
+                        "--think-gap echo steps to run on recurrent state "
+                        "alone; 'continuous' holds it across every step. "
+                        "Identical at --think-gap 0 and increasingly different "
+                        "above it, so it is a knob about what the thinking "
+                        "steps actually think on. (default: %(default)s)")
+    g.add_argument("--activation", default=",".join(d.activation),
+                   metavar="ENC,CORE,MEM",
+                   help="three activations: encoder/decoder, the core step, and "
+                        "memory feedback. 'none' means identity here (unlike "
+                        "--gates, where it removes the gate). "
+                        "(default: %(default)s)")
+    g.add_argument("--weight-init", default=",".join(d.weight_init),
+                   metavar="ENC,CORE,MEM,GATE",
+                   help="four initialization strategies: encoder/decoder, the "
+                        "chaos core, memory feedback, and gates. The core's "
+                        "choice sets the initial spectral behaviour the whole "
+                        "architecture is built around. (default: %(default)s)")
     g.add_argument("--gates", default=",".join(d.gates), metavar="IN,CORE,MEM",
                    help="three gate activations, applied to input/output "
                         "scaling, the core signal, and memory feedback. 'none' "
@@ -1774,6 +1802,14 @@ def parse_args():
                         "(default: %(default)s)")
     g.add_argument("--val-tokens", type=int, default=d.val_tokens, metavar="N",
                    help="held-out tokens scored per validation (default: %(default)s)")
+    g.add_argument("--val-batch", type=int, default=d.val_batch, metavar="N",
+                   help="shards the validation split is cut into, which is also "
+                        "the number of independent cold starts each score "
+                        "averages. It changes which corpus positions are scored, "
+                        "and only some positions fall into the absorbing state, "
+                        "so val_coldfail moves with it -- raise it to probe "
+                        "cold-start robustness, keep it fixed to compare runs. "
+                        "(default: %(default)s)")
     g.add_argument("--val-amp", action="store_true",
                    help="evaluate under AMP; faster, and measured to agree with the "
                         "fp32 default to ~4 decimals")
@@ -1797,7 +1833,8 @@ def parse_args():
 
     # Validate here rather than at model-construction time so a typo costs a
     # second and an error message, not a corpus tokenization and a CUDA init.
-    for name in ("neurons", "n_in", "n_out", "chunk", "vocab_size", "val_tokens"):
+    for name in ("neurons", "n_in", "n_out", "chunk", "vocab_size",
+                 "val_tokens", "val_batch"):
         if getattr(a, name) <= 0:
             p.error(f"--{name.replace('_', '-')} must be positive, "
                     f"got {getattr(a, name)}")
@@ -1824,6 +1861,30 @@ def parse_args():
     if unknown:
         p.error(f"--gates: unknown activation(s) {unknown}; "
                 f"choose from {list(known)}")
+
+    a.activation = tuple(s.strip() for s in a.activation.split(","))
+    if len(a.activation) != 3:
+        p.error(f"--activation needs exactly three comma-separated entries "
+                f"(encoder,core,memory), got {len(a.activation)}: "
+                f"{','.join(a.activation)}")
+    unknown = [s for s in a.activation if s.lower() not in known]
+    if unknown:
+        p.error(f"--activation: unknown activation(s) {unknown}; "
+                f"choose from {list(known)}")
+
+    a.weight_init = tuple(s.strip() for s in a.weight_init.split(","))
+    if len(a.weight_init) != 4:
+        p.error(f"--weight-init needs exactly four comma-separated entries "
+                f"(encoder,core,memory,gate), got {len(a.weight_init)}: "
+                f"{','.join(a.weight_init)}")
+    inits = ("quiet", "micro_quiet", "micro_quiet_warm", "classic",
+             "xavier_uniform", "xavier_normal", "kaiming_uniform",
+             "kaiming_normal", "orthogonal", "sparse", "zero", "one",
+             "resonant")
+    unknown = [s for s in a.weight_init if s.lower() not in inits]
+    if unknown:
+        p.error(f"--weight-init: unknown strategy/strategies {unknown}; "
+                f"choose from {list(inits)}")
     if a.think_gap < 0:
         p.error(f"--think-gap must be >= 0, got {a.think_gap}")
     if a.cold_start_every < 0:
@@ -1840,6 +1901,8 @@ def cfg_from_args(a):
         vocab_size=a.vocab_size, neurons=a.neurons,
         n_in=a.n_in, n_out=a.n_out, think_gap=a.think_gap, chunk=a.chunk,
         cold_start_every=a.cold_start_every, val_amp=a.val_amp, gates=a.gates,
+        activation=a.activation, weight_init=a.weight_init,
+        pulse_mode=(a.injection == "pulse"), val_batch=a.val_batch,
         batch=a.batch,
         lr=None if str(a.lr) in ("auto", "keep") else float(a.lr),
         lr_force_auto=(str(a.lr) == "auto"),

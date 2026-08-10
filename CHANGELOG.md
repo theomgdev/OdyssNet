@@ -4,6 +4,13 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.7] — 2026-08-10
+
+### Added
+- **`--injection {pulse,continuous}` exposes `pulse_mode`, which the LLM harness had been fixing at `pulse` without ever saying so.** It decides whether a token's embedding is injected only on the step it arrives — leaving the `--think-gap` echo steps to run on recurrent state alone — or is held across every step. Verified to be a no-op at `--think-gap 0` and to diverge increasingly above it, which makes it a knob about what the thinking steps actually think *on*, and therefore closer to this architecture's central claim than most of the flags that were already exposed. It is in `ARCH_FIELDS` so `eval`/`gen` reproduce a checkpoint's setting, and deliberately not in `RESUME_FIELDS`: like `think_gap` it is a forward-pass argument that cannot change the state dict, so pinning it on resume would remove a knob rather than prevent an error.
+- **`--activation ENC,CORE,MEM`** and **`--weight-init ENC,CORE,MEM,GATE`**, both previously reachable only by editing `Cfg`. The core's initialization strategy sets the initial spectral behaviour the whole architecture is built around, and the `arch` sweep never varied either. Both are validated against the model's accepted names — nine activations, thirteen init strategies — with arity checked, before the corpus is tokenized. Note `none` means *identity* for `--activation` but *no gate at all* for `--gates`; the help text says so, since the same word doing two things across neighbouring flags is exactly the kind of thing that costs an afternoon.
+- **`--val-batch`** sets how many shards the validation split is cut into, which is also the number of independent cold starts each score averages. It changes which corpus positions get scored, and only some positions fall into the absorbing state documented under 2.6.2's known issues — so raise it to probe cold-start robustness and keep it fixed when comparing runs.
+
 ## [2.6.6] — 2026-08-10
 
 ### Added
