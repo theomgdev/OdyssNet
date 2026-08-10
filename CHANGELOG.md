@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.8] — 2026-08-10
+
+### Added
+- **`--grad-persistence`** exposes the trainer's "ghost gradients": a fraction of the previous step's gradient is added to the next one. The mechanics are worth knowing before using it — the carry is injected after AMP unscale and *before* clipping, then re-captured from the clipped result, so it is a bounded geometric series rather than something that can run away, and it stacks on top of ChaosGrad's own Adam-style momentum rather than replacing it. That makes it a second-order knob: measured over six identical steps the weights differ by ~9e-07, because D-adaptation renormalizes the step size and absorbs much of the change. Range is capped at the trainer's documented 0.0-0.9; at 1.0 the carry stops decaying, which is a divergence rather than a setting. One inherited behaviour is called out in `--help` because it is surprising: on `--resume`, a checkpoint's stored value is restored whenever the flag is left at 0, so passing 0 does not switch off a run that had it on — pass a positive value to override.
+
 ## [2.6.7] — 2026-08-10
 
 ### Added

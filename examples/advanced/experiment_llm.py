@@ -212,6 +212,10 @@ class Cfg:
                                      # fixed-rate checkpoint back to the
                                      # estimator instead of keeping its mode
     label_smoothing: float = 0.0
+    grad_persistence: float = 0.0    # "ghost gradients": a fraction of the
+                                     # previous step's gradient is added to the
+                                     # next one, on top of ChaosGrad's own
+                                     # momentum
     grad_ckpt: bool = False
 
     # --- runtime ---
@@ -810,7 +814,8 @@ def build(cfg, vocab_size):
         vocab_mode="discrete",
         tie_embeddings=cfg.tie_embeddings,
     )
-    trainer = OdyssNetTrainer(model, lr=cfg.lr, device=cfg.device)
+    trainer = OdyssNetTrainer(model, lr=cfg.lr, device=cfg.device,
+                              gradient_persistence=cfg.grad_persistence)
     trainer.loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=cfg.label_smoothing)
     return model, trainer
 
@@ -1768,6 +1773,18 @@ def parse_args():
                    metavar="P",
                    help="applied to the training loss only; reported perplexity is "
                         "always unsmoothed (default: %(default)s)")
+    g.add_argument("--grad-persistence", type=float, default=d.grad_persistence,
+                   metavar="P",
+                   help="'ghost gradients': keep this fraction of the previous "
+                        "step's gradient and add it to the next, injected after "
+                        "AMP unscale and before clipping, then re-captured from "
+                        "the clipped result -- so the carry is a bounded "
+                        "geometric series rather than a runaway. This is "
+                        "momentum on top of ChaosGrad's own, so treat it as a "
+                        "second-order knob; 0 disables it. On --resume a "
+                        "checkpoint's stored value is restored whenever this is "
+                        "left at 0, so pass a positive value to override rather "
+                        "than expecting 0 to switch it off. (default: %(default)s)")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra sequential "
                         "forward per step")
@@ -1887,6 +1904,12 @@ def parse_args():
                 f"choose from {list(inits)}")
     if a.think_gap < 0:
         p.error(f"--think-gap must be >= 0, got {a.think_gap}")
+    # Upper bound is the trainer's documented range. Values at or above 1.0
+    # make the carried gradient non-decaying, which is a divergence rather
+    # than a setting.
+    if not 0.0 <= a.grad_persistence <= 0.9:
+        p.error(f"--grad-persistence must be between 0.0 and 0.9, "
+                f"got {a.grad_persistence}")
     if a.cold_start_every < 0:
         p.error(f"--cold-start-every must be >= 0, got {a.cold_start_every}")
     if a.tie_embeddings and a.n_in != a.n_out:
@@ -1907,6 +1930,7 @@ def cfg_from_args(a):
         lr=None if str(a.lr) in ("auto", "keep") else float(a.lr),
         lr_force_auto=(str(a.lr) == "auto"),
         dropout=a.dropout, label_smoothing=a.label_smoothing,
+        grad_persistence=a.grad_persistence,
         hebb_type=None if a.hebb == "none" else a.hebb,
         hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,
         tie_embeddings=a.tie_embeddings, minutes=a.minutes, max_steps=a.max_steps,
