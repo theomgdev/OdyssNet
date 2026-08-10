@@ -1,4 +1,4 @@
-__version__ = "2.6.8"
+__version__ = "2.6.9"
 
 from .core.network import OdyssNet
 from .training.trainer import OdyssNetTrainer

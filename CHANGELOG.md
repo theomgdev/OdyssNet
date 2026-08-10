@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.6.9] — 2026-08-10
+
+### Added
+- **`--resume-best`: recover from a diverged run without editing files by hand.** `--resume` reads `<tag>_latest.pth`, which is rewritten at every evaluation and again on interrupt, so a loss explosion overwrites it within one eval interval — and resuming then reloads the diverged model. `<tag>_best.pth` is written only inside the `val_loss < best_val` branch, so it structurally cannot hold a diverged model; the recovery was always available but only as `copy _best.pth _latest.pth` at a shell prompt, which is exactly the step someone loses a training run by not knowing. The flag implies `--resume` and rewinds the step counter, per-row stream positions and optimizer state to that checkpoint, with the next evaluation repairing `_latest`. Architecture adoption reads the file the run will actually load, not `_latest`, or the rescue would rebuild from the wrong shapes and fail the strict load it exists to survive. It **refuses to start** when the tag has a `_latest` but no `_best`: falling back to a fresh model there would overwrite the one surviving checkpoint at the first evaluation, which is the destruction the flag was invoked to avoid. With neither file present there is nothing to protect, so it starts fresh like `--resume` does. Verified end to end on a scratch tag: two checkpoints carrying distinct marker weights confirm `--resume-best` loads `_best` and plain `--resume` still loads `_latest`, plus both branches of the missing-`_best` case.
+
 ## [2.6.8] — 2026-08-10
 
 ### Added

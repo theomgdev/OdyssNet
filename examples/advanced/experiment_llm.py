@@ -1163,8 +1163,8 @@ def guard_overwrite(cfg, overwrite=False):
     )
 
 
-def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
-                sample_every=0, save=True):
+def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
+                quiet=False, sample_every=0, save=True):
     """
     Train under a wall-clock and/or step budget. Returns the final metrics.
 
@@ -1186,16 +1186,36 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
 
     best_val = float("inf")
     start_step = 0
-    if resume and not os.path.exists(latest_path):
-        print(f"ℹ️  --resume given but no checkpoint at {latest_path}; "
+    # `_latest` is rewritten at every evaluation and `_best` only on an
+    # improvement, so the two diverge exactly when it matters: a loss
+    # explosion overwrites `_latest` within one eval interval, while `_best`
+    # structurally cannot hold a diverged model. --resume-best is the recovery
+    # path that difference makes possible.
+    resume_path = best_path if resume_best else latest_path
+    flag = "--resume-best" if resume_best else "--resume"
+    if resume and not os.path.exists(resume_path):
+        # Starting fresh is harmless when the tag has nothing at all, but with
+        # a latest present it would train a random model and overwrite that
+        # file at the first evaluation — the destruction the flag exists to
+        # avoid, arrived at by asking to avoid it.
+        if resume_best and os.path.exists(latest_path):
+            raise SystemExit(
+                f"\n✋ --resume-best: no best checkpoint at {resume_path}, but "
+                f"tag '{cfg.tag}' has a latest one.\n"
+                f"   Starting fresh would overwrite it at the first "
+                f"evaluation, so this run stops instead.\n"
+                f"   Continue from latest:  --mode train --tag {cfg.tag} "
+                f"--resume\n"
+            )
+        print(f"ℹ️  {flag} given but no checkpoint at {resume_path}; "
               f"starting fresh.")
-    if resume and os.path.exists(latest_path):
+    if resume and os.path.exists(resume_path):
         # Loading the weights must not fail softly. --resume bypasses
         # guard_overwrite, so a run that continues past a failed load trains a
         # randomly initialized model and, at the first validation, saves it
         # over the checkpoint it could not read.
         try:
-            data = load_checkpoint(model, trainer.optimizer, latest_path,
+            data = load_checkpoint(model, trainer.optimizer, resume_path,
                                    device=cfg.device, strict=True, lr=cfg.lr)
         except Exception as e:
             raise SystemExit(
@@ -1240,8 +1260,12 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, quiet=False,
                 print(f"⚠️  Weights and optimizer resumed, but the trainer "
                       f"state did not ({e}). Continuing with the loaded model; "
                       f"AMP scaler and anomaly-detector history restart.")
-        print(f"📂 Resumed at step {start_step:,} "
-              f"(best val PPL {math.exp(min(best_val,30)):.2f})")
+        print(f"📂 Resumed from {os.path.basename(resume_path)} at step "
+              f"{start_step:,} (best val PPL {math.exp(min(best_val,30)):.2f})")
+        if resume_best:
+            print(f"   ↩️  Rewound to the best checkpoint: step counter, "
+                  f"stream positions and optimizer state all come from it. "
+                  f"The next evaluation rewrites {os.path.basename(latest_path)}.")
 
     # Report the mode the optimizer is ACTUALLY in, not what the CLI asked
     # for. Under the default `--lr keep`, a resumed checkpoint keeps its own
@@ -1629,6 +1653,9 @@ examples:
   # watch the val_coldfail column)
   %(prog)s --mode train --tag base --resume --batch 256 --cold-start-every 0
 
+  # recover from a loss explosion: rewind to the best checkpoint, pin the rate
+  %(prog)s --mode train --tag base --resume-best --batch 256 --lr 1e-4
+
   # compute-matched ablations; every arm gets the same wall-clock
   %(prog)s --mode sweep --sweep gap  --minutes 3 --batch 128
   %(prog)s --mode sweep --sweep coldstart --arms never,c32 --minutes 2
@@ -1816,6 +1843,18 @@ def parse_args():
     g.add_argument("--resume", action="store_true",
                    help="continue --tag's latest checkpoint, restoring weights, "
                         "optimizer and per-row stream positions")
+    g.add_argument("--resume-best", action="store_true",
+                   help="resume from --tag's *best* checkpoint instead of its "
+                        "latest; implies --resume. This is the recovery path "
+                        "after a loss explosion: `_latest` is rewritten at "
+                        "every evaluation, so a diverged run overwrites it "
+                        "within one eval interval, while `_best` is only ever "
+                        "written on an improvement and therefore cannot hold a "
+                        "diverged model. It rewinds the step counter, stream "
+                        "positions and optimizer state to that checkpoint, and "
+                        "the next evaluation repairs `_latest`. Refuses to run "
+                        "if the tag has a latest but no best, rather than "
+                        "starting fresh over it")
     g.add_argument("--overwrite", action="store_true",
                    help="allow a fresh run to destroy an existing tag's checkpoints")
     g.add_argument("--seed", type=int, default=d.seed, metavar="N",
@@ -1853,6 +1892,12 @@ def parse_args():
                    help="tokens to generate in --mode gen (default: %(default)s)")
 
     a = p.parse_args()
+
+    # --resume-best is a variant of --resume, not an alternative to it: every
+    # downstream check asks `a.resume`, so folding it in here keeps the two
+    # from having to be tested separately at each site.
+    if a.resume_best:
+        a.resume = True
 
     # `--vocab-size` defaults to None so an explicit request is distinguishable
     # from silence, which decides whether a tiktoken run should say the flag
@@ -1992,9 +2037,13 @@ def main():
             raise SystemExit(f"No checkpoint for tag '{cfg.tag}' (looked for {path})")
         cfg = adopt_saved_arch(cfg, path, fields=ARCH_FIELDS)
     elif a.mode == "train" and a.resume:
-        latest, _ = ckpt_paths(cfg)
-        if os.path.exists(latest):
-            cfg = adopt_saved_arch(cfg, latest, fields=RESUME_FIELDS)
+        latest, best = ckpt_paths(cfg)
+        # Read the architecture from the file the run will actually load, or
+        # --resume-best would rebuild from the wrong one and fail the strict
+        # load it is trying to rescue.
+        src = best if a.resume_best else latest
+        if os.path.exists(src):
+            cfg = adopt_saved_arch(cfg, src, fields=RESUME_FIELDS)
 
     # A tiktoken vocabulary belongs to its encoding; pin it before the cache
     # path and element width are derived from it.
@@ -2033,7 +2082,7 @@ def main():
 
     metrics, model, trainer, tok = run_session(
         cfg, corpus, budget_sec=cfg.minutes * 60.0, resume=a.resume,
-        sample_every=a.sample_every)
+        resume_best=a.resume_best, sample_every=a.sample_every)
 
     print(f"\n{'='*78}")
     print(f"📊 FINAL  val loss {metrics['val_loss']:.4f} | ppl {metrics['val_ppl']:.2f} | "
