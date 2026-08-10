@@ -1654,6 +1654,17 @@ examples:
 """
 
 
+#: Appended to every "unknown name" rejection. These lists are transcribed
+#: from OdyssNet's `_build_activation` and `_apply_init`, which are if/elif
+#: chains over string literals and cannot be introspected — so a strategy added
+#: to the library is rejected here until someone updates the copy. Validating
+#: locally is still the right trade (the model's own error would arrive only
+#: after the corpus is tokenized and CUDA is initialized), but the failure
+#: should point at its cause rather than look like the name is invalid.
+_STALE = (". If the library gained this name recently, the accepted list in "
+          "parse_args() needs updating.")
+
+
 def parse_args():
     d = Cfg()
     p = argparse.ArgumentParser(
@@ -1781,10 +1792,14 @@ def parse_args():
                         "the clipped result -- so the carry is a bounded "
                         "geometric series rather than a runaway. This is "
                         "momentum on top of ChaosGrad's own, so treat it as a "
-                        "second-order knob; 0 disables it. On --resume a "
-                        "checkpoint's stored value is restored whenever this is "
-                        "left at 0, so pass a positive value to override rather "
-                        "than expecting 0 to switch it off. (default: %(default)s)")
+                        "second-order knob; 0 disables it. Note --resume does "
+                        "NOT let you switch it off: while this is left at 0 the "
+                        "trainer restores the checkpoint's stored fraction AND "
+                        "its accumulated ghost buffer, so a run you believe has "
+                        "ghosting disabled resumes with both the setting and a "
+                        "warm carry. Pass a positive value to override it, or "
+                        "start a new --tag to be rid of it. "
+                        "(default: %(default)s)")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra sequential "
                         "forward per step")
@@ -1877,7 +1892,7 @@ def parse_args():
     unknown = [g for g in a.gates if g.lower() not in known]
     if unknown:
         p.error(f"--gates: unknown activation(s) {unknown}; "
-                f"choose from {list(known)}")
+                f"choose from {list(known)}{_STALE}")
 
     a.activation = tuple(s.strip() for s in a.activation.split(","))
     if len(a.activation) != 3:
@@ -1887,7 +1902,7 @@ def parse_args():
     unknown = [s for s in a.activation if s.lower() not in known]
     if unknown:
         p.error(f"--activation: unknown activation(s) {unknown}; "
-                f"choose from {list(known)}")
+                f"choose from {list(known)}{_STALE}")
 
     a.weight_init = tuple(s.strip() for s in a.weight_init.split(","))
     if len(a.weight_init) != 4:
@@ -1901,7 +1916,7 @@ def parse_args():
     unknown = [s for s in a.weight_init if s.lower() not in inits]
     if unknown:
         p.error(f"--weight-init: unknown strategy/strategies {unknown}; "
-                f"choose from {list(inits)}")
+                f"choose from {list(inits)}{_STALE}")
     if a.think_gap < 0:
         p.error(f"--think-gap must be >= 0, got {a.think_gap}")
     # Upper bound is the trainer's documented range. Values at or above 1.0
