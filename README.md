@@ -46,6 +46,8 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 We pushed OdyssNet to the theoretical limit: **Zero Hidden Neurons**.
 In these tests, the Input Layer is directly connected to the Output Layer (and itself). There are no buffer layers.
 
+> **Pending re-validation (3.1.0).** `convergence_mnist_record`, `convergence_mnist_tiny` and `convergence_mnist_reverse_record` now run temporal attention where they ran Hebbian plasticity, on seed 123 — a controlled two-seed A/B put attention ahead on the record task. Every figure below for those three was measured on the previous configuration and has not yet been re-measured.
+
 | Task | Traditional Constraint | OdyssNet Solution | Result | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |

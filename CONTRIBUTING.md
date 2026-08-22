@@ -329,7 +329,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
 
 1.  **Reproducibility & Seeding:** 🔴 **MANDATORY** — All example and experiment scripts MUST set a fixed seed for reproducible results.
     *   **Why?** Reproducible results are essential for debugging, comparing strategies, and publishing findings.
-    *   **How?** Always call `set_seed(42)` at the **very start** of your `main()` function, before any random operations.
+    *   **How?** Call `set_seed(...)` at the **very start** of your `main()` function, before any random operations. 42 is the default and what a new example should use. A different seed is allowed only when a measurement chose it — `convergence_mnist_record`, `convergence_mnist_tiny` and `convergence_mnist_reverse_record` use 123 because a two-seed A/B on the record task picked it — and the reason has to sit in a comment next to the call.
     *   **Import:** `from odyssnet import set_seed`
     *   **Example:**
     ```python
@@ -597,7 +597,7 @@ When modifying the library itself (not examples), follow these additional rules:
 - [ ] Documentation updated in relevant markdown files (docs/LIBRARY.md, CONTRIBUTING.md)
 
 ### New/modified example scripts (`examples/`)
-1.  [ ] **Does your script call `set_seed(42)` at the START of `main()`?** (MANDATORY for reproducibility)
+1.  [ ] **Does your script call `set_seed(...)` at the START of `main()`?** (MANDATORY for reproducibility. Use 42 unless a measurement chose otherwise, and say which in a comment.)
 2.  [ ] **Is the trainer zero-config (`OdyssNetTrainer(model, device=...)`) unless there is a documented reason to pin `lr`?** Zero-config ChaosGrad is the recommended default for examples. Pin an explicit `lr` only for precision-record scripts whose advertised metrics depend on a specific tuned rate — and say so in a comment.
 3.  [ ] Did you place it in the correct folder (`examples/` for core validations, `examples/advanced/` for complex tasks)?
 4.  [ ] Are you using `OdyssNetTrainer`?

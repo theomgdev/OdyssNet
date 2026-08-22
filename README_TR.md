@@ -47,6 +47,8 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 OdyssNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
 Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağlıdır. Ara katman yoktur.
 
+> **Yeniden ölçüm bekliyor (3.1.0).** `convergence_mnist_record`, `convergence_mnist_tiny` ve `convergence_mnist_reverse_record` artık Hebbian plastisite yerine temporal attention ile, seed 123 üzerinde çalışıyor — kontrollü iki seedli bir A/B record görevinde attention'ı önde çıkardı. Aşağıdaki bu üç örneğe ait bütün rakamlar önceki konfigürasyonda ölçüldü ve henüz yenilenmedi.
+
 | Görev | Geleneksel Kısıt | OdyssNet Çözümü | Sonuç | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |

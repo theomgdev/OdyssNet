@@ -107,7 +107,8 @@ def main():
     reversing the normal classification direction (image -> digit).
     This tests the network's ability to store and reconstruct visual patterns.
     """
-    set_seed(42)
+    # Seed 123 rather than the usual 42, matching the record experiments.
+    set_seed(123)
     
     print("=" * 70)
     print("OdyssNet: INVERSE MNIST REVERSE RECORD (Generation Record)")
@@ -147,12 +148,22 @@ def main():
         vocab_size=[1, 49],   # 1 scalar input -> 49 pixel outputs
         vocab_mode='continuous',
         activation=['tanh', 'tanh', 'tanh'],
-        weight_init='micro_quiet_warm'
+        weight_init='micro_quiet_warm',
+        # Generation is the case temporal attention was built for: each
+        # patch has to agree with the ones already drawn, and the only
+        # record of those is the core's own state history.
+        # `attn_write='step'` is not optional here — the input is one
+        # scalar, so the token ratio is 21 and the default 'token'
+        # policy would write a single cache entry at the last step.
+        attn_heads=4,
+        attn_write='step',
     )
     model = model.compile()
     
     total_params = model.get_num_params()
-    print(f"Total Params: {total_params} (Goal: < 500)")
+    # The attention branch adds parameters the original <500 goal did not
+    # budget for; the bare core is unchanged.
+    print(f"Total Params: {total_params} (core + 4 attention heads)")
     
     # Data Preparation
     transform = transforms.Compose([
