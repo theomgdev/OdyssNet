@@ -750,3 +750,29 @@ class TestNeurogenesisMigration:
         p = opt.param_groups[0]['params'][0]
         assert 's' in opt.state[p] and 'p0' in opt.state[p]
         assert opt.param_groups[0]['d'] > 0
+
+
+class TestPlasticGainIsNeverDecayed:
+    def test_hebb_norm_gain_lands_in_a_decay_free_family(self):
+        """The plastic gain starts at zero and has to grow. Weight decay would
+        pull it back and switch plasticity off silently — the exact failure the
+        3.1.0 repair existed to end. It reaches `modulation` by falling through
+        the classifier rather than by name, so pin it."""
+        model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7],
+                         device="cpu", hebb_type="both")
+        groups = ChaosGrad.classify_params(model)
+        gain = model.hebb_norm.weight
+        holding = [g for g in groups if any(p is gain for p in g["params"])]
+        assert len(holding) == 1, "the plastic gain must be in exactly one group"
+        assert holding[0]["weight_decay"] == 0.0
+        assert holding[0]["group_name"] == "modulation"
+
+    def test_plasticity_family_is_logits_only(self):
+        model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7],
+                         device="cpu", hebb_type="both", hebb_res="synapse")
+        groups = {g["group_name"]: g for g in ChaosGrad.classify_params(model)}
+        named = dict(model.named_parameters())
+        plastic = groups["plasticity"]["params"]
+        assert {n for n, p in named.items() if any(p is q for q in plastic)} == {
+            "t_hebb_factor", "t_hebb_decay", "s_hebb_factor", "s_hebb_decay"}
+        assert groups["plasticity"]["weight_decay"] == 0.0

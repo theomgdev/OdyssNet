@@ -251,6 +251,12 @@ class ChaosGrad(torch.optim.Optimizer):
             elif any(k in name for k in ('embed', 'proj', 'output_decoder')):
                 families['projections'].append(param)
             elif 'hebb' in leaf:
+                # Factor/decay logits only. `hebb_norm.weight` is a norm gain,
+                # not a logit, and falls through to modulation with the
+                # QK-norm gains — which is where it belongs and, more to the
+                # point, where nothing decays it. It starts at zero and has to
+                # grow; a family with weight decay would pull it back and
+                # switch plasticity off without saying so.
                 families['plasticity'].append(param)
             else:
                 families['modulation'].append(param)
