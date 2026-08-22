@@ -96,6 +96,10 @@ class TestConstruction:
         with pytest.raises(ValueError, match="attn_write"):
             _model(attn_write="every-other-tuesday")
 
+    def test_invalid_read_mode(self):
+        with pytest.raises(ValueError, match="attn_read"):
+            _model(attn_read="continuously")
+
     def test_rope_table_is_not_persistent(self):
         model = _model()
         assert "attn.inv_freq" not in model.state_dict()
@@ -138,12 +142,43 @@ class TestZeroInit:
                            _model(loud=False).W)
 
 
+class TestBranchScale:
+    """`o_proj` starts at zero and Adam-family updates move it by ~lr per step
+    whatever its width, so without the 1/sqrt(heads*head_dim) factor a wide
+    branch reaches a destructive contribution in the same number of steps a
+    narrow one takes to reach a useful one. Measured on associative recall:
+    unscaled, 4x64 collapsed to chance while 1x16 matched the baseline."""
+
+    def _contribution(self, heads, head_dim, seed=3):
+        set_seed(seed)
+        attn = TemporalAttention(128, heads=heads, head_dim=head_dim, kv_heads=1)
+        torch.nn.init.normal_(attn.o_proj.weight, std=0.05)
+        torch.manual_seed(11)
+        h = torch.randn(8, 128)
+        keys = torch.randn(8, 1, 12, head_dim)
+        values = torch.randn(8, 1, 12, head_dim)
+        return attn.attend(h, ((keys, values),), pos=12).std().item()
+
+    def test_contribution_is_width_independent(self):
+        scales = [self._contribution(h, d)
+                  for h, d in ((1, 16), (2, 32), (4, 64), (8, 64))]
+        assert max(scales) / min(scales) < 1.5, scales
+
+    def test_out_scale_matches_branch_width(self):
+        attn = TemporalAttention(128, heads=4, head_dim=64)
+        assert attn.out_scale == pytest.approx(1.0 / (4 * 64) ** 0.5)
+
+
 # ===========================================================================
 # Attention mathematics
 # ===========================================================================
 
 class TestSegmentMerge:
-    def test_merge_matches_single_softmax(self):
+    def test_split_segments_match_one_softmax(self):
+        """The cache is attended as segments and joined at the scores. That
+        has to be exactly what one softmax over the concatenation would
+        give — otherwise the training and inference paths, which segment
+        differently, would disagree."""
         set_seed(1)
         attn = TemporalAttention(16, heads=2, kv_heads=1, head_dim=8, window=64)
         torch.nn.init.normal_(attn.o_proj.weight, std=0.1)
@@ -155,6 +190,21 @@ class TestSegmentMerge:
                                 (keys[:, :, 4:], values[:, :, 4:])), pos=9)
 
         assert torch.allclose(one, split, atol=1e-6)
+
+    def test_split_is_order_faithful(self):
+        """Segments carry their own values: probabilities from one block must
+        never be paired with another block's values."""
+        set_seed(4)
+        attn = TemporalAttention(16, heads=2, kv_heads=1, head_dim=8, window=64)
+        torch.nn.init.normal_(attn.o_proj.weight, std=0.1)
+        h = torch.randn(2, 16)
+        keys, values = torch.randn(2, 1, 6, 8), torch.randn(2, 1, 6, 8)
+
+        reference = attn.attend(h, ((keys, values),), pos=6)
+        swapped = attn.attend(h, ((keys[:, :, :3], values[:, :, 3:]),
+                                  (keys[:, :, 3:], values[:, :, :3])), pos=6)
+
+        assert not torch.allclose(reference, swapped, atol=1e-4)
 
     def test_empty_cache_returns_none(self):
         attn = TemporalAttention(16, heads=2, head_dim=8)
@@ -192,6 +242,35 @@ class TestKVCache:
         model.reset_state(3)
         model(_tokens(length=6), steps=12)
         assert model.attn.cache_len == 12
+
+    def test_read_token_queries_once_per_token(self):
+        """`attn_read` changes how often the cache is queried, not what is in
+        it: the entries are the same, the outputs are not."""
+        x = _tokens(length=6)
+        every_step = _model(attn_read="step")
+        per_token = _model(attn_read="token")
+        per_token.load_state_dict(every_step.state_dict())
+
+        every_step.reset_state(3)
+        dense, _ = every_step(x, steps=12)
+        per_token.reset_state(3)
+        sparse, _ = per_token(x, steps=12)
+
+        assert per_token.attn.cache_len == every_step.attn.cache_len == 6
+        assert not torch.allclose(dense, sparse, atol=1e-5)
+
+    def test_read_modes_agree_at_one_step_per_token(self):
+        x = _tokens(length=6)
+        every_step = _model(attn_read="step")
+        per_token = _model(attn_read="token")
+        per_token.load_state_dict(every_step.state_dict())
+
+        every_step.reset_state(3)
+        dense, _ = every_step(x, steps=6)
+        per_token.reset_state(3)
+        sparse, _ = per_token(x, steps=6)
+
+        assert torch.allclose(dense, sparse, atol=1e-7)
 
     def test_incremental_decode_matches_one_shot(self):
         """The point of a KV cache: feeding tokens one at a time must produce
@@ -272,6 +351,19 @@ class TestKVCache:
         model.attn.restore(snap)
         assert model.attn.cache_len == 4
         assert model.attn.position == 4
+
+    def test_cache_is_float32_under_autocast(self):
+        """Attention runs with autocast off, so the cache has one dtype
+        whatever the surrounding precision is — a cache written in fp16 during
+        training and read in fp32 during evaluation would otherwise have to be
+        converted at exactly the wrong moment."""
+        model = _model()
+        model.reset_state(2)
+        with torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=True):
+            model(_tokens(batch=2, length=4), steps=8)
+        assert model.attn._pend_k or model.attn._mem_k is not None
+        cached = model.attn._mem_k if model.attn._mem_k is not None else model.attn._pend_k[0]
+        assert cached.dtype == torch.float32
 
     def test_cost_model_reports_bytes(self):
         attn = TemporalAttention(64, heads=4, kv_heads=1, head_dim=16, window=10)

@@ -23,6 +23,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 ## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
+- **New in 3.0:** optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **90.14% MNIST accuracy** with only **480 parameters** (110x more efficient than LeNet-5).
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
@@ -35,6 +36,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
 *   **Trainable Chaos:** Uses **StepNorm** and **Tanh** to tame chaotic signals.
+*   **Temporal Attention (3.0):** Optional multi-head attention over the core's *own state history* (`attn_heads=4`) — no layers to stack it between, so it attends along time. Modern KV caching throughout: grouped-query heads, RoPE, a sliding window, and a preallocated ring buffer for allocation-free decoding. Its output projection starts at zero, so switching it on changes nothing until training says otherwise.
 *   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — the network accumulates correlations and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.).
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
@@ -184,16 +186,29 @@ OdyssNet mimics the brain more closely than layered networks, not just in struct
 *   **Patience (The Detective):** It benefits from "Thinking Time." Just as humans need a moment to process complex logic, OdyssNet solves impossible problems when given a few steps of silence to digest potential solutions.
 
 ### 7. Implicit Attention (Temporal Resonance)
-Unlike Transformers which use explicit $Q \times K$ matrices to "look back" at the history, OdyssNet achieves attention through **Temporal Resonance**.
+By default OdyssNet carries no history buffer at all. Instead of explicit $Q \times K$ matrices, it achieves attention through **Temporal Resonance**.
 
 *   **Mechanism:** Information from the past is maintained as a standing wave or vibration in the hidden state.
 *   **Detection:** When a related input arrives, it creates a constructive interference (resonance) with the specific wave holding relevant past information, forcing it to surface.
 *   **Result:** The network "attends" to relevant past events without storing the entire history buffer. Time itself acts as the indexing mechanism.
 
+### 8. Explicit Attention (Temporal Attention, 3.0)
+Resonance is memory *without* an index. Version 3.0 adds the other kind as an option: `attn_heads=4` gives every thinking step a query over the states that came before it.
+
+*   **Where it attaches:** There are no layers to stack attention between, so it runs along the only axis this architecture has — its own past. The result is added to the same pre-activation signal the recurrence and the input feed, and the step's activation and StepNorm bound it like everything else.
+*   **Query length is always 1.** The core cannot be unrolled in parallel, so a forward pass is a sequence of single-query attentions — a transformer's decode phase, never its prefill. Every cached entry is already in the past and softmax over keys is order-blind, so no mask and no reordering are ever needed.
+*   **A real KV cache:** grouped-query / multi-query heads, RoPE applied to each key when it is written, a sliding window, and two representations — a preallocated ring written in place for inference, a segmented graph cache for training — that are tested to produce identical numbers.
+*   **Free to try:** the output projection is zero-initialized and the module is built after the core, so an attention model and a plain one at the same seed start from the same $W$ and the same output. The ablation has one variable in it.
+*   **Measure it:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128`, whose `off` arm is exactly the 2.x architecture. Full mechanics, cost model and knobs: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
+
 ### Mathematical Model
 The network state $h_t$ evolves as:
 
 $$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
+
+With temporal attention enabled, one more term joins the same sum — a query over the cache $\mathcal{C}_t$ of previously written states:
+
+$$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
 ---
 

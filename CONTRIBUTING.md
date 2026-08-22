@@ -132,7 +132,7 @@ model = OdyssNet(..., activation='tanh', weight_init='orthogonal')
 *   List supports 1-3 entries, right-padded from defaults.
 *   `'none'`: Disables gate branch entirely (no learnable parameters).
 *   `'identity'`: Enables explicit identity gating (learnable gate params exist, starts at identity).
-*   Gate parameter initialization uses the 4th `weight_init` slot. Default layout is `['quiet', 'resonant', 'quiet', 'zero']`.
+*   Gate parameter initialization uses the 4th `weight_init` slot. Default layout is `['quiet', 'resonant', 'quiet', 'zero', 'quiet']` — the 5th slot is the attention projections (3.0), and shorter lists are right-padded from the defaults, so a four-entry list written before 3.0 still means what it meant.
 *   Activation layout supports 1-4 entries with default `['none', 'tanh', 'tanh', 'none']`; 4th slot is reserved for config symmetry.
 
 ### D. Associative Memory (Database / Key-Value)
@@ -204,6 +204,33 @@ trainer = OdyssNetTrainer(model)
 # Fixed-rate mode: pass an explicit learning rate (reproducible)
 trainer = OdyssNetTrainer(model, lr=3e-4)
 ```
+
+### G. Temporal Attention (`attn_heads`)
+For tasks where the network must **retrieve a specific past state** rather than resonate with it — long-range recall, copying, variable binding over a long gap — enable attention over the core's own state history. There are no layers to stack it between, so it attends along time: every thinking step queries a cache of the states before it.
+
+```python
+model = OdyssNet(
+    num_neurons=1024,
+    input_ids=list(range(256)),
+    output_ids=list(range(256, 768)),
+    vocab_size=2048, vocab_mode='discrete',
+    attn_heads=4,            # the whole switch; None (default) builds nothing
+    attn_kv_heads=1,         # multi-query: the cache, not the weights, is what OOMs
+    attn_window=256,         # how far back a query can see
+    attn_write='token',      # one entry per token, not per thinking step
+    attn_read='step',        # 'token' halves the cost when think_gap > 0
+    device='cuda',
+)
+```
+
+*   **Free to try:** `o_proj` is zero-initialized and the module is built *after* the core, so a model with attention and one without, at the same seed, have the same `W` and produce the same output until training moves the attention weights. Ablations of it have one variable in them.
+*   **Widening it is safe:** the branch's output is divided by `sqrt(attn_heads · attn_head_dim)`, so its reachable contribution does not grow with its width. Without that factor, a 4×64 branch collapsed associative recall to chance while a 1×16 branch matched the baseline — do not remove it, and if you add another parallel branch to the step, give it the same treatment.
+*   **What it costs:** the query runs every step, so extra thinking steps multiply the *reads*, not the entries — `attn_read='token'` is the knob for that. Keys and values kept for the backward pass scale as `2·B·H_kv·D·(window + n²/2)` with `n` the writes inside one truncated-BPTT window; `model.attn.training_cache_bytes(batch, n)` returns the number, and the LLM harness prints it before training starts.
+*   **Cold starts:** use `model.reset_rows(mask)`, never a masked fill on `model.state`. A row whose state is zeroed while its KV history survives is neither cold nor warm.
+*   **Optimizer:** ChaosGrad classifies the four projections into an `attention` family (weight decay on), and the QK-norm gains into `modulation` (decay off) — never decay those by hand in a custom optimizer.
+*   **Transplantation:** `attn_head_dim` defaults to a value derived from `num_neurons`, so pin it explicitly when transplanting between cores of different sizes, or the attention geometry moves with the neuron count.
+*   **Compatibility:** works with `gradient_checkpointing=True`, AMP, neurogenesis and Hebbian plasticity; tested for all of them.
+*   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` being the 2.x architecture exactly. On TinyStories at 2 min/arm it is the 2.x architecture that wins — see the sweep's own notes.
 
 ---
 
@@ -550,6 +577,7 @@ When modifying the library itself (not examples), follow these additional rules:
 4.  [ ] Are you using `OdyssNetTrainer`?
 5.  [ ] Did you select the correct `activation`, `weight_init`, and `gate` setup? (Default `resonant` + `gate=None` is fine for most tasks.)
 6.  [ ] If you set `hebb_type`, remember that ChaosGrad automatically classifies Hebbian logits into the `plasticity` family with zero weight decay — never add decay to them via a custom optimizer.
+6b. [ ] If you set `attn_heads`, does the script reset rows with `model.reset_rows(mask)` rather than zeroing `model.state` directly, and does it say what the attention is measured *against*? An attention arm is only meaningful next to an `attn_heads=None` one at the same seed.
 7.  [ ] Does it converge reliably? (If you see `Loss nan`, see **Troubleshooting** above.)
 8.  [ ] Does the terminal output clearly explain what is happening?
 9.  [ ] Does the script use `TrainingHistory` and call `history.plot()` at the end?

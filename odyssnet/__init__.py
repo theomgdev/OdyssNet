@@ -1,6 +1,7 @@
-__version__ = "2.6.9"
+__version__ = "3.0.0"
 
 from .core.network import OdyssNet
+from .core.attention import TemporalAttention
 from .training.trainer import OdyssNetTrainer
 from .training.chaos_optimizer import ChaosGrad
 from .utils.odyssstore import save_checkpoint, load_checkpoint, transplant_weights, get_checkpoint_info
@@ -10,6 +11,7 @@ from .utils.history import TrainingHistory
 
 __all__ = [
     'OdyssNet',
+    'TemporalAttention',
     'OdyssNetTrainer',
     'ChaosGrad',
     'save_checkpoint',

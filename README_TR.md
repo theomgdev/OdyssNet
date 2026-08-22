@@ -24,6 +24,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
+- **3.0 ile gelen yenilik:** çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - Yalnızca **480 parametre** ile **%90.14 MNIST doğruluğu** elde eder (LeNet-5'ten 110 kat daha verimli).
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
@@ -36,6 +37,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
+*   **Zamansal Dikkat (3.0):** Çekirdeğin *kendi durum geçmişi* üzerinde isteğe bağlı çok başlı dikkat (`attn_heads=4`) — arasına dikkat yerleştirilecek katman olmadığı için zaman ekseninde çalışır. Baştan sona modern KV önbellekleme: gruplanmış sorgu başlıkları, RoPE, kayan pencere ve tahsis yapmadan çözümleme (decoding) için önceden ayrılmış halka tampon. Çıkış izdüşümü sıfırdan başlar; yani açmak, eğitim aksine karar verene kadar hiçbir şeyi değiştirmez.
 *   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — ağ korelasyonları biriktirir ve global, nöron başına veya sinaps başına çözünürlükte tamamen türevlenebilir logit parametreleri (`t_hebb_factor`, `s_hebb_decay`, vb.) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
@@ -185,16 +187,29 @@ OdyssNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağla
 *   **Sabır (Dedektif):** "Düşünme Süresinden" yararlanır. Tıpkı insanların karmaşık mantığı işlemek için bir ana ihtiyaç duyması gibi, OdyssNet olası çözümleri sindirmek için birkaç sessizlik adımı verildiğinde imkânsız problemleri çözer.
 
 ### 7. Örtülü Dikkat (Zamansal Rezonans)
-Geçmişe "geriye bakmak" için açık $Q \times K$ matrislerini kullanan Transformer'ların aksine, OdyssNet **Zamansal Rezonans** aracılığıyla dikkati sağlar.
+OdyssNet varsayılan olarak hiçbir geçmiş tamponu taşımaz. Açık $Q \times K$ matrisleri yerine dikkati **Zamansal Rezonans** ile sağlar.
 
 *   **Mekanizma:** Geçmişten gelen bilgi, gizli durumda ayakta duran bir dalga veya titreşim olarak korunur.
 *   **Tespit:** İlgili bir giriş geldiğinde, belirli dalgayla yapıcı girişim (rezonans) oluşturur ve onu yüzeye çıkmaya zorlar.
 *   **Sonuç:** Ağ, tüm geçmiş tamponunu saklamadan ilgili geçmiş olaylara "dikkat eder". Zaman'ın kendisi indeksleme mekanizması olarak hareket eder.
 
+### 8. Açık Dikkat (Zamansal Dikkat, 3.0)
+Rezonans, *indekssiz* bir bellektir. 3.0 sürümü diğer türü seçenek olarak ekliyor: `attn_heads=4`, her düşünme adımına kendisinden önce gelen durumlar üzerinde bir sorgu hakkı verir.
+
+*   **Nereye bağlanır:** Arasına dikkat konulacak katman yok; bu yüzden dikkat, mimarinin sahip olduğu tek eksende — kendi geçmişi boyunca — çalışır. Sonuç, yinelemenin ve girdinin beslediği aynı aktivasyon-öncesi sinyale eklenir; adımın aktivasyonu ve StepNorm'u onu da diğer her şey gibi sınırlar.
+*   **Sorgu uzunluğu daima 1'dir.** Çekirdek paralel açılamaz; dolayısıyla bir ileri geçiş, tek sorgulu dikkatlerin dizisidir — bir Transformer'ın decode aşaması, asla prefill'i değil. Önbellekteki her giriş zaten geçmiştedir ve anahtarlar üzerindeki softmax sıraya duyarsızdır; bu yüzden ne maske ne de yeniden sıralama gerekir.
+*   **Gerçek bir KV önbelleği:** gruplanmış sorgu / çoklu sorgu başlıkları, her anahtara yazıldığı anda uygulanan RoPE, kayan pencere ve aynı sayıları ürettiği testlerle sabitlenmiş iki temsil — çıkarım için yerinde yazılan önceden ayrılmış halka, eğitim için parçalı graf önbelleği.
+*   **Denemesi bedava:** çıkış izdüşümü sıfır başlatılır ve modül çekirdekten sonra kurulur; böylece aynı tohumdaki dikkatli ve dikkatsiz model aynı $W$'den ve aynı çıktıdan başlar. Ablasyonun içinde tek bir değişken kalır.
+*   **Ölç:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128` — buradaki `off` kolu tam olarak 2.x mimarisidir. Tüm mekanik, maliyet modeli ve ayar düğmeleri: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
+
 ### Matematiksel Model
 Ağ durumu $h_t$ şu şekilde evrimleşir:
 
 $$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
+
+Zamansal dikkat açıkken aynı toplama bir terim daha katılır — daha önce yazılmış durumların önbelleği $\mathcal{C}_t$ üzerinde bir sorgu:
+
+$$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
 ---
 

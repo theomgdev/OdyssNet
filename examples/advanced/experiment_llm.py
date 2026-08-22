@@ -9,10 +9,11 @@ reused every step — so the interesting question is not "how many layers" but
 
 This script is built to answer that question rather than to assert it.
 
-    python -u experiment_llm.py --mode smoke                    # ~40s self-test
+    python -u experiment_llm.py --mode smoke                    # ~60s self-test
     python -u experiment_llm.py --mode train --tag base --batch 256 --minutes 25
     python -u experiment_llm.py --mode train --tag base --resume --batch 256
     python -u experiment_llm.py --mode sweep --sweep gap --minutes 3 --batch 128
+    python -u experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128
     python -u experiment_llm.py --mode eval  --tag base
     python -u experiment_llm.py --mode gen   --tag base --prompt "Once upon a time"
 
@@ -44,6 +45,12 @@ Design notes
 * **Budget-matched comparison.** Sweep arms are given equal wall-clock, and
   both val PPL and tokens-consumed are reported, so "learns more per token"
   can be told apart from "simply runs faster".
+* **Attention is a flag, not a fork.** ``--attn-heads 4`` gives every thinking
+  step a query over the states before it; at zero (the default) nothing is
+  built. Its output projection starts at zero and the module is constructed
+  after the core, so an attention run and a non-attention run at the same seed
+  begin from the same W — the comparison has one variable in it. See
+  "Attention" below.
 
 Choosing a tokenizer
 --------------------
@@ -95,6 +102,39 @@ one byte per token against the BPE's 3.6, so the same text is ~3.6x more
 timesteps, and this architecture is latency-bound on sequential steps. Reach
 for it when the token boundary matters, not as a general default.
 
+Attention
+---------
+A transformer stacks attention between layers. This model has none, so
+attention goes along the axis it does have: at every thinking step the state
+queries a cache of the states that came before it, and what comes back is
+added to the same pre-activation signal the recurrence and the token embedding
+feed. What the core does by mixing everything through one matrix, attention
+does by naming what it wants.
+
+The flags that matter, in the order they usually matter:
+
+    --attn-heads 4          switch it on (0, the default, builds nothing)
+    --attn-kv-heads 1       multi-query; the cache is what OOMs, not the weights
+    --attn-window 256       how far back a query can see
+    --attn-write token      one entry per token, not per thinking step
+
+The cost is not the parameters. A query is issued every step, so `--think-gap`
+multiplies the *reads*; `--attn-write token` keeps the cache measured in tokens
+so it does not also multiply the *entries*. And the keys and values a backward
+pass has to keep are quadratic in the writes inside one truncated-BPTT window
+— chunk², not run length — which is the number this script prints before
+training starts rather than after the OOM.
+
+One more thing the branch does not cost you: its output projection starts at
+zero and is divided by the square root of its own width, so switching attention
+on — or widening it — changes nothing until training decides otherwise. Without
+that division a wide branch drowns the recurrence (`docs/LIBRARY.md` carries
+the measurement).
+
+`--sweep attn` is the measurement: seven arms, equal wall-clock, `off` being
+the 2.x architecture exactly. Add `--max-steps N` to compare at equal *tokens*
+instead — the two questions have different answers.
+
 What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
 ----------------------------------------------------------------------------
 * ``--sweep gap``, 1.3 min/arm, batch 128 — temporal depth pays, but only the
@@ -113,6 +153,49 @@ What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
   removed at no measurable cost in fit quality.
 * Batch is nearly free: throughput scaled ~linearly 6k -> 274k tok/s from
   batch 8 to 512, because the model is latency-bound on sequential steps.
+* ``--sweep attn``, 2 min/arm, batch 128 — **at equal wall-clock the 2.x
+  architecture wins**, by median cold-start shard ppl:
+
+      arm          p50 ppl   bits/byte   Mtokens    tok/s
+      ---------------------------------------------------
+      off            14.55      1.0765     10.91   90,853
+      read_token     17.75      1.1736      4.19   34,901
+      mqa4           20.11      1.2302      3.16   26,280
+      no_rope        21.27      1.2469      3.58   29,847
+      window32       23.47      1.2911      2.94   24,481
+      mha4           27.38      1.3553      3.06   25,436
+      write_step     32.16      1.4171      2.30   19,125
+
+  Every attention arm ran 2.6-4.7x slower per token, so every one of them
+  spent the budget on a third of the data — the ranking among them is mostly
+  a ranking of how cheap they are. ``--attn-read token`` is the clearest
+  example: identical attention, queried once per token instead of once per
+  step, 1.33x the throughput and the best attention result here. 0% collapsed
+  cold starts everywhere, attention on or off.
+  Read that as a verdict about wall-clock on a 2.6M-parameter core, not about
+  attention. The cost is kernel-launch overhead per *step*, which shrinks with
+  batch (3.45x at batch 64, 2.79x at 512) and would shrink further on a core
+  large enough for the launches to disappear behind real arithmetic. Compare
+  at equal *tokens* with ``--max-steps`` for the other half of the picture,
+  and note that the tok/s column inside a long sweep drifts downward as the
+  GPU heats; the controlled throughput numbers are in ``docs/LIBRARY.md``.
+* ``--sweep attn --max-steps 600``, batch 128 — **at equal tokens the verdict
+  reverses, and every attention arm wins.** Same seed, same 3.69M tokens:
+
+      arm          val ppl   bits/byte    tok/s
+      -----------------------------------------
+      mqa4           18.57      1.1778   26,302
+      read_token     19.75      1.2027   34,811
+      mha4           21.40      1.2351   25,169
+      off            22.19      1.2497   90,007
+
+  So attention learns more per token (16% better perplexity at the default
+  four multi-query heads) and costs more per second, and which of those two
+  facts decides your run depends on whether you are token-limited or
+  time-limited. On a corpus this size, on this GPU, at this core width, the
+  clock is the binding constraint and ``off`` still wins the wall-clock sweep
+  above — but the learning-per-token claim is the one that scales with
+  hardware, and it points the other way.
 
 Reference run — ``--mode train --minutes 25 --batch 256`` at the defaults
 above, 2,625,280 parameters: held-out **loss 2.2009, ppl 9.03,
@@ -193,6 +276,17 @@ class Cfg:
     hebb_res: str = "neuron"
     dropout: float = 0.0
     tie_embeddings: bool = False
+
+    # --- temporal attention (OdyssNet 3.0) ---
+    attn_heads: int = 0              # 0 = no attention at all
+    attn_kv_heads: int = 1           # 1 = multi-query; == heads is classic MHA
+    attn_head_dim: int = 0           # 0 = derive from neurons / heads
+    attn_window: int = 256           # cache entries visible to a query
+    attn_write: str = "token"        # "token" or "step"
+    attn_read: str = "step"          # "token" or "step"
+    attn_rope: bool = True
+    attn_qk_norm: bool = True
+    attn_dropout: float = 0.0
 
     # --- temporal depth ---
     pulse_mode: bool = True          # True injects a token's embedding only on
@@ -484,6 +578,36 @@ def vocab_advisory(cfg, vocab):
               f"grow --neurons to match, or use the default "
               f"--tokenizer bpe --vocab-size 2048 that the reference numbers "
               f"are defined against.")
+
+
+def attention_advisory(cfg, model):
+    """
+    What the attention branch costs, before it costs it.
+
+    Two numbers matter and neither is the parameter count. The KV cache the
+    backward pass has to keep is quadratic in *writes per optimizer step* —
+    that is the tokens in a truncated-BPTT window, not the run length — and
+    the query is issued once per thinking step, so `--think-gap` buys reads
+    rather than entries.
+    """
+    attn = getattr(model, "attn", None)
+    if attn is None:
+        return
+    params = sum(p.numel() for p in attn.parameters())
+    writes = cfg.chunk if cfg.attn_write == "token" else cfg.chunk * (cfg.think_gap + 1)
+    train_gb = attn.training_cache_bytes(cfg.batch, writes) / 1e9
+    print(f"👁️  attention {attn.heads}x{attn.head_dim} "
+          f"({attn.kv_heads} kv head{'s' if attn.kv_heads > 1 else ''}) | "
+          f"window {attn.window} | write per {cfg.attn_write} | "
+          f"{params/1e6:.2f}M params | "
+          f"KV kept for backward {train_gb:.2f} GB "
+          f"({writes} writes/step at batch {cfg.batch})")
+    if train_gb > 2.0:
+        smaller = max(1, int(cfg.batch * 2.0 / max(train_gb, 1e-9)))
+        print(f"⚠️  that KV term alone is {train_gb:.1f} GB. It grows with "
+              f"chunk² — try --batch {smaller}, a shorter --chunk, or "
+              f"--attn-kv-heads 1 (already the default) before blaming the "
+              f"core.")
 
 
 # --------------------------------------------------------------------------- #
@@ -808,6 +932,15 @@ def build(cfg, vocab_size):
         gate=list(cfg.gates),
         hebb_type=cfg.hebb_type,
         hebb_res=cfg.hebb_res,
+        attn_heads=cfg.attn_heads or None,
+        attn_kv_heads=cfg.attn_kv_heads,
+        attn_head_dim=cfg.attn_head_dim or None,
+        attn_window=cfg.attn_window,
+        attn_write=cfg.attn_write,
+        attn_read=cfg.attn_read,
+        attn_rope=cfg.attn_rope,
+        attn_qk_norm=cfg.attn_qk_norm,
+        attn_dropout=cfg.attn_dropout,
         dropout_rate=cfg.dropout,
         gradient_checkpointing=cfg.grad_ckpt,
         vocab_size=vocab_size,
@@ -829,14 +962,23 @@ def snapshot_state(model):
             buf = getattr(model, name, None)
             if buf is not None:
                 snap[name] = buf.clone()
+    # The KV cache is recurrent state too, and evaluation runs at a different
+    # batch size — without this, scoring a checkpoint would leave the training
+    # stream reading somebody else's history.
+    if getattr(model, "attn", None) is not None:
+        snap["attn"] = model.attn.snapshot()
     return snap
 
 
 def restore_state(model, snap):
     model.state = snap["state"]
     for name, buf in snap.items():
-        if name != "state":
-            getattr(model, name).copy_(buf)
+        if name == "state":
+            continue
+        if name == "attn":
+            model.attn.restore(buf)
+            continue
+        getattr(model, name).copy_(buf)
 
 
 # --------------------------------------------------------------------------- #
@@ -1091,7 +1233,9 @@ def _empty_cache(device):
 #: with the wrong one yields fluent-looking garbage and no error.
 ARCH_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
                "activation", "weight_init", "gates", "hebb_type", "hebb_res",
-               "tie_embeddings", "think_gap", "pulse_mode")
+               "tie_embeddings", "think_gap", "pulse_mode",
+               "attn_heads", "attn_kv_heads", "attn_head_dim", "attn_window",
+               "attn_write", "attn_read", "attn_rope", "attn_qk_norm")
 
 #: The subset `--resume` adopts: what `build()` allocates, plus which corpus is
 #: read. The rest cannot change the state dict, so pinning them would only take
@@ -1100,8 +1244,13 @@ ARCH_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
 #: parameter-free.
 #: `gates` is not in that group and is adopted: it adds or removes `core_gate`,
 #: `input_gate`, `output_gate` and `memory_gate`.
+#: The attention fields split the same way: heads / kv_heads / head_dim size
+#: the projections and qk_norm adds two RMSNorm gains, so all four are adopted;
+#: window, write mode and RoPE change no tensor and stay yours to re-choose on
+#: a resume.
 RESUME_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
-                 "gates", "hebb_type", "hebb_res", "tie_embeddings")
+                 "gates", "hebb_type", "hebb_res", "tie_embeddings",
+                 "attn_heads", "attn_kv_heads", "attn_head_dim", "attn_qk_norm")
 
 
 def adopt_saved_arch(cfg, path, fields):
@@ -1277,6 +1426,7 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
         if trainer.optimizer.param_groups else cfg.lr
     if not quiet:
         vocab_advisory(cfg, vocab_size)
+        attention_advisory(cfg, model)
         print(f"\n🧠 {model.get_num_params():,} trainable params | "
               f"{cfg.neurons} neurons | in {cfg.n_in} / out {cfg.n_out} | "
               f"gap {cfg.think_gap} | chunk {cfg.chunk} | batch {cfg.batch} | "
@@ -1321,8 +1471,11 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
                 # every batch and gives context length an exponential spread.
                 hit = torch.rand(model.state.shape[0], device=model.state.device) \
                     < (1.0 / cfg.cold_start_every)
-                if bool(hit.any()):
-                    model.state = model.state.masked_fill(hit.unsqueeze(1), 0.0)
+                # reset_rows, not a masked_fill on the state: with attention on,
+                # a row whose state is zeroed but whose KV history is intact is
+                # neither cold nor warm, and the cold start being simulated
+                # would not be one.
+                model.reset_rows(hit)
 
             loss = trainer.train_batch(
                 x, y.reshape(-1),
@@ -1462,6 +1615,18 @@ SWEEPS = {
         ("b512",  dict(batch=512)),
         ("b1024", dict(batch=1024)),
     ],
+    # Does letting the state query its own past pay for the step it costs?
+    # `off` is the 2.x architecture and the only arm without a KV cache; the
+    # rest hold everything else fixed, so a difference here is attention's.
+    "attn": [
+        ("off",        dict(attn_heads=0)),
+        ("mqa4",       dict(attn_heads=4)),
+        ("mha4",       dict(attn_heads=4, attn_kv_heads=4)),
+        ("window32",   dict(attn_heads=4, attn_window=32)),
+        ("no_rope",    dict(attn_heads=4, attn_rope=False)),
+        ("read_token",  dict(attn_heads=4, attn_read="token")),
+        ("write_step", dict(attn_heads=4, attn_write="step")),
+    ],
     # Does the truncated-BPTT window length matter more than depth?
     "window": [
         ("chunk16",  dict(chunk=16)),
@@ -1575,6 +1740,14 @@ def run_smoke(cfg, corpus):
         ("gated",     dict(gates=("none", "sigmoid", "sigmoid"))),
         ("grad_ckpt", dict(grad_ckpt=True, lr=1e-4)),
         ("gap0",      dict(think_gap=0)),
+        ("attn",      dict(attn_heads=4)),
+        # Everything the attention path can be configured into that changes
+        # its shapes or its bookkeeping: multi-head instead of multi-query, a
+        # window narrower than the chunk (so eviction actually happens mid-run),
+        # an entry per thinking step, and no rotary positions.
+        ("attn_mha",  dict(attn_heads=4, attn_kv_heads=4, attn_window=4,
+                           attn_write="step", attn_rope=False)),
+        ("attn_ckpt", dict(attn_heads=2, grad_ckpt=True, lr=1e-4)),
     ]
 
     ok = True
@@ -1595,26 +1768,30 @@ def run_smoke(cfg, corpus):
             print(f"  ❌ {name:<10} {type(e).__name__}: {e}")
 
     # Checkpoint round-trip: save, rebuild, reload, and require identical loss.
+    # Run once per architecture that changes the state dict — attention adds
+    # six tensors and a runtime cache, and a checkpoint that silently drops
+    # either is a corrupted resume rather than an error.
     print("\n  → checkpoint round-trip")
-    try:
-        c = replace(base, tag="smoke_ckpt", eval_every=0)
-        _, model1, _, _ = run_session(c, corpus, quiet=True, save=True)
-        validator = Validator(c, corpus[1], corpus[2])
-        v1 = validator.run(model1)["val_loss"]
-        del model1
+    for label, over in (("plain", dict()), ("attn", dict(attn_heads=4))):
+        try:
+            c = replace(base, tag=f"smoke_ckpt_{label}", eval_every=0, **over)
+            _, model1, _, _ = run_session(c, corpus, quiet=True, save=True)
+            validator = Validator(c, corpus[1], corpus[2])
+            v1 = validator.run(model1)["val_loss"]
+            del model1
 
-        model2, trainer2 = build(c, corpus[2].get_vocab_size())
-        load_checkpoint(model2, trainer2.optimizer, ckpt_paths(c)[0],
-                        device=c.device, strict=True)
-        v2 = validator.run(model2)["val_loss"]
-        if abs(v1 - v2) < 1e-4:
-            print(f"  ✅ round-trip  {v1:.6f} == {v2:.6f}")
-        else:
+            model2, trainer2 = build(c, corpus[2].get_vocab_size())
+            load_checkpoint(model2, trainer2.optimizer, ckpt_paths(c)[0],
+                            device=c.device, strict=True)
+            v2 = validator.run(model2)["val_loss"]
+            if abs(v1 - v2) < 1e-4:
+                print(f"  ✅ round-trip {label:<6} {v1:.6f} == {v2:.6f}")
+            else:
+                ok = False
+                print(f"  ❌ round-trip {label:<6} {v1:.6f} != {v2:.6f}")
+        except Exception as e:
             ok = False
-            print(f"  ❌ round-trip  {v1:.6f} != {v2:.6f}")
-    except Exception as e:
-        ok = False
-        print(f"  ❌ round-trip  {type(e).__name__}: {e}")
+            print(f"  ❌ round-trip {label:<6} {type(e).__name__}: {e}")
 
     # Learning check: the loss must actually move on a memorizable slice.
     print("\n  → learning check (200 steps on a tiny slice)")
@@ -1659,6 +1836,17 @@ examples:
   # compute-matched ablations; every arm gets the same wall-clock
   %(prog)s --mode sweep --sweep gap  --minutes 3 --batch 128
   %(prog)s --mode sweep --sweep coldstart --arms never,c32 --minutes 2
+
+  # temporal attention: every step queries the states before it
+  %(prog)s --mode train --tag attn --attn-heads 4 --batch 256 --minutes 25
+
+  # is it worth what it costs? 'off' is the 2.x architecture, same seed, same W
+  %(prog)s --mode sweep --sweep attn --minutes 3 --batch 128
+  %(prog)s --mode sweep --sweep attn --arms off,mqa4 --minutes 5
+
+  # a longer reach back, classic multi-head, an entry per thinking step
+  %(prog)s --mode train --tag attn_wide --attn-heads 8 --attn-kv-heads 8 \\
+      --attn-window 1024 --attn-write step --batch 64
 
   # score or sample a saved checkpoint (architecture is read from the file)
   %(prog)s --mode eval --tag base
@@ -1787,6 +1975,67 @@ def parse_args():
                    help="share embed/decoder weights; requires n_in == n_out")
     g.add_argument("--dropout", type=float, default=d.dropout, metavar="P",
                    help="dropout applied every thinking step (default: %(default)s)")
+
+    g = p.add_argument_group(
+        "attention",
+        "Temporal attention: at every thinking step the state queries a cache "
+        "of the states before it. Off unless --attn-heads is given, and its "
+        "output projection starts at zero, so switching it on changes nothing "
+        "until training decides otherwise.")
+    g.add_argument("--attn-heads", type=int, default=d.attn_heads, metavar="N",
+                   help="query heads; 0 disables attention entirely and costs "
+                        "nothing (default: %(default)s)")
+    g.add_argument("--attn-kv-heads", type=int, default=d.attn_kv_heads,
+                   metavar="N",
+                   help="key/value heads, shared across query heads (must "
+                        "divide --attn-heads). 1 is multi-query and is the "
+                        "default because the KV cache, not the projections, is "
+                        "what decides whether a batch fits; pass the same "
+                        "value as --attn-heads for classic multi-head. "
+                        "(default: %(default)s)")
+    g.add_argument("--attn-head-dim", type=int, default=d.attn_head_dim,
+                   metavar="N",
+                   help="width per head; 0 derives it from --neurons and "
+                        "--attn-heads, capped at 64 and rounded even. Pin it "
+                        "explicitly if you intend to transplant between cores "
+                        "of different sizes. (default: %(default)s)")
+    g.add_argument("--attn-window", type=int, default=d.attn_window, metavar="N",
+                   help="cache entries a query can see; the oldest are evicted "
+                        "first. Memory is linear in this and the batch. "
+                        "(default: %(default)s)")
+    g.add_argument("--attn-write", default=d.attn_write, choices=("token", "step"),
+                   help="'token' writes one cache entry per input token, so "
+                        "--think-gap buys extra reads rather than a longer "
+                        "cache; 'step' writes every thinking step, letting the "
+                        "model attend to its own intermediate steps at "
+                        "(gap+1)x the cache. Identical at --think-gap 0. "
+                        "(default: %(default)s)")
+    g.add_argument("--attn-read", default=d.attn_read, choices=("token", "step"),
+                   help="'step' queries the cache on every thinking step; "
+                        "'token' only on the step a token arrives, leaving the "
+                        "echo steps to run on state alone the way pulse "
+                        "injection does. The query, not the cache entry, is "
+                        "what --think-gap multiplies, so this is the cheaper "
+                        "of the two whenever the gap is above 0 — measured "
+                        "1.3x the throughput at --think-gap 1. Identical at "
+                        "--think-gap 0. (default: %(default)s)")
+    g.add_argument("--attn-rope", action=argparse.BooleanOptionalAction,
+                   default=d.attn_rope,
+                   help="rotary position embedding, applied to each key when "
+                        "it is written. Without it attention is a pure "
+                        "content lookup with no sense of when. "
+                        "(default: %(default)s)")
+    g.add_argument("--attn-qk-norm", action=argparse.BooleanOptionalAction,
+                   default=d.attn_qk_norm,
+                   help="RMSNorm on queries and keys before the dot product. "
+                        "The core is chaotic and its state norm is only "
+                        "bounded at the end of a step, so this is the first "
+                        "thing to keep when logits misbehave. "
+                        "(default: %(default)s)")
+    g.add_argument("--attn-dropout", type=float, default=d.attn_dropout,
+                   metavar="P",
+                   help="dropout on the attention weights during training "
+                        "(default: %(default)s)")
 
     g = p.add_argument_group("optimization")
     g.add_argument("--batch", type=int, default=d.batch, metavar="N",
@@ -1975,6 +2224,36 @@ def parse_args():
     if a.tie_embeddings and a.n_in != a.n_out:
         p.error(f"--tie-embeddings requires --n-in == --n-out, "
                 f"got {a.n_in} and {a.n_out}")
+
+    # Attention geometry, checked here for the same reason as everything else
+    # in this function: the library raises the same errors, but only after the
+    # corpus is tokenized and CUDA is up.
+    if a.attn_heads < 0:
+        p.error(f"--attn-heads must be >= 0 (0 disables), got {a.attn_heads}")
+    if a.attn_heads:
+        if a.attn_kv_heads < 1:
+            p.error(f"--attn-kv-heads must be >= 1, got {a.attn_kv_heads}")
+        if a.attn_heads % a.attn_kv_heads:
+            p.error(f"--attn-heads ({a.attn_heads}) must be divisible by "
+                    f"--attn-kv-heads ({a.attn_kv_heads})")
+        if a.attn_head_dim < 0:
+            p.error(f"--attn-head-dim must be >= 0 (0 = automatic), "
+                    f"got {a.attn_head_dim}")
+        if a.attn_head_dim and a.attn_rope and a.attn_head_dim % 2:
+            p.error(f"--attn-head-dim must be even when RoPE is on "
+                    f"(it rotates coordinate pairs), got {a.attn_head_dim}. "
+                    f"Use --no-attn-rope or an even width.")
+        if a.attn_window < 1:
+            p.error(f"--attn-window must be >= 1, got {a.attn_window}")
+        if not 0.0 <= a.attn_dropout < 1.0:
+            p.error(f"--attn-dropout must be in [0.0, 1.0), got {a.attn_dropout}")
+    elif any((a.attn_kv_heads != d.attn_kv_heads, a.attn_head_dim != d.attn_head_dim,
+              a.attn_window != d.attn_window, a.attn_write != d.attn_write,
+              a.attn_read != d.attn_read, a.attn_rope != d.attn_rope,
+              a.attn_qk_norm != d.attn_qk_norm,
+              a.attn_dropout != d.attn_dropout)):
+        print("ℹ️  attention flags ignored: --attn-heads is 0, so no attention "
+              "is built. Pass --attn-heads 4 to switch it on.")
     return a
 
 
@@ -1993,6 +2272,11 @@ def cfg_from_args(a):
         grad_persistence=a.grad_persistence,
         hebb_type=None if a.hebb == "none" else a.hebb,
         hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,
+        attn_heads=a.attn_heads, attn_kv_heads=a.attn_kv_heads,
+        attn_head_dim=a.attn_head_dim, attn_window=a.attn_window,
+        attn_write=a.attn_write, attn_read=a.attn_read,
+        attn_rope=a.attn_rope,
+        attn_qk_norm=a.attn_qk_norm, attn_dropout=a.attn_dropout,
         tie_embeddings=a.tie_embeddings, minutes=a.minutes, max_steps=a.max_steps,
         eval_every=a.eval_every, log_every=a.log_every,
         val_tokens=a.val_tokens, seed=a.seed, device=a.device, tag=a.tag,

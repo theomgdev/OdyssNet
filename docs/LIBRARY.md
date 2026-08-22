@@ -27,13 +27,22 @@ model = OdyssNet(
     pulse_mode=True, 
     dropout_rate=0.0, 
     device='cuda',
-    weight_init=['quiet', 'resonant', 'quiet', 'zero'],
+    weight_init=['quiet', 'resonant', 'quiet', 'zero', 'quiet'],
     activation=['none', 'tanh', 'tanh', 'none'],
     gate=None,           # Default resolves to ['none', 'none', 'identity']
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
     hebb_type=None,      # Toggle: None, 'temporal', 'spatial', or 'both'
     hebb_res='neuron',   # Plasticity resolution: 'global', 'neuron', or 'synapse'
+    attn_heads=None,     # Temporal attention: None/0 builds nothing at all
+    attn_kv_heads=1,     # Shared KV heads (1 = multi-query)
+    attn_head_dim=None,  # None derives it from num_neurons / attn_heads
+    attn_window=256,     # Cache entries a query can see
+    attn_write='token',  # 'token' (one entry per input token) or 'step'
+    attn_read='step',    # query every step, or only when a token arrives
+    attn_rope=True,      # Rotary positions, applied when an entry is written
+    attn_qk_norm=True,   # RMSNorm on queries and keys
+    attn_dropout=0.0,    # Dropout on the attention weights
     debug=False,         # NaN/Inf diagnosis — raises RuntimeError at the first offending operation
 )
 ```
@@ -47,7 +56,7 @@ model = OdyssNet(
     *   `False`: Input is applied continuously at every step (Stream).
 *   `dropout_rate` (float): Probability of synaptic failure during training (Biological simulation).
 *   `device` (str): 'cpu' or 'cuda'.
-*   `weight_init` (str or list[str]): Weight initialization strategy. Default is `['quiet', 'resonant', 'quiet', 'zero']` for [Encoder/Decoder, Core, Memory, Gates]. Single string values are expanded intelligently.
+*   `weight_init` (str or list[str]): Weight initialization strategy. Default is `['quiet', 'resonant', 'quiet', 'zero', 'quiet']` for [Encoder/Decoder, Core, Memory, Gates, Attention]. Shorter lists are filled from the defaults, so a four-entry list written before 3.0 still means what it meant. Single string values are expanded intelligently. The attention entry covers the query/key/value projections only — the output projection is always zero (see **Temporal Attention**).
     *   `'resonant'` **(Default for Core)**: Edge-of-Chaos initialization with spectral radius ρ(W) = 1.0. Uses bipolar Rademacher (±1) skeleton + small Gaussian noise (std=0.02) + spectral normalization. Ensures signals neither explode nor vanish while maintaining excitatory/inhibitory balance.
     *   `'orthogonal'`: Orthogonal matrix initialization. Excellent stability for large networks.
     *   `'xavier_uniform'` / `'xavier_normal'`: Xavier-scaled initialization. Good for small logic networks.
@@ -92,6 +101,15 @@ model = OdyssNet(
     *   `'none'`: Completely disables the gate branch (no learnable parameters).
     *   `'identity'`: Enables identity gating with learnable parameters (starts at identity function but can adapt).
     *   Gate parameters are initialized using the 4th entry in `weight_init` (default: `'zero'`).
+*   `attn_heads` (int or None): Number of query heads for **Temporal Attention**. Default `None` — no module, no parameters, no per-step cost. Any positive value switches attention on; see the **Temporal Attention** section for what it does and what it costs.
+*   `attn_kv_heads` (int): Key/value heads, shared across query heads (grouped-query attention). Must divide `attn_heads`. Default `1` (multi-query), because the KV cache — not the projections — is what decides whether a batch fits. Set it equal to `attn_heads` for classic multi-head.
+*   `attn_head_dim` (int or None): Width per head. Default `None` derives `min(64, num_neurons // attn_heads)`, rounded down to even. Pin it explicitly if you plan to `transplant_weights` between cores of different sizes, or the attention geometry moves with the neuron count.
+*   `attn_window` (int): How many cache entries a query can attend. Oldest evicted first. Default `256`.
+*   `attn_write` (str): `'token'` (default) writes one cache entry per input token — the state at the end of that token's thinking steps. `'step'` writes every thinking step, letting the model attend to its own intermediate steps at `(think_gap+1)x` the cache. Identical when there is one step per token.
+*   `attn_read` (str): `'step'` (default) issues a query on every thinking step. `'token'` queries only on the step a token arrives, leaving the echo steps to run on state alone exactly as `pulse_mode` does with the input itself. The query — not the cache entry — is what extra thinking steps multiply, so this is the cheaper of the two whenever there are several steps per token (~1.3x throughput at `think_gap=1`), and the two are identical at one step per token.
+*   `attn_rope` (bool): Rotary position embedding, applied to each key at write time against its absolute position. Default `True`. With it off, attention is a pure content lookup with no sense of *when*.
+*   `attn_qk_norm` (bool): RMSNorm on queries and keys before the dot product. Default `True` — the core is chaotic and its state norm is only bounded at the end of a step.
+*   `attn_dropout` (float): Dropout on the attention weights during training. Default `0.0`.
 *   `debug` (bool): Enables NaN/Inf diagnosis mode. Default is `False`. When `True`, every critical operation in the forward pass (linear recurrence, memory feedback, activation, StepNorm, Hebbian correlation and accumulation) is checked after execution; the first non-finite value raises `RuntimeError` with the operation name and step index. Also automatically calls `torch.autograd.set_detect_anomaly(True)` so backward-pass NaN is caught with a full stack trace. Disable after the root cause is found — overhead is zero when `False`.
 
 ### Vocabulary Decoupling
@@ -349,6 +367,111 @@ optimizer = ChaosGrad(model.parameters())
 *   `ChaosGrad.classify_params(model)`: returns the family param-group dicts (useful for custom policies).
 *   `optimizer.report_loss(loss)`: feeds the loss-spike brake. Automatic under `OdyssNetTrainer`.
 *   `optimizer.get_diagnostics(debug=False)`: `global_step`, `effective_lr`, and per-family stats in debug mode.
+
+---
+
+## Temporal Attention (`odyssnet.core.attention`)
+
+A transformer stacks attention *between layers*. OdyssNet has no layers, so attention goes along the axis it does have: **at every thinking step, the state queries a cache of the states that came before it.**
+
+```python
+model = OdyssNet(
+    num_neurons=1024,
+    input_ids=range(256), output_ids=range(256, 768),
+    vocab_size=2048, vocab_mode='discrete',
+    attn_heads=4,          # this is the whole switch
+)
+```
+
+Per step: `q_t = h_t W_q` queries the cache, and the result is added to the same pre-activation signal the recurrence, the memory feedback and the token embedding feed — then the step's activation and RMSNorm bound it like everything else. What the chaos core does by mixing everything through one matrix, attention does by naming what it wants.
+
+### Switching it on changes nothing
+
+`o_proj` is zero-initialized, and the module is constructed *after* the core is initialized so it draws no RNG the core would otherwise have used. Two models built with the same seed, one with `attn_heads=4` and one without, have **the same `W` and produce the same output** until training moves the attention weights. An ablation of attention is therefore a one-variable comparison, and no known-good initialization story (`resonant`, edge of chaos) has to be re-validated to try it.
+
+### …and widening it does not change the scale either
+
+The branch's output is divided by `sqrt(attn_heads · attn_head_dim)`, which is load-bearing rather than cosmetic. `o_proj` starts at zero and every optimizer here is Adam-family, so its magnitude after *k* steps is set by the step size rather than by the gradient — `|o_proj| ~ k·lr` whatever the width — and the contribution it produces would otherwise grow as `sqrt(heads · head_dim)`. A wide branch would then reach a destructive scale in the same number of steps a narrow one takes to reach a useful one.
+
+This was measured, not assumed. On multi-query associative recall at 128 neurons (2 key/value pairs, 400 steps, chance 6.2%), **before** the division:
+
+| | accuracy |
+|---|---|
+| no attention | 54.6% |
+| attention, `o_proj` frozen at zero | 54.1% |
+| **1 head × 16** | **54.6%** |
+| **4 heads × 64** | **5.9%** — collapsed to chance |
+
+The wide branch had drowned the recurrence it was meant to assist; the narrow one, reaching the same `|o_proj|` but a 4× smaller contribution, was harmless. After the division every width lands on the baseline (54.1–56.5%, including 8 heads × 64). It is the same reasoning behind GPT-2's `1/sqrt(2·n_layers)` residual-branch initialization, with steps in place of layers.
+
+### The KV cache
+
+The query length is always 1 — the core cannot be unrolled in parallel, since step *t*'s input is step *t-1*'s output — so a forward pass is a sequence of single-query attentions, exactly like a transformer's decode phase. Two consequences shape the implementation:
+
+*   **Nothing needs masking or reordering.** Every cached entry is strictly in the past, and softmax over keys is permutation-invariant. Position is carried by RoPE applied to each key *at write time*, so a rotated key stays correct wherever it later sits in the buffer.
+*   **The cache is never re-materialized.** The carried history and the current call's writes are attended as separate segments and joined at the *scores* — one row per key, the cheap end of the join — under a single softmax. The result is exactly what one softmax over the concatenated keys gives, while the keys themselves are copied nowhere, so the carry costs one saved tensor no matter how many steps read it.
+
+There are two representations, switched automatically:
+
+| | grad enabled (training) | grad disabled (eval, generation) |
+|---|---|---|
+| storage | frozen carry + differentiable pending list | preallocated ring, written in place |
+| per-step allocation | one concat of the pending segment | none |
+| why | in-place writes are illegal under autograd | a KV cache exists to not allocate |
+
+Both evict identically, and the test suite pins them to the same numbers (`tests/core/test_attention.py::TestKVCache::test_ring_and_segmented_paths_agree`). Incremental decoding matches a one-shot pass to float tolerance, so generation and scoring are the same computation.
+
+### What it costs
+
+| term | scaling | notes |
+|---|---|---|
+| parameters | `2·N·(H·D)` + `2·N·(H_kv·D)` | q/o are full-width, k/v shrink with `attn_kv_heads` |
+| cache (inference) | `2·B·H_kv·window·D` | `model.attn.cache_bytes(batch)` |
+| keys/values kept for backward | `2·B·H_kv·D·(window + n²/2)` | `n` = writes per forward call; `model.attn.training_cache_bytes(batch, n)` |
+
+That `n²` is in **writes per truncated-BPTT window**, not run length — 48 tokens per optimizer step, not the 226M tokens of a run. It is also why `attn_kv_heads` defaults to 1 and why `attn_write='token'` is the default: `think_gap` then buys extra *reads* of the cache rather than extra *entries* in it.
+
+**Time is the larger cost, and it is per step rather than per token.** Every operation on this path is tiny and there are many of them, so it is bound by kernel launches, not arithmetic — a larger batch rides along nearly free. Measured on an RTX 3060 Ti at 1024 neurons, `think_gap=1`, `chunk=48`, four heads, multi-query:
+
+| batch | attention off | on | on, `attn_read='token'` | cost |
+|---|---|---|---|---|
+| 64 | 46,160 tok/s | 13,265 | 17,408 | 3.48x |
+| 128 | 91,803 | 26,530 | 34,700 | 3.46x |
+| 256 | 162,014 | 52,838 | 68,687 | 3.07x |
+| 512 | 280,870 | 98,236 | 125,388 | 2.86x |
+
+One head costs the same as four (26,286 vs 27,175 tok/s at batch 128), which is the signature of that regime rather than a rounding error. Take the absolute numbers as this GPU's, not as constants: a consumer card measured immediately after 40 minutes of continuous load reported 55-166k tok/s for the same rows, so let it settle before comparing runs — the ratios held (2.9-4.5x) but the throughput did not. Two design decisions follow from it and are already applied: attention runs with **autocast disabled** (a query of length 1 gains nothing from fp16, while the implicit casts around it cost more than the math — worth 21% on its own), and segments are joined once at the scores instead of being merged afterwards. Together those took batch-128 attention from 18,376 to 27,175 tok/s.
+
+The knob that remains yours is `attn_read`: at `think_gap=1` querying once per token instead of once per step is worth ~1.3x, and at `think_gap=0` the two are the same thing.
+
+### Interaction with the rest of the library
+
+*   **Truncated BPTT**: what a call writes is differentiable inside it; what carries into the next call is a constant. `detach_state()` and the end of every `forward()` handle this, mirroring the hidden state exactly.
+*   **`model.reset_rows(mask)`**: zeroes the state *and* the attention history of selected batch rows. Staggered cold starts need both — a row whose state is zeroed but whose cache is intact is neither cold nor warm.
+*   **ChaosGrad**: the projections land in an `attention` family with weight decay; the QK-norm gains do not (they are not connective structure).
+*   **Neurogenesis**: q/k/v grow new input columns as small noise and `o_proj` grows new output rows as zeros — the same asymmetry the core uses — and the cache is dropped, since every entry in it was written by a projection of a different shape.
+*   **Checkpoints**: six tensors (`attn.{q,k,v,o}_proj.weight`, `attn.{q,k}_norm.weight`). The cache itself is runtime state and is never serialized, exactly like `model.state`.
+
+### Does it help? Measured, on TinyStories
+
+`examples/advanced/experiment_llm.py` exposes every knob on the command line and ships an ablation preset whose `off` arm is the 2.x architecture exactly — same seed, same `W`:
+
+```bash
+python -u experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128     # equal wall-clock
+python -u experiment_llm.py --mode sweep --sweep attn --max-steps 600 --batch 128 # equal tokens
+python -u experiment_llm.py --mode train --tag attn --attn-heads 4 --batch 256 --minutes 25
+```
+
+The two questions have opposite answers, and both are worth knowing. 1024 neurons, 2.6M parameters, vocab 2048, `think_gap=1`, batch 128, RTX 3060 Ti:
+
+| | equal tokens (600 steps, 3.69M tok) | equal wall-clock (2 min) |
+|---|---|---|
+| no attention | 22.19 ppl | **14.55 ppl** on 10.91M tokens |
+| 4 heads, multi-query | **18.57 ppl** | 20.11 ppl on 3.16M tokens |
+| 4 heads, `attn_read='token'` | 19.75 ppl | 17.75 ppl on 4.19M tokens |
+| 4 heads, multi-head | 21.40 ppl | 27.38 ppl on 3.06M tokens |
+
+**Attention learns more per token — 16% better perplexity at the default heads — and costs more per second.** Which fact decides a run depends on whether it is token-limited or time-limited. On a 2.6M-parameter core on a consumer GPU, the clock binds and the 2.x architecture still wins the wall-clock comparison; the per-token advantage is the half that scales with hardware and with core width, since the throughput cost is launch overhead rather than arithmetic. `0.0%` collapsed cold starts in every arm, attention on or off.
 
 ---
 

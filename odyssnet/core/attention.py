@@ -17,13 +17,12 @@ Two consequences shape every design decision in this file.
 **The query length is always 1.** The core cannot be unrolled in parallel — step
 t's input is step t-1's output — so a forward pass is a sequence of single-query
 attentions, exactly like a transformer's decode phase and never like its prefill.
-The score matrix is therefore `(B, H, 1, L)`, which is small; there is nothing
-for a fused flash kernel to save (`F.scaled_dot_product_attention` would tile
-away a matrix that is already one row). What *is* expensive is re-materializing
-K and V, which is why the cache below is split into segments that are attended
-separately and merged by their log-sum-exp, rather than concatenated into one
-tensor per step. The merge is exact — `test_segment_merge_matches_concat` pins
-it against a single-segment reference.
+The score matrix is therefore `(B, H, 1, L)`: one row per key, small enough that
+there is nothing for a fused flash kernel to tile away
+(`F.scaled_dot_product_attention` solves a problem this shape does not have).
+What *is* expensive is re-materializing K and V, so the cache is kept in
+segments that are never concatenated — only their score blocks are, which is
+the cheap end of the same join and keeps the result a single exact softmax.
 
 **Order does not matter, so the cache can be a ring.** Softmax over keys is
 permutation-invariant, and every entry in the cache is strictly in the past
@@ -37,12 +36,12 @@ Cache representations
 The cache exists in two forms and switches between them automatically:
 
 * **Ring** (grad disabled — inference, validation, generation): a preallocated
-  `(B, H_kv, window, D)` buffer written in place with `index_copy_`. Zero
+  `(B, H_kv, window, D)` buffer written in place through a narrowed view. Zero
   allocation per token, which is the whole point of a KV cache.
 * **Segmented** (grad enabled — training): in-place writes are illegal under
   autograd, so the carry from previous calls is held as one frozen tensor
   (saved once for backward, however many steps read it) and this call's writes
-  accumulate in a list. Reads attend the two segments separately and merge.
+  accumulate in a list. Reads join the two at the scores.
 
 The switch is one copy, at the first write after the mode changes.
 
@@ -54,6 +53,18 @@ growing segment costs `2·B·H_kv·D·(1+2+...+n)` for n writes in the call. Tha
 quadratic is in writes-per-forward (tokens per truncated-BPTT window), not in
 the run length, and it is why `kv_heads` defaults to 1 (multi-query): the KV
 cache, not the projections, is the term that decides whether a batch fits.
+
+Speed
+-----
+Every one of these operations is tiny and there are many of them per step, so
+this path is bound by kernel launches rather than by arithmetic — measured on
+an RTX 3060 Ti at 1024 neurons, attention runs 3.3x slower per token at batch
+128 and 2.8x at batch 512, because the overhead is per *step* and a larger
+batch amortizes it. Head count barely registers (4 heads cost the same as 1),
+which is the signature of that regime. Two consequences are baked in here:
+attention runs with autocast disabled (a query of length 1 has nothing to gain
+from fp16, and the implicit casts around it cost more than the math), and the
+segments are joined once at the scores rather than merged afterwards.
 """
 
 import math
@@ -93,8 +104,14 @@ class TemporalAttention(nn.Module):
             controlled at the end of a step, so unnormalized logits here are
             the first thing to blow up.
         dropout (float): Dropout on the attention weights during training.
-            Applied per segment. Default 0.0.
+            Applied to the joined score block. Default 0.0.
         device: Torch device for the projections.
+
+    The output projection is zero-initialized and the branch is divided by
+    `sqrt(heads * head_dim)`, so switching attention on — or widening it —
+    does not change the scale of what reaches the recurrence. See `out_scale`
+    below; that factor is the difference between attention helping and
+    attention drowning the core.
     """
 
     def __init__(self, num_neurons, heads=4, head_dim=None, kv_heads=1,
@@ -141,6 +158,21 @@ class TemporalAttention(nn.Module):
         self.rope_theta = float(rope_theta)
         self.scale = 1.0 / math.sqrt(head_dim)
 
+        # The branch's contribution is divided by the square root of its own
+        # width, and this is load-bearing rather than cosmetic. `o_proj` starts
+        # at zero and every optimizer in this library is Adam-family, so its
+        # magnitude after k steps is set by the step size, not by the gradient:
+        # |o_proj| ~ k*lr whatever the width. The contribution it produces
+        # would then grow as sqrt(heads*head_dim) — a wide branch reaches a
+        # destructive scale in the same number of steps a narrow one takes to
+        # reach a useful one. Measured on associative recall at 128 neurons:
+        # without this, 1 head x 16 matched the no-attention baseline (54%)
+        # while 4 heads x 64 collapsed to chance (6%), having drowned the
+        # recurrence it was supposed to assist. Dividing here makes the
+        # reachable contribution width-independent, which is the same reasoning
+        # behind GPT-2's 1/sqrt(2*n_layers) residual-branch init.
+        self.out_scale = 1.0 / math.sqrt(heads * head_dim)
+
         self.q_proj = nn.Linear(num_neurons, heads * head_dim, bias=False, device=device)
         self.k_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
         self.v_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
@@ -166,6 +198,7 @@ class TemporalAttention(nn.Module):
         else:
             self.inv_freq = None
 
+        self._rope_memo = None
         self._reset_cache_storage()
 
     # ------------------------------------------------------------------ #
@@ -221,7 +254,10 @@ class TemporalAttention(nn.Module):
         already past float32's resolution, and a silently wrong phase is worse
         than the microsecond this costs.
         """
-        cached = getattr(self, '_rope_memo', None)
+        # One-entry memo. Within a token group the query repeats its position
+        # for every echo step, and the write that follows takes the same index,
+        # so the hit rate is high enough to be worth the four lines.
+        cached = self._rope_memo
         if cached is not None and cached[0] == pos and cached[1] == dtype and cached[2] == device:
             return cached[3], cached[4]
         angle = self.inv_freq.to(torch.float64) * float(pos)
@@ -293,10 +329,22 @@ class TemporalAttention(nn.Module):
         Returns None when the cache is empty — the first step of a cold state
         has nothing to look back at, and a softmax over zero keys is NaN, not
         zero.
+
+        Segments are joined at the *scores*, not at the keys. One softmax runs
+        over the concatenation of `(B, H, g, L_i)` score blocks — which are
+        one row per key and therefore cheap to concatenate — and each block's
+        probabilities are matched back against their own values. The keys and
+        values themselves are never copied, which is the whole reason the
+        cache is kept in segments; scores are simply the smaller thing to
+        join, and joining them keeps the result a single exact softmax with no
+        rescaling step.
         """
         if not segments:
             return None
+        with torch.amp.autocast(device_type=h.device.type, enabled=False):
+            return self._attend(h.float(), segments, pos)
 
+    def _attend(self, h, segments, pos):
         b = h.shape[0]
         q = self.q_proj(h).view(b, self.kv_heads, self.group, self.head_dim)
         if self.q_norm is not None:
@@ -305,20 +353,23 @@ class TemporalAttention(nn.Module):
             q = self._apply_rope(q, pos)
         q = q * self.scale
 
-        out = None
-        lse = None
-        for k, v in segments:
-            # Grouped-query attention needs no key repetition: the `group`
-            # axis of the query plays the role a query-length axis would, and
-            # broadcasting over it is what sharing a KV head means.
-            scores = torch.matmul(q, k.transpose(-1, -2)).float()   # (B,H_kv,g,L)
-            seg_lse = torch.logsumexp(scores, dim=-1)               # (B,H_kv,g)
-            weights = self.attn_drop(torch.softmax(scores, dim=-1))
-            seg_out = torch.matmul(weights.to(v.dtype), v)          # (B,H_kv,g,D)
-            out, lse = _merge_segments(out, lse, seg_out.float(), seg_lse)
+        # Grouped-query attention needs no key repetition: the `group` axis of
+        # the query plays the role a query-length axis would, and broadcasting
+        # over it is what sharing a KV head means.
+        blocks = [torch.matmul(q, k.transpose(-1, -2)) for k, _ in segments]
+        scores = blocks[0] if len(blocks) == 1 else torch.cat(blocks, dim=-1)
+        weights = self.attn_drop(torch.softmax(scores, dim=-1))
 
-        out = out.to(q.dtype).reshape(b, self.heads * self.head_dim)
-        return self.o_proj(out)
+        out = None
+        start = 0
+        for block, (_, v) in zip(blocks, segments):
+            width = block.shape[-1]
+            part = torch.matmul(weights.narrow(-1, start, width), v)
+            out = part if out is None else out + part
+            start += width
+
+        out = self.o_proj(out.reshape(b, self.heads * self.head_dim))
+        return out * self.out_scale
 
     # ------------------------------------------------------------------ #
     # Write                                                               #
@@ -326,6 +377,11 @@ class TemporalAttention(nn.Module):
 
     def write(self, h):
         """Append one cache entry built from state `h`, shaped `(B, N)`."""
+        with torch.amp.autocast(device_type=h.device.type, enabled=False):
+            self._write(h.float())
+        self._writes += 1
+
+    def _write(self, h):
         b = h.shape[0]
         k = self.k_proj(h).view(b, self.kv_heads, 1, self.head_dim)
         v = self.v_proj(h).view(b, self.kv_heads, 1, self.head_dim)
@@ -333,12 +389,12 @@ class TemporalAttention(nn.Module):
             k = self.k_norm(k)
         if self.rope:
             k = self._apply_rope(k, self._writes)
+        k, v = k.contiguous(), v.contiguous()
 
         if torch.is_grad_enabled():
             self._write_segmented(k, v)
         else:
             self._write_ring(k, v)
-        self._writes += 1
 
     def _write_segmented(self, k, v):
         if self._ring_k is not None:
@@ -375,10 +431,13 @@ class TemporalAttention(nn.Module):
                 or self._ring_k.device != k.device):
             self._allocate_ring(k.shape[0], k.dtype, k.device)
 
-        idx = torch.tensor([self._ring_cursor], device=k.device)
-        self._ring_k.index_copy_(2, idx, k)
-        self._ring_v.index_copy_(2, idx, v)
-        self._ring_cursor = (self._ring_cursor + 1) % self.window
+        # A narrowed view, not index_copy_: an index tensor would mean a
+        # host-to-device copy on every single decoded token, which is exactly
+        # the per-token allocation a KV cache exists to avoid.
+        at = self._ring_cursor
+        self._ring_k.narrow(2, at, 1).copy_(k)
+        self._ring_v.narrow(2, at, 1).copy_(v)
+        self._ring_cursor = (at + 1) % self.window
         self._ring_fill = min(self._ring_fill + 1, self.window)
 
     def _allocate_ring(self, batch, dtype, device):
@@ -502,20 +561,3 @@ class TemporalAttention(nn.Module):
                 f"qk_norm={self.q_norm is not None}")
 
 
-def _merge_segments(out_a, lse_a, out_b, lse_b):
-    """
-    Combine two attention results as if they had been one softmax.
-
-    This is the online-softmax identity flash attention is built on, used here
-    for the opposite reason: not to tile a large score matrix, but to keep the
-    frozen half of the cache from being copied into a fresh tensor on every
-    single step.
-    """
-    if out_a is None:
-        return out_b, lse_b
-    m = torch.maximum(lse_a, lse_b)
-    wa = torch.exp(lse_a - m).unsqueeze(-1)
-    wb = torch.exp(lse_b - m).unsqueeze(-1)
-    denom = wa + wb
-    out = (out_a * wa + out_b * wb) / denom
-    return out, m + torch.log(denom.squeeze(-1))

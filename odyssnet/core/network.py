@@ -6,7 +6,7 @@ from typing import cast
 from .attention import TemporalAttention
 
 class OdyssNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', attn_heads=None, attn_head_dim=None, attn_kv_heads=1, attn_window=256, attn_rope=True, attn_qk_norm=True, attn_dropout=0.0, attn_write='token', debug=False):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', attn_heads=None, attn_head_dim=None, attn_kv_heads=1, attn_window=256, attn_rope=True, attn_qk_norm=True, attn_dropout=0.0, attn_write='token', attn_read='step', debug=False):
         super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -107,7 +107,10 @@ class OdyssNet(nn.Module):
 
         if attn_write not in ("token", "step"):
             raise ValueError(f"attn_write must be 'token' or 'step', got {attn_write!r}")
+        if attn_read not in ("token", "step"):
+            raise ValueError(f"attn_read must be 'token' or 'step', got {attn_read!r}")
         self.attn_write = attn_write
+        self.attn_read = attn_read
         self.attn = None
 
         self._init_weights()
@@ -132,15 +135,25 @@ class OdyssNet(nn.Module):
         # different W for the same seed — turning "with attention" vs "without"
         # into a two-variable comparison.
         #
-        # `attn_write` decides which steps leave a trace in the KV cache:
+        # Two knobs decide how often attention runs, and they are the ones that
+        # set its cost. Both are no-ops at one step per token.
+        #
+        # `attn_write` — which steps leave a trace in the KV cache:
         #   "token" — one entry per input token (the last echo step of each
         #             token group, the same state the output is read from), so
-        #             the cache is measured in tokens and `think_gap` does not
-        #             multiply its length.
-        #   "step"  — one entry per thinking step. Identical to "token" when
-        #             there is one step per token; above that it lets the model
-        #             attend to its own intermediate reasoning, at (gap+1)x the
+        #             the cache is measured in tokens and extra thinking steps
+        #             do not multiply its length.
+        #   "step"  — one entry per thinking step, letting the model attend to
+        #             its own intermediate reasoning at (steps-per-token)x the
         #             cache.
+        # `attn_read` — which steps issue a query:
+        #   "step"  — every one of them. The most expressive, and the reason
+        #             extra thinking steps cost more with attention than
+        #             without: the query, not the entry, is what repeats.
+        #   "token" — only the step a token arrives on, which is where a
+        #             lookup has something new to be about. The echo steps
+        #             then run on state alone, exactly as pulse_mode does with
+        #             the input itself.
         if attn_heads:
             self.attn = TemporalAttention(
                 num_neurons,
@@ -749,7 +762,7 @@ class OdyssNet(nn.Module):
                 cur_hebb_W   = None
                 cur_hebb_mem = None
 
-            if self.attn is not None:
+            if self.attn is not None and (self.attn_read == 'step' or t % ratio == 0):
                 attn_segments, attn_pos = self.attn.cache_view()
             else:
                 attn_segments, attn_pos = (), 0
