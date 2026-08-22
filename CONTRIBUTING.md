@@ -174,6 +174,7 @@ For tasks where **online synaptic plasticity** may help — e.g., fast-adaptatio
 *   **Switching it on is free until training says otherwise.** The plastic contribution is normalized and scaled by a zero-initialized gain (`hebb_norm`, +N parameters), and building the module draws no RNG, so a plastic model and a plain one at the same seed share a core and produce identical output at step zero. An ablation of `hebb_type` therefore has one variable in it.
 *   **Cost:** the live trace is per-example, `(B, N, N)`, and every step retains one for the backward pass — memory grows as `steps x B x N²`. That is the price of one-shot binding, and it is affordable exactly where plasticity earns its place: small cores with short rollouts. On a large core prefer `hebb_type=None`.
 *   **Compile it.** The step is bound by kernel launches, not arithmetic. Eager, `hebb_type='both'` adds 132% to the step; under `torch.compile` it adds 26%. If a run with plasticity feels like it is running an LLM, that is the reason and `torch.compile` is the fix.
+*   **Ablate it; do not assume it.** Measured on the record task: plasticity ahead with attention off (one seed), *behind* with four attention heads held fixed (two seeds, +0.02 loss and -0.5 points for +50 parameters), slightly behind on single-injection classification. Attention appears to do the same job better where both apply. The zero-initialized gain exists so that `hebb_type=None` is an exact control — use it.
 
 ```python
 # NLP / Logic / Reasoning — synapse-level plasticity for dynamic variable binding
