@@ -58,6 +58,8 @@ class Neurogenesis:
         old_s_hebb_factor = _get_hebb('s_hebb_factor')
         old_s_hebb_decay  = _get_hebb('s_hebb_decay')
         
+        old_hebb_norm_w = model.hebb_norm.weight if getattr(model, 'hebb_norm', None) is not None else None
+
         old_t_hebb_state_W   = _get_hebb('t_hebb_state_W').clone() if _get_hebb('t_hebb_state_W') is not None else None
         old_t_hebb_state_mem = _get_hebb('t_hebb_state_mem').clone() if _get_hebb('t_hebb_state_mem') is not None else None
         old_s_hebb_state_W   = _get_hebb('s_hebb_state_W').clone() if _get_hebb('s_hebb_state_W') is not None else None
@@ -247,6 +249,20 @@ class Neurogenesis:
                     return nn.Parameter(old_param.data.clone())
                 return nn.Parameter(new_p)
 
+            # The plastic gain and the off-diagonal mask are neuron-shaped and
+            # move with the core. New neurons start at gain zero, which is
+            # where every neuron starts: they receive no plastic drive until
+            # training asks for it.
+            if old_hebb_norm_w is not None:
+                new_hebb_norm = nn.RMSNorm(new_n, eps=model.hebb_norm.eps).to(device)
+                with torch.no_grad():
+                    new_hebb_norm.weight.zero_()
+                    new_hebb_norm.weight[:old_n] = old_hebb_norm_w.data
+                model.hebb_norm = new_hebb_norm
+                model.register_buffer('_offdiag',
+                                      (1.0 - torch.eye(new_n, device=device)) / new_n,
+                                      persistent=False)
+
             if old_t_hebb_factor is not None:
                 model.t_hebb_factor = _resize_param(old_t_hebb_factor, -3.0)
                 model.t_hebb_decay  = _resize_param(old_t_hebb_decay, 2.2)
@@ -386,6 +402,8 @@ class Neurogenesis:
                     if isinstance(old_p, nn.Parameter) and isinstance(new_p, nn.Parameter):
                         transfer_state(old_p, new_p, is_matrix=(hebb_res == "synapse"))
                 
+                if old_hebb_norm_w is not None and getattr(model, 'hebb_norm', None) is not None:
+                    transfer_state(old_hebb_norm_w, model.hebb_norm.weight, is_matrix=False)
                 _transfer_hebb(old_t_hebb_factor, 't_hebb_factor')
                 _transfer_hebb(old_t_hebb_decay, 't_hebb_decay')
                 _transfer_hebb(old_s_hebb_factor, 's_hebb_factor')

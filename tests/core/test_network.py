@@ -695,3 +695,88 @@ class TestHebbianTypes:
         assert model.t_hebb_factor.grad is not None
         assert model.t_hebb_factor.grad.shape == (4,)
         assert torch.isfinite(model.t_hebb_factor.grad).all()
+
+
+# ===========================================================================
+# Hebbian repair: the properties the 3.1 plasticity rewrite has to hold
+# ===========================================================================
+
+class TestHebbianRepair:
+    def test_plasticity_starts_as_an_exact_no_op(self):
+        """The gain is zero-initialized, so switching plasticity on changes
+        nothing until training decides otherwise. That is what makes hebb_type
+        an ablation with one variable in it — the same property temporal
+        attention gets from its zero-init output projection. Construction must
+        also draw no randomness, or the two arms would not share a core."""
+        torch.manual_seed(0)
+        plain = _make(6, hebb_type=None)
+        torch.manual_seed(0)
+        plastic = _make(6, hebb_type="both", hebb_res="neuron")
+        assert torch.equal(plain.W, plastic.W)
+
+        x = torch.randn(3, 6)
+        a, _ = plain(x, steps=5)
+        b, _ = plastic(x, steps=5)
+        assert torch.allclose(a, b, atol=1e-6)
+
+    def test_the_gain_is_trainable(self):
+        """The old implementation applied the strength factor twice — once
+        accumulating into the trace, once applying it — so the effective gain
+        was sigmoid(logit)**2 and nothing could move it. The normalized gain is
+        a straight multiplier and gets a real gradient."""
+        model = _make(6, hebb_type="both", hebb_res="neuron")
+        model.train()
+        out, _ = model(torch.randn(3, 6), steps=5)
+        out.pow(2).sum().backward()
+        assert model.hebb_norm.weight.grad is not None
+        assert model.hebb_norm.weight.grad.abs().sum().item() > 0.0
+
+    def test_a_batch_is_the_examples_run_one_at_a_time(self):
+        """The trace carries a batch dimension: every example writes its own
+        associations. Sharing one trace across a batch averages them away, and
+        a batched forward then computes a different function than the same
+        examples run singly — training would never exercise the mechanism
+        inference uses."""
+        model = _make(6, hebb_type="both", hebb_res="neuron")
+        with torch.no_grad():
+            model.hebb_norm.weight.fill_(1.0)   # gain off its zero start
+        x = torch.randn(4, 6)
+
+        model.reset_state()
+        batched, _ = model(x, steps=6)
+
+        singles = []
+        for i in range(x.shape[0]):
+            model.reset_state()
+            out, _ = model(x[i:i + 1], steps=6)
+            singles.append(out)
+        assert torch.allclose(batched, torch.cat(singles), atol=1e-5)
+
+    def test_the_two_mechanisms_stay_distinct(self):
+        """Temporal and spatial share one stacked code path now; the path axis
+        must still keep them apart. Temporal pairs the previous state with the
+        current one, spatial pairs the current state with itself, so their
+        traces cannot come out equal."""
+        model = _make(6, hebb_type="both", hebb_res="neuron")
+        model(torch.randn(3, 6), steps=6)
+        assert not torch.allclose(model.t_hebb_state_W, model.s_hebb_state_W)
+        assert model.t_hebb_state_W.abs().sum().item() > 0.0
+        assert model.s_hebb_state_W.abs().sum().item() > 0.0
+
+    @pytest.mark.parametrize("res", ["global", "neuron", "synapse"])
+    @pytest.mark.parametrize("htype", ["temporal", "spatial", "both"])
+    def test_every_type_and_resolution_trains(self, res, htype):
+        """The stacked path axis carries one entry for a single mechanism and
+        two for 'both', and each resolution broadcasts differently against it."""
+        model = _make(5, hebb_type=htype, hebb_res=res)
+        model.train()
+        with torch.no_grad():
+            model.hebb_norm.weight.fill_(0.5)
+        out, _ = model(torch.randn(2, 5), steps=4)
+        assert torch.isfinite(out).all()
+        out.pow(2).sum().backward()
+        for name in ("t_hebb_factor", "s_hebb_factor", "t_hebb_decay", "s_hebb_decay"):
+            param = getattr(model, name)
+            if param is not None:
+                assert param.grad is not None
+                assert torch.isfinite(param.grad).all()

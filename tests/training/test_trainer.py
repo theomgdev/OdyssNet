@@ -558,15 +558,30 @@ class TestTrainerHelpers:
     # --- _extract_outputs: continuous mode -----------------------------------
 
     def test_extract_outputs_continuous_single_step(self):
-        """Continuous mode, full_sequence=False: slice output_ids from final_state."""
+        """Continuous mode, full_sequence=False: the last step of all_states.
+
+        Deliberately not `final_state`, which is the raw hidden state: only
+        `all_states` carries `output_scale`, so reading the other one left
+        that parameter with exactly zero gradient on every
+        classification-shaped task.
+        """
         model = OdyssNet(num_neurons=5, input_ids=[0, 1], output_ids=[3, 4], device="cpu")
         t = _trainer(model)
         batch, n = 4, 5
-        final_state = torch.randn(batch, n)
-        all_states  = torch.randn(batch, 3, n)  # not used in this branch
+        final_state = torch.randn(batch, n)   # not used in this branch
+        all_states  = torch.randn(batch, 3, n)
         out = t._extract_outputs(all_states, final_state, full_sequence=False)
         assert out.shape == (batch, 2)
-        assert torch.equal(out, final_state[:, [3, 4]])
+        assert torch.equal(out, all_states[:, -1, [3, 4]])
+
+    def test_output_scale_receives_gradient_on_the_last_step_path(self):
+        """The regression the branch above exists to prevent."""
+        model = OdyssNet(num_neurons=5, input_ids=[0, 1], output_ids=[3, 4], device="cpu")
+        t = _trainer(model)
+        before = model.output_scale.detach().clone()
+        for _ in range(3):
+            t.train_batch(torch.randn(4, 2), torch.randn(4, 2), thinking_steps=3)
+        assert not torch.equal(before, model.output_scale.detach())
 
     def test_extract_outputs_continuous_full_sequence(self):
         """Continuous mode, full_sequence=True: slice output_ids from all_states."""

@@ -119,10 +119,14 @@ class OdyssNetTrainer:
             return all_states[:, -1, :]
 
         # Continuous activity mode: slice from explicit output neuron indices.
+        # Both branches read `all_states`, which carries `output_scale`; the
+        # last-step branch used to read the raw `final_state` instead, so on
+        # every classification-shaped task `output_scale` received exactly
+        # zero gradient and sat at its initialization for the whole run.
         output_indices = self.model.output_ids
         if full_sequence:
             return all_states[:, :, output_indices]
-        return final_state[:, output_indices]
+        return all_states[:, -1, output_indices]
 
 
     def state_dict(self):

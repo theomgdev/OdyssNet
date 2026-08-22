@@ -199,6 +199,25 @@ class OdyssNet(nn.Module):
         self.hebb_type = hebb_type
         self.hebb_res = hebb_res
 
+        # The plastic contribution is normalized and passed through a
+        # zero-initialized gain before it reaches W. Three things follow, and
+        # each of them was a defect before:
+        #   1. The strength factor used to multiply twice — once accumulating
+        #      into the trace, once applying it — so the effective gain was
+        #      sigmoid(logit)**2, roughly 32x below the measured optimum while
+        #      the logit claimed otherwise. Normalizing removes the scale from
+        #      the application, so the factor shapes *which* synapses are
+        #      plastic and the gain decides *how much*.
+        #   2. Nothing could reach the plasticity controls with a gradient
+        #      worth the name; the factor logits sat on their initialization
+        #      forever. The gain is a straight multiplier on the contribution,
+        #      so it gets one.
+        #   3. Turning plasticity on used to change the network immediately.
+        #      At gain zero it does not change it at all, which makes
+        #      hebb_type an ablation with one variable in it — the same
+        #      property temporal attention gets from its zero-init o_proj.
+        self.hebb_norm = None
+
         self.t_hebb_factor = None
         self.t_hebb_decay  = None
         self.s_hebb_factor = None
@@ -226,6 +245,17 @@ class OdyssNet(nn.Module):
                 self.s_hebb_factor, self.s_hebb_decay = _create_hebb_params()
                 self.register_buffer('s_hebb_state_W',   torch.zeros(num_neurons, num_neurons, device=device))
                 self.register_buffer('s_hebb_state_mem', torch.zeros(num_neurons, device=device))
+
+            self.hebb_norm = nn.RMSNorm(num_neurons).to(device)
+            nn.init.zeros_(self.hebb_norm.weight)
+            # Off-diagonal mask, pre-divided by the fan-in: self-correlation
+            # is memory_feedback's job and W's diagonal is structurally zero,
+            # and every correlation is scaled by 1/N anyway, so the two ride
+            # in one buffer and one multiply. A buffer rather than
+            # fill_diagonal_, because the correlation is differentiable now.
+            self.register_buffer('_offdiag',
+                                 (1.0 - torch.eye(num_neurons, device=device)) / num_neurons,
+                                 persistent=False)
 
         # Bias Vector
         self.B = nn.Parameter(torch.zeros(num_neurons, device=device))
@@ -527,8 +557,13 @@ class OdyssNet(nn.Module):
             # attn_segments:    KV cache view, passed in rather than read from
             #                   self.attn so gradient checkpointing recomputes
             #                   this step against the cache it originally saw.
-            W_eff = self.W if hebb_W_contrib is None else self.W + hebb_W_contrib
-            signal = h_t_in @ W_eff + self.B
+            if hebb_W_contrib is None:
+                signal = h_t_in @ self.W + self.B
+            else:
+                # (B, N, N): one effective matrix per example, so the batched
+                # product is a bmm rather than a shared matmul.
+                W_eff = self.W + hebb_W_contrib
+                signal = torch.bmm(h_t_in.unsqueeze(1), W_eff).squeeze(1) + self.B
             if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
 
             if self.core_gate_act is not None and self.core_gate is not None:
@@ -598,16 +633,67 @@ class OdyssNet(nn.Module):
                 max_outputs = x_input.shape[1]
 
         if self.hebb_type is not None:
+            # The live trace carries a batch dimension: every example writes
+            # its own associations. Without it a batch shares one trace, the
+            # per-example associations average away, and a batched forward
+            # computes a different function than the same examples run one at
+            # a time (measured: 9.5e-3 against 2.98e-7) — training then never
+            # exercises the mechanism inference uses, which is why plasticity
+            # could not do one-shot binding at all.
+            #
+            # The *persistent* buffer stays (N, N) and holds the batch mean, so
+            # checkpoints, neurogenesis padding and weight transplants are
+            # untouched, and the carry into the next call is the shared part of
+            # what the batch learned.
+            #
+            # The cost is real and worth stating plainly: the live trace is
+            # `(B, N, N)` and every step retains one for the backward pass, so
+            # memory grows as steps x B x N^2. That is affordable exactly where
+            # plasticity earns its place — small cores with short rollouts —
+            # and unaffordable on a large core, where it was measured to
+            # contribute nothing anyway. Run big cores with hebb_type=None.
+            #
+            # Temporal and spatial differ in one thing only: which state the
+            # correlation pairs with. Everything downstream is the same
+            # arithmetic on the same shapes, so the paths are stacked on a
+            # leading axis and 'both' costs one set of kernels instead of two.
+            # That is the axis worth optimizing here — profiled on the record
+            # config (10 neurons, batch 32, 16 steps) a step issues thousands
+            # of kernel launches for 20 ms of GPU work, so the launch count is
+            # the runtime, not the arithmetic in any one of them.
+            paths = []
             if self.hebb_type in ("temporal", "both"):
-                t_hebb_lr  = torch.sigmoid(self.t_hebb_factor)
-                t_hebb_ret = torch.sigmoid(self.t_hebb_decay)
-                local_t_hebb_W   = self.t_hebb_state_W.detach().clone()
-                local_t_hebb_mem = self.t_hebb_state_mem.detach().clone()
+                paths.append((self.t_hebb_factor, self.t_hebb_decay,
+                              self.t_hebb_state_W, self.t_hebb_state_mem))
             if self.hebb_type in ("spatial", "both"):
-                s_hebb_lr  = torch.sigmoid(self.s_hebb_factor)
-                s_hebb_ret = torch.sigmoid(self.s_hebb_decay)
-                local_s_hebb_W   = self.s_hebb_state_W.detach().clone()
-                local_s_hebb_mem = self.s_hebb_state_mem.detach().clone()
+                paths.append((self.s_hebb_factor, self.s_hebb_decay,
+                              self.s_hebb_state_W, self.s_hebb_state_mem))
+            n_paths = len(paths)
+
+            hebb_lr  = torch.sigmoid(torch.stack([p[0] for p in paths]))
+            hebb_ret = torch.sigmoid(torch.stack([p[1] for p in paths]))
+            local_hebb_W = (torch.stack([p[2] for p in paths]).detach()
+                            .unsqueeze(1).expand(-1, batch_sz, -1, -1).clone())
+            local_hebb_mem = (torch.stack([p[3] for p in paths]).detach()
+                              .unsqueeze(1).expand(-1, batch_sz, -1).clone())
+
+            # Broadcast shapes resolved once rather than per step. 'neuron'
+            # indexes W's presynaptic row; 'synapse' carries a factor per
+            # connection and hands its diagonal to the self-connections that
+            # memory_feedback owns.
+            n = self.num_neurons
+            if self.hebb_res == "global":
+                w_view, m_view = (n_paths, 1, 1, 1), (n_paths, 1, 1)
+                lr_m, ret_m = hebb_lr, hebb_ret
+            elif self.hebb_res == "neuron":
+                w_view, m_view = (n_paths, 1, n, 1), (n_paths, 1, n)
+                lr_m, ret_m = hebb_lr, hebb_ret
+            else:  # "synapse"
+                w_view, m_view = (n_paths, 1, n, n), (n_paths, 1, n)
+                lr_m  = hebb_lr.diagonal(dim1=-2, dim2=-1)
+                ret_m = hebb_ret.diagonal(dim1=-2, dim2=-1)
+            hebb_lr_W,  hebb_ret_W  = hebb_lr.reshape(w_view), hebb_ret.reshape(w_view)
+            hebb_lr_m,  hebb_ret_m  = lr_m.reshape(m_view),    ret_m.reshape(m_view)
 
         # Precompute Dense Input/Output Scale Vectors
         input_scale_vec = torch.ones(self.num_neurons, dtype=h_t.dtype, device=self.device)
@@ -730,32 +816,21 @@ class OdyssNet(nn.Module):
 
             if self.hebb_type is not None:
                 h_prev = h_t
-                cur_hebb_W = None
-                cur_hebb_mem = None
+                # The factor decides *which* synapses are plastic; the summed
+                # paths are what the recurrence sees, so they take one
+                # normalization and one learnable gain between them.
+                cur_hebb_W   = (hebb_lr_W * local_hebb_W).sum(0)
+                cur_hebb_mem = (hebb_lr_m * local_hebb_mem).sum(0)
+                # RMSNorm rescales each row of the last dimension on its own,
+                # so norming W's rows and the memory vector in a single call is
+                # arithmetically the same as norming them apart — and it is one
+                # kernel chain instead of two.
+                normed = self.hebb_norm(
+                    torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
+                cur_hebb_W   = normed[:, :-1]
+                cur_hebb_mem = normed[:, -1]
 
-                def _compute_hebb_contrib(hebb_lr, local_W, local_mem):
-                    if self.hebb_res == "neuron":
-                        return hebb_lr.unsqueeze(1) * local_W, hebb_lr * local_mem
-                    elif self.hebb_res == "synapse":
-                        return hebb_lr * local_W, hebb_lr.diagonal() * local_mem
-                    else:  # "global"
-                        return hebb_lr * local_W, hebb_lr * local_mem
-
-                if self.hebb_type in ("temporal", "both"):
-                    cur_t_hebb_W, cur_t_hebb_mem = _compute_hebb_contrib(t_hebb_lr, local_t_hebb_W, local_t_hebb_mem)
-                    cur_hebb_W = cur_t_hebb_W
-                    cur_hebb_mem = cur_t_hebb_mem
-                
-                if self.hebb_type in ("spatial", "both"):
-                    cur_s_hebb_W, cur_s_hebb_mem = _compute_hebb_contrib(s_hebb_lr, local_s_hebb_W, local_s_hebb_mem)
-                    if cur_hebb_W is None:
-                        cur_hebb_W = cur_s_hebb_W
-                        cur_hebb_mem = cur_s_hebb_mem
-                    else:
-                        cur_hebb_W = cur_hebb_W + cur_s_hebb_W
-                        cur_hebb_mem = cur_hebb_mem + cur_s_hebb_mem
-
-                if self.debug and cur_hebb_W is not None:
+                if self.debug:
                     self._dbg(cur_hebb_W,   f"cur_hebb_W (step {t})")
                     self._dbg(cur_hebb_mem, f"cur_hebb_mem (step {t})")
             else:
@@ -792,55 +867,56 @@ class OdyssNet(nn.Module):
                 self.attn.write(h_t)
 
             if self.hebb_type is not None:
-                batch_sz = h_t.size(0)
                 # AMP autocast overrides explicit .float() casts for matmul-family ops
                 # (einsum included), forcing them back to float16. Disable autocast here
                 # so the correlation is always accumulated in float32.
                 with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
-                    h_t_f    = h_t.detach().float()
-                    h_prev_f = h_prev.detach().float()
+                    # Not detached, and that is the point. Two stop-gradients
+                    # used to sit on this path: one hiding the correlation's
+                    # dependence on the state, one truncating the trace's own
+                    # history. Only the second costs memory, and only the
+                    # first costs capability — leaving the correlation
+                    # attached while the trace history stays truncated at one
+                    # step recovers three quarters of the gap for the same
+                    # bytes (0.8321 -> 0.9550 on episodic recall). The
+                    # truncation is still there: `local_*.detach()` below.
+                    h_t_f    = h_t.float()
+                    h_prev_f = h_prev.float()
+
+                    # Novelty gate. Co-activation across an already-strong
+                    # synapse is tautological — the neuron fired because the
+                    # weight drove it, not because the pattern is new — so the
+                    # correlation is damped where W is large and left alone
+                    # where it is small. Parameter-free and detached: it
+                    # shapes plasticity without opening a second-order path
+                    # through W. `_offdiag` already carries the 1/N scale and
+                    # the diagonal mask, so the whole gate is one divide.
+                    w_eff = self.W + cur_hebb_W
+                    mem_eff = self.memory_feedback + cur_hebb_mem
+                    gate_W   = self._offdiag / (1.0 + w_eff.detach().float().abs())
+                    gate_mem = 1.0 / (1.0 + mem_eff.detach().float().abs())
                     if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
                     if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
-                    
-                    if self.hebb_type in ("temporal", "both"):
-                        corr_W_t   = torch.einsum('bj,bi->ji', h_prev_f, h_t_f) / (batch_sz * self.num_neurons)
-                        corr_mem_t = (h_t_f * h_prev_f).mean(dim=0)
-                        corr_W_t.fill_diagonal_(0.0)      # self-correlations go to hebb_state_mem
-                        if self.debug: self._dbg(corr_W_t,   f"corr_W_t (step {t})")
-                        if self.debug: self._dbg(corr_mem_t, f"corr_mem_t (step {t})")
-                        
-                        if self.hebb_res == "neuron":
-                            local_t_hebb_W   = t_hebb_ret.unsqueeze(1) * local_t_hebb_W.detach()   + t_hebb_lr.unsqueeze(1) * corr_W_t
-                            local_t_hebb_mem = t_hebb_ret * local_t_hebb_mem.detach() + t_hebb_lr * corr_mem_t
-                        elif self.hebb_res == "synapse":
-                            local_t_hebb_W   = t_hebb_ret * local_t_hebb_W.detach()   + t_hebb_lr * corr_W_t
-                            local_t_hebb_mem = t_hebb_ret.diagonal() * local_t_hebb_mem.detach() + t_hebb_lr.diagonal() * corr_mem_t
-                        else:  # "global"
-                            local_t_hebb_W   = t_hebb_ret * local_t_hebb_W.detach()   + t_hebb_lr * corr_W_t
-                            local_t_hebb_mem = t_hebb_ret * local_t_hebb_mem.detach() + t_hebb_lr * corr_mem_t
-                            
-                        if self.debug: self._dbg(local_t_hebb_W,   f"local_t_hebb_W (step {t})")
-                        if self.debug: self._dbg(local_t_hebb_mem, f"local_t_hebb_mem (step {t})")
 
-                    if self.hebb_type in ("spatial", "both"):
-                        corr_W_s   = torch.einsum('bj,bi->ji', h_t_f, h_t_f) / (batch_sz * self.num_neurons)
-                        corr_mem_s = (h_t_f * h_t_f).mean(dim=0)
-                        corr_W_s.fill_diagonal_(0.0)
-                        if self.debug: self._dbg(corr_W_s,   f"corr_W_s (step {t})")
-                        if self.debug: self._dbg(corr_mem_s, f"corr_mem_s (step {t})")
-                        
-                        if self.hebb_res == "neuron":
-                            local_s_hebb_W   = s_hebb_ret.unsqueeze(1) * local_s_hebb_W.detach()   + s_hebb_lr.unsqueeze(1) * corr_W_s
-                            local_s_hebb_mem = s_hebb_ret * local_s_hebb_mem.detach() + s_hebb_lr * corr_mem_s
-                        elif self.hebb_res == "synapse":
-                            local_s_hebb_W   = s_hebb_ret * local_s_hebb_W.detach()   + s_hebb_lr * corr_W_s
-                            local_s_hebb_mem = s_hebb_ret.diagonal() * local_s_hebb_mem.detach() + s_hebb_lr.diagonal() * corr_mem_s
-                        else:  # "global"
-                            local_s_hebb_W   = s_hebb_ret * local_s_hebb_W.detach()   + s_hebb_lr * corr_W_s
-                            local_s_hebb_mem = s_hebb_ret * local_s_hebb_mem.detach() + s_hebb_lr * corr_mem_s
-                            
-                        if self.debug: self._dbg(local_s_hebb_W,   f"local_s_hebb_W (step {t})")
-                        if self.debug: self._dbg(local_s_hebb_mem, f"local_s_hebb_mem (step {t})")
+                    # The only difference between the paths: temporal pairs the
+                    # previous state with the current one, spatial pairs the
+                    # current state with itself.
+                    if self.hebb_type == "temporal":
+                        src = h_prev_f.unsqueeze(0)
+                    elif self.hebb_type == "spatial":
+                        src = h_t_f.unsqueeze(0)
+                    else:
+                        src = torch.stack((h_prev_f, h_t_f))
+
+                    corr_W   = gate_W * torch.einsum('pbj,bi->pbji', src, h_t_f)
+                    corr_mem = gate_mem * (src * h_t_f)
+                    if self.debug: self._dbg(corr_W,   f"corr_W (step {t})")
+                    if self.debug: self._dbg(corr_mem, f"corr_mem (step {t})")
+
+                    local_hebb_W   = hebb_ret_W * local_hebb_W.detach()   + hebb_lr_W * corr_W
+                    local_hebb_mem = hebb_ret_m * local_hebb_mem.detach() + hebb_lr_m * corr_mem
+                    if self.debug: self._dbg(local_hebb_W,   f"local_hebb_W (step {t})")
+                    if self.debug: self._dbg(local_hebb_mem, f"local_hebb_mem (step {t})")
 
             # Smart Output Collection
             if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:
@@ -854,12 +930,19 @@ class OdyssNet(nn.Module):
                 # a constant. Truncation to `attn_window` happens here.
                 self.attn.detach_cache()
             if self.hebb_type is not None:
+                # Back out of the stacked path axis into the per-mechanism
+                # buffers, taking the batch mean: what survives the call is the
+                # part of the trace the whole batch agreed on.
+                carry_W   = local_hebb_W.detach().mean(dim=1)
+                carry_mem = local_hebb_mem.detach().mean(dim=1)
+                path = 0
                 if self.hebb_type in ("temporal", "both"):
-                    self.t_hebb_state_W.copy_(local_t_hebb_W.detach())
-                    self.t_hebb_state_mem.copy_(local_t_hebb_mem.detach())
+                    self.t_hebb_state_W.copy_(carry_W[path])
+                    self.t_hebb_state_mem.copy_(carry_mem[path])
+                    path += 1
                 if self.hebb_type in ("spatial", "both"):
-                    self.s_hebb_state_W.copy_(local_s_hebb_W.detach())
-                    self.s_hebb_state_mem.copy_(local_s_hebb_mem.detach())
+                    self.s_hebb_state_W.copy_(carry_W[path])
+                    self.s_hebb_state_mem.copy_(carry_mem[path])
 
         # Apply Output Scaling
         if return_sequence:

@@ -135,6 +135,22 @@ the measurement).
 the 2.x architecture exactly. Add `--max-steps N` to compare at equal *tokens*
 instead — the two questions have different answers.
 
+Speed
+-----
+The echo loop issues thousands of small kernels per step and is bound by
+launching them, not by the arithmetic inside any of them: profiled on a
+10-neuron core at batch 32 over 16 steps, ~5,800 launches for about 20 ms of
+GPU work. So `--compile` is the largest speedup on offer, by a wide margin:
+
+    --compile               2.2x on a bare core
+                            4.0x with --hebb both
+                            3.6x with --hebb both and attention
+
+It is also what makes plasticity affordable — eager it adds 132% to the step,
+compiled 26%. The price is a warmup of a minute or two before the first step,
+longer with plasticity and attention on; after that the graph is stable across
+the train/eval alternation.
+
 What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
 ----------------------------------------------------------------------------
 * ``--sweep gap``, 1.3 min/arm, batch 128 — temporal depth pays, but only the
@@ -311,6 +327,13 @@ class Cfg:
                                      # next one, on top of ChaosGrad's own
                                      # momentum
     grad_ckpt: bool = False
+    compile: bool = False            # torch.compile the forward. The step is
+                                     # launch-bound at every size measured, so
+                                     # fusing it is the single largest speedup
+                                     # available — and the one that makes
+                                     # plasticity affordable (measured on a
+                                     # 10-neuron core: +132% eager, +26%
+                                     # compiled). Warmup costs a minute or two.
 
     # --- runtime ---
     seed: int = 42
@@ -947,6 +970,13 @@ def build(cfg, vocab_size):
         vocab_mode="discrete",
         tie_embeddings=cfg.tie_embeddings,
     )
+    if cfg.compile:
+        # Compile the bound method rather than the module: everything else in
+        # this script reaches through `model` for state, caches, plastic
+        # buffers and checkpoints, and an OptimizedModule wrapper would sit
+        # between them and the real object.
+        model.forward = torch.compile(model.forward)
+
     trainer = OdyssNetTrainer(model, lr=cfg.lr, device=cfg.device,
                               gradient_persistence=cfg.grad_persistence)
     trainer.loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=cfg.label_smoothing)
@@ -2079,6 +2109,14 @@ def parse_args():
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra sequential "
                         "forward per step")
+    g.add_argument("--compile", action="store_true",
+                   help="torch.compile the forward pass. The echo loop issues "
+                        "thousands of small kernels per step and is bound by "
+                        "launching them, so fusing it is the biggest speedup on "
+                        "offer: 2.2x on a bare core, 4.0x with plasticity, 3.6x "
+                        "with plasticity and attention (10 neurons, batch 32, 16 "
+                        "steps). The price is a warmup of a minute or two before "
+                        "the first step, longer with --hebb and attention on")
 
     g = p.add_argument_group("run control")
     g.add_argument("--minutes", type=float, default=d.minutes, metavar="M",
@@ -2271,7 +2309,7 @@ def cfg_from_args(a):
         dropout=a.dropout, label_smoothing=a.label_smoothing,
         grad_persistence=a.grad_persistence,
         hebb_type=None if a.hebb == "none" else a.hebb,
-        hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt,
+        hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt, compile=a.compile,
         attn_heads=a.attn_heads, attn_kv_heads=a.attn_kv_heads,
         attn_head_dim=a.attn_head_dim, attn_window=a.attn_window,
         attn_write=a.attn_write, attn_read=a.attn_read,

@@ -171,6 +171,9 @@ For tasks where **online synaptic plasticity** may help — e.g., fast-adaptatio
 *   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise".
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
 *   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
+*   **Switching it on is free until training says otherwise.** The plastic contribution is normalized and scaled by a zero-initialized gain (`hebb_norm`, +N parameters), and building the module draws no RNG, so a plastic model and a plain one at the same seed share a core and produce identical output at step zero. An ablation of `hebb_type` therefore has one variable in it.
+*   **Cost:** the live trace is per-example, `(B, N, N)`, and every step retains one for the backward pass — memory grows as `steps x B x N²`. That is the price of one-shot binding, and it is affordable exactly where plasticity earns its place: small cores with short rollouts. On a large core prefer `hebb_type=None`.
+*   **Compile it.** The step is bound by kernel launches, not arithmetic. Eager, `hebb_type='both'` adds 132% to the step; under `torch.compile` it adds 26%. If a run with plasticity feels like it is running an LLM, that is the reason and `torch.compile` is the fix.
 
 ```python
 # NLP / Logic / Reasoning — synapse-level plasticity for dynamic variable binding
@@ -230,6 +233,7 @@ model = OdyssNet(
 *   **Optimizer:** ChaosGrad classifies the four projections into an `attention` family (weight decay on), and the QK-norm gains into `modulation` (decay off) — never decay those by hand in a custom optimizer.
 *   **Transplantation:** `attn_head_dim` defaults to a value derived from `num_neurons`, so pin it explicitly when transplanting between cores of different sizes, or the attention geometry moves with the neuron count.
 *   **Compatibility:** works with `gradient_checkpointing=True`, AMP, neurogenesis and Hebbian plasticity; tested for all of them.
+*   **Precision, and the `@torch._dynamo.disable` on `attend`/`write`:** attention runs with autocast off so the cache has one dtype and the softmax accumulates in fp32 — half-precision attention is measurably worse (~0.017 of loss on embedded MNIST with four heads, from the fourth epoch on). `torch.compile` miscompiles that region, so both methods are hidden from Dynamo. It is free: the rest of the step still fuses around the break. Do not remove the decorator — every compiled run with attention on dies on `Half != float`.
 *   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` being the 2.x architecture exactly. On TinyStories at 2 min/arm it is the 2.x architecture that wins — see the sweep's own notes.
 
 ---

@@ -322,6 +322,7 @@ class TemporalAttention(nn.Module):
             segments.append(pending)
         return tuple(segments), self._writes
 
+    @torch._dynamo.disable
     def attend(self, h, segments, pos):
         """
         Attention contribution for state `h`, shaped `(B, N)`.
@@ -338,6 +339,8 @@ class TemporalAttention(nn.Module):
         cache is kept in segments; scores are simply the smaller thing to
         join, and joining them keeps the result a single exact softmax with no
         rescaling step.
+
+        Hidden from Dynamo on purpose — see `write` for why.
         """
         if not segments:
             return None
@@ -375,8 +378,36 @@ class TemporalAttention(nn.Module):
     # Write                                                               #
     # ------------------------------------------------------------------ #
 
+    @torch._dynamo.disable
     def write(self, h):
-        """Append one cache entry built from state `h`, shaped `(B, N)`."""
+        """
+        Append one cache entry built from state `h`, shaped `(B, N)`.
+
+        `attend` and `write` are both kept out of Dynamo's graph, and the two
+        reasons compound.
+
+        The precision one: attention runs with autocast off so the cache holds
+        one dtype whatever the surrounding precision is, and so the softmax and
+        the accumulation over keys stay in float32. That is not cosmetic — on
+        embedded MNIST with four heads, half-precision attention trailed the
+        float32 path by a stable ~0.017 of loss from the fourth epoch on
+        (0.8220 against 0.8043 at epoch 8). But `torch.compile` miscompiles an
+        `autocast(enabled=False)` region: Inductor's dtype model reports float
+        for a buffer it emits as half, and `o_proj`'s matmul dies on
+        `expected mat1 and mat2 to have the same dtype ... Half != float`. No
+        source-level cast repairs it — an explicit `.float()` is folded away by
+        the same wrong model.
+
+        Hiding the two methods costs nothing measurable. The step is bound by
+        kernel launches, and the rest of it still fuses around the break:
+        compiled with plasticity and four heads, 17.4 ms/batch here against
+        17.6 for a fully traced half-precision path and 60.4 eager (10
+        neurons, batch 32, 16 steps). So the graph break buys exact float32
+        attention for free rather than trading accuracy for speed.
+
+        The bookkeeping one: `write` appends to Python lists and bumps a
+        counter. Eager is where that belongs.
+        """
         with torch.amp.autocast(device_type=h.device.type, enabled=False):
             self._write(h.float())
         self._writes += 1
