@@ -233,7 +233,7 @@ model = OdyssNet(
 *   **Optimizer:** ChaosGrad classifies the four projections into an `attention` family (weight decay on), and the QK-norm gains into `modulation` (decay off) — never decay those by hand in a custom optimizer.
 *   **Transplantation:** `attn_head_dim` defaults to a value derived from `num_neurons`, so pin it explicitly when transplanting between cores of different sizes, or the attention geometry moves with the neuron count.
 *   **Compatibility:** works with `gradient_checkpointing=True`, AMP, neurogenesis and Hebbian plasticity; tested for all of them.
-*   **Precision, and the `@torch._dynamo.disable` on `attend`/`write`:** attention runs with autocast off so the cache has one dtype and the softmax accumulates in fp32 — half-precision attention is measurably worse (~0.017 of loss on embedded MNIST with four heads, from the fourth epoch on). `torch.compile` miscompiles that region, so both methods are hidden from Dynamo. It is free: the rest of the step still fuses around the break. Do not remove the decorator — every compiled run with attention on dies on `Half != float`.
+*   **Precision, and the `@torch._dynamo.disable` on `attend`/`write`:** attention runs with autocast off so the cache has one dtype and the softmax accumulates in fp32 — half-precision attention is measurably worse (~0.017 of loss on embedded MNIST with four heads, from the fourth epoch on). `torch.compile` miscompiles that region, so both methods are hidden from Dynamo. Do not remove the decorator — every compiled run with attention on dies on `Half != float`. The break is free when the step has other work to fuse (17.4 ms/batch with plasticity and four heads, against 17.6 fully traced and 60.4 eager) and close to a no-op when attention is the *only* thing switched on (48.5 against 45.4 eager). Measure before assuming `--compile` will pay on an attention-only run.
 *   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` being the 2.x architecture exactly. On TinyStories at 2 min/arm it is the 2.x architecture that wins — see the sweep's own notes.
 
 ---
@@ -248,10 +248,31 @@ torch.set_float32_matmul_precision('high')
 ```
 
 ### 2. Compilation
-For production or long training runs, compile the model.
+Not a nicety — it is the largest speedup this architecture has. The echo loop
+issues thousands of small kernels per step and is bound by launching them, not
+by the arithmetic inside any of them (profiled: ~5,800 launches for ~20 ms of
+GPU work on a 10-neuron core at batch 32 over 16 steps). Measured ms/batch,
+eager → compiled: bare core 13.8 → 6.4, `hebb_type='both'` 32.1 → 8.1, `'both'`
+with four attention heads 62.7 → 17.3. It is what makes plasticity affordable:
++132% on the step eager, +26% compiled.
+
 ```python
-model.compile() # Uses torch.compile (PyTorch 2.0+)
+model.compile()                          # or torch.compile(model.forward)
 ```
+
+Compile the bound `forward` rather than wrapping the module when other code
+reaches through the model for state, KV caches, plastic buffers or
+checkpointing — an `OptimizedModule` wrapper sits between them and the real
+object.
+
+**Give it fixed shapes, or it will quietly stop compiling.** A ragged final
+batch is a new shape, and enough recompiles exhaust Dynamo's budget and drop
+the run back to eager *for the rest of the process*, with nothing in the output
+saying so — the only symptom is that the step time never improved. Pass
+`drop_last=True` to your loaders (both of them; the evaluation loader is the
+usual culprit, since a test set rarely divides by the batch size). The
+train/eval alternation itself is fine: it settles at three compiled graphs and
+stays there.
 
 ---
 

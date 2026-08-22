@@ -151,6 +151,12 @@ compiled 26%. The price is a warmup of a minute or two before the first step,
 longer with plasticity and attention on; after that the graph is stable across
 the train/eval alternation.
 
+One trap worth knowing if you compile your own loop rather than using this one:
+give the model fixed shapes. A ragged final batch is a new shape, and enough
+recompiles exhaust Dynamo's budget and silently drop the process back to eager
+for good — the only symptom is a step time that never improved. This script
+feeds fixed-size batches from the token cache and does not have the problem.
+
 What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
 ----------------------------------------------------------------------------
 * ``--sweep gap``, 1.3 min/arm, batch 128 — temporal depth pays, but only the
