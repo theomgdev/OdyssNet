@@ -208,6 +208,7 @@ class ChaosGrad(torch.optim.Optimizer):
     FAMILY_WEIGHT_DECAY = {
         'chaos_core':      0.01,
         'projections':     0.01,
+        'attention':       0.01,
         'memory_feedback': 0.0,
         'plasticity':      0.0,
         'modulation':      0.0,
@@ -222,6 +223,7 @@ class ChaosGrad(torch.optim.Optimizer):
             chaos_core      — the NxN recurrent matrix ``W`` (zero-diagonal).
             memory_feedback — per-neuron self-connections.
             projections     — embed / proj / output_decoder matrices.
+            attention       — temporal attention q/k/v/o projections.
             plasticity      — Hebbian factor/decay logits.
             modulation      — gates, scales, bias, norm weights (everything else).
 
@@ -237,6 +239,15 @@ class ChaosGrad(torch.optim.Optimizer):
                 families['chaos_core'].append(param)
             elif leaf == 'memory_feedback':
                 families['memory_feedback'].append(param)
+            elif 'attn' in name:
+                # Checked before 'projections' because q_proj/k_proj/v_proj/
+                # o_proj would otherwise match it on the substring alone. The
+                # QK-norm gains inside the same module are *not* connective
+                # structure and go to modulation, where nothing decays them.
+                if '_proj' in name:
+                    families['attention'].append(param)
+                else:
+                    families['modulation'].append(param)
             elif any(k in name for k in ('embed', 'proj', 'output_decoder')):
                 families['projections'].append(param)
             elif 'hebb' in leaf:

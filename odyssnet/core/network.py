@@ -3,8 +3,10 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from typing import cast
 
+from .attention import TemporalAttention
+
 class OdyssNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', debug=False):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', attn_heads=None, attn_head_dim=None, attn_kv_heads=1, attn_window=256, attn_rope=True, attn_qk_norm=True, attn_dropout=0.0, attn_write='token', debug=False):
         super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -82,7 +84,8 @@ class OdyssNet(nn.Module):
         activation = self._normalize_activation(activation)
         gate = self._normalize_gate(gate)
 
-        self.enc_dec_weight_init, self.core_weight_init, self.mem_weight_init, self.gate_weight_init = weight_init
+        (self.enc_dec_weight_init, self.core_weight_init, self.mem_weight_init,
+         self.gate_weight_init, self.attn_weight_init) = weight_init
         self.weight_init_strategy = self.core_weight_init
 
         self.enc_dec_act = self._build_activation(activation[0])
@@ -102,6 +105,11 @@ class OdyssNet(nn.Module):
         self.core_gate = self._create_gate_parameter(num_neurons, self.core_gate_act, device)
         self.memory_gate = self._create_gate_parameter(num_neurons, self.mem_gate_act, device)
 
+        if attn_write not in ("token", "step"):
+            raise ValueError(f"attn_write must be 'token' or 'step', got {attn_write!r}")
+        self.attn_write = attn_write
+        self.attn = None
+
         self._init_weights()
         
         # Memory Feedback (Neuron self-connections)
@@ -113,6 +121,48 @@ class OdyssNet(nn.Module):
         def _zero_diagonal_grad(grad):
             return grad.clone().fill_diagonal_(0.0)
         self.W.register_hook(_zero_diagonal_grad)
+
+        # Temporal attention (optional). `attn_heads=None` — the default —
+        # builds nothing at all: no parameters, no cache, no per-step cost, and
+        # a state dict identical to a 2.x model's.
+        #
+        # Built *after* the core is initialized, deliberately. The projections
+        # draw from the same RNG stream, so constructing them earlier would
+        # shift every later draw and give an attention-enabled model a
+        # different W for the same seed — turning "with attention" vs "without"
+        # into a two-variable comparison.
+        #
+        # `attn_write` decides which steps leave a trace in the KV cache:
+        #   "token" — one entry per input token (the last echo step of each
+        #             token group, the same state the output is read from), so
+        #             the cache is measured in tokens and `think_gap` does not
+        #             multiply its length.
+        #   "step"  — one entry per thinking step. Identical to "token" when
+        #             there is one step per token; above that it lets the model
+        #             attend to its own intermediate reasoning, at (gap+1)x the
+        #             cache.
+        if attn_heads:
+            self.attn = TemporalAttention(
+                num_neurons,
+                heads=attn_heads,
+                head_dim=attn_head_dim,
+                kv_heads=attn_kv_heads,
+                window=attn_window,
+                rope=attn_rope,
+                rope_theta=10000.0,
+                qk_norm=attn_qk_norm,
+                dropout=attn_dropout,
+                device=device,
+            )
+            with torch.no_grad():
+                # Query/key/value only. `o_proj` keeps the zeros the attention
+                # module set: it is what makes an attention-enabled network
+                # start out numerically identical to the same network without
+                # it, so 'resonant' and the rest of the core's init story hold
+                # unchanged.
+                self._apply_init(self.attn.q_proj.weight, self.attn_weight_init)
+                self._apply_init(self.attn.k_proj.weight, self.attn_weight_init)
+                self._apply_init(self.attn.v_proj.weight, self.attn_weight_init)
 
         # Hebbian Learning (optional)
         # hebb_type controls the active plasticity mechanism:
@@ -229,13 +279,16 @@ class OdyssNet(nn.Module):
         raise TypeError(f"{name} must be None, str, list, or tuple")
 
     def _normalize_weight_init(self, weight_init):
-        defaults = ['quiet', 'resonant', 'quiet', 'zero']
+        # Five entries: [encoder/decoder, core, memory, gates, attention].
+        # The attention slot was appended rather than inserted so every
+        # four-entry list written against 2.x keeps meaning what it meant.
+        defaults = ['quiet', 'resonant', 'quiet', 'zero', 'quiet']
         if weight_init is None:
             return defaults.copy()
 
         if isinstance(weight_init, str):
             enc_dec = 'quiet' if weight_init == 'resonant' else weight_init
-            return [enc_dec, weight_init, 'quiet', 'zero']
+            return [enc_dec, weight_init, 'quiet', 'zero', enc_dec]
 
         return self._normalize_component_list(weight_init, defaults, 'weight_init')
 
@@ -306,7 +359,7 @@ class OdyssNet(nn.Module):
             self._apply_init(self.core_gate, self.gate_weight_init)
         if self.memory_gate is not None:
             self._apply_init(self.memory_gate, self.gate_weight_init)
-        
+
     def _apply_init(self, tensor, strategy):
         """
         Applies requested weight initialization strategy to a specific tensor.
@@ -454,9 +507,13 @@ class OdyssNet(nn.Module):
         input_pos = cast(torch.Tensor, self.input_pos)
         output_pos = cast(torch.Tensor, self.output_pos)
 
-        def _single_step(h_t_in, t_idx, x_input_info, hebb_W_contrib, hebb_mem_contrib):
+        def _single_step(h_t_in, t_idx, x_input_info, hebb_W_contrib, hebb_mem_contrib,
+                         attn_segments=(), attn_pos=0):
             # hebb_W_contrib:   (N, N) tensor or None — added to W before recurrence.
             # hebb_mem_contrib: (N,)   tensor or None — added to memory_feedback.
+            # attn_segments:    KV cache view, passed in rather than read from
+            #                   self.attn so gradient checkpointing recomputes
+            #                   this step against the cache it originally saw.
             W_eff = self.W if hebb_W_contrib is None else self.W + hebb_W_contrib
             signal = h_t_in @ W_eff + self.B
             if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
@@ -476,6 +533,15 @@ class OdyssNet(nn.Module):
 
             signal = signal + feedback
             if self.debug: self._dbg(signal, f"signal+feedback (step {t_idx})")
+
+            # Temporal attention: the state asks its own past what is relevant
+            # now. Added to the pre-activation signal like any other input, so
+            # the step's activation and RMSNorm still bound what leaves it.
+            if self.attn is not None and attn_segments:
+                attn_out = self.attn.attend(h_t_in, attn_segments, attn_pos)
+                if attn_out is not None:
+                    signal = signal + attn_out.to(signal.dtype)
+                    if self.debug: self._dbg(signal, f"signal+attention (step {t_idx})")
 
             input_scale = self._get_input_scale(signal.dtype)
 
@@ -683,6 +749,11 @@ class OdyssNet(nn.Module):
                 cur_hebb_W   = None
                 cur_hebb_mem = None
 
+            if self.attn is not None:
+                attn_segments, attn_pos = self.attn.cache_view()
+            else:
+                attn_segments, attn_pos = (), 0
+
             # Gradient checkpointing
             if self.gradient_checkpointing and self.training:
                 # `t` is passed as a plain int: use_reentrant=False accepts
@@ -691,11 +762,21 @@ class OdyssNet(nn.Module):
                 # (tokens x thinking-steps) iterations a long sequence takes.
                 h_t = checkpoint.checkpoint(
                     _single_step, h_t, t, x_step_info,
-                    cur_hebb_W, cur_hebb_mem,
+                    cur_hebb_W, cur_hebb_mem, attn_segments, attn_pos,
                     use_reentrant=False,
                 )
             else:
-                h_t = _single_step(h_t, t, x_step_info, cur_hebb_W, cur_hebb_mem)
+                h_t = _single_step(h_t, t, x_step_info, cur_hebb_W, cur_hebb_mem,
+                                   attn_segments, attn_pos)
+
+            # Cache write happens *after* the step, from the state the step
+            # produced: the entry a future query finds is the summary of
+            # everything up to and including this step. Doing it here rather
+            # than inside `_single_step` also keeps the cache from being
+            # appended to twice under gradient checkpointing's recompute.
+            if self.attn is not None and (self.attn_write == 'step'
+                                          or (t + 1) % ratio == 0):
+                self.attn.write(h_t)
 
             if self.hebb_type is not None:
                 batch_sz = h_t.size(0)
@@ -754,6 +835,11 @@ class OdyssNet(nn.Module):
 
         with torch.no_grad():
             self.state = h_t.detach()
+            if self.attn is not None:
+                # Same contract as the hidden state: what this call wrote stays
+                # differentiable inside it, what survives into the next call is
+                # a constant. Truncation to `attn_window` happens here.
+                self.attn.detach_cache()
             if self.hebb_type is not None:
                 if self.hebb_type in ("temporal", "both"):
                     self.t_hebb_state_W.copy_(local_t_hebb_W.detach())
@@ -790,6 +876,8 @@ class OdyssNet(nn.Module):
 
     def reset_state(self, batch_size=1):
         self.state = torch.zeros(batch_size, self.num_neurons, device=self.device)
+        if self.attn is not None:
+            self.attn.reset()
         if self.hebb_type is not None:
             if self.hebb_type in ("temporal", "both"):
                 self.t_hebb_state_W.zero_()
@@ -798,12 +886,37 @@ class OdyssNet(nn.Module):
                 self.s_hebb_state_W.zero_()
                 self.s_hebb_state_mem.zero_()
 
+    def reset_rows(self, mask):
+        """
+        Zero the hidden state — and the attention history — of selected batch
+        rows, leaving the rest of the batch running.
+
+        `mask` is a boolean `(B,)` tensor. This is what staggered cold starts
+        need: with a stream carried indefinitely the network never sees a zero
+        state, so training puts no pressure on cold-start behaviour. Resetting
+        only the state while attention keeps a full cache would leave the row
+        neither warm nor cold, so both are dropped together.
+        """
+        mask = torch.as_tensor(mask, device=self.state.device).reshape(-1).bool()
+        if mask.shape[0] != self.state.shape[0]:
+            raise ValueError(
+                f"reset_rows expects a mask of {self.state.shape[0]} rows, "
+                f"got {mask.shape[0]}"
+            )
+        if not bool(mask.any()):
+            return
+        self.state = self.state.masked_fill(mask.unsqueeze(1), 0.0)
+        if self.attn is not None:
+            self.attn.drop_rows(mask)
+
     def detach_state(self):
         """
         Detaches the internal state from the computational graph.
         Useful for Truncated BPTT.
         """
         self.state = self.state.detach()
+        if self.attn is not None:
+            self.attn.detach_cache()
 
     @property
     def device(self):

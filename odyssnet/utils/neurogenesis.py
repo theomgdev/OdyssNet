@@ -63,6 +63,15 @@ class Neurogenesis:
         old_s_hebb_state_W   = _get_hebb('s_hebb_state_W').clone() if _get_hebb('s_hebb_state_W') is not None else None
         old_s_hebb_state_mem = _get_hebb('s_hebb_state_mem').clone() if _get_hebb('s_hebb_state_mem') is not None else None
 
+        # Preserve temporal-attention projections. Their neuron-facing side
+        # moves with the core: q/k/v read the state (in_features == N) and
+        # o_proj writes it (out_features == N).
+        attn = getattr(model, 'attn', None)
+        old_attn_params = {}
+        if attn is not None:
+            for pname in ('q_proj', 'k_proj', 'v_proj', 'o_proj'):
+                old_attn_params[pname] = getattr(attn, pname).weight
+
         # Preserve vocab layer parameters (for optimizer state transfer)
         old_embed_param = model.embed.weight if model.embed is not None else None
         old_proj_param = model.proj.weight if model.proj is not None else None
@@ -177,6 +186,33 @@ class Neurogenesis:
 
         if hasattr(model, '_cached_scaled_input'):
             delattr(model, '_cached_scaled_input')
+
+        # Grow the attention projections along their neuron-facing axis, with
+        # the same asymmetry the core uses: what the new neurons *emit* starts
+        # as small noise so gradients can reach them, what they *receive*
+        # starts at zero so the existing dynamics are undisturbed. The KV cache
+        # is dropped outright — every entry in it was written by projections
+        # that no longer have this shape.
+        if attn is not None:
+            def _grow_in(linear):
+                new_w = torch.zeros(linear.weight.shape[0], new_n, device=device)
+                new_w[:, :old_n] = linear.weight.data
+                new_w[:, old_n:] = torch.randn(linear.weight.shape[0], amount,
+                                               device=device) * noise_std
+                linear.weight = nn.Parameter(new_w)
+                linear.in_features = new_n
+
+            for pname in ('q_proj', 'k_proj', 'v_proj'):
+                _grow_in(getattr(attn, pname))
+
+            o_proj = attn.o_proj
+            new_o = torch.zeros(new_n, o_proj.weight.shape[1], device=device)
+            new_o[:old_n] = o_proj.weight.data
+            o_proj.weight = nn.Parameter(new_o)
+            o_proj.out_features = new_n
+
+            attn.num_neurons = new_n
+            attn.reset()
 
         # Resize Hebbian buffers to match the new neuron count.
         # The existing (old_n × old_n) correlation state is copied into the top-left
@@ -354,6 +390,13 @@ class Neurogenesis:
                 _transfer_hebb(old_t_hebb_decay, 't_hebb_decay')
                 _transfer_hebb(old_s_hebb_factor, 's_hebb_factor')
                 _transfer_hebb(old_s_hebb_decay, 's_hebb_decay')
+
+            # Transfer attention projection state. Both axes are 2-D, and the
+            # padded axis differs per projection, but transfer_state pads the
+            # top-left corner of a matrix either way.
+            if attn is not None:
+                for pname, old_p in old_attn_params.items():
+                    transfer_state(old_p, getattr(attn, pname).weight, is_matrix=True)
 
             # Transfer vocab layer state (shapes constant during neurogenesis)
             if old_embed_param is not None and hasattr(model, 'embed') and model.embed is not None:

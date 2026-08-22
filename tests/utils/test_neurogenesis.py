@@ -538,3 +538,66 @@ class TestSynapseHebbExpansion:
         assert model.num_neurons == 7
         assert model.t_hebb_factor.shape == (7, 7)
         assert model.t_hebb_state_W.shape == (7, 7)
+
+
+# ===========================================================================
+# Temporal attention
+# ===========================================================================
+
+class TestAttentionExpansion:
+    """The attention projections face the neuron axis on one side, so they
+    have to grow with it: q/k/v read the state, o_proj writes it."""
+
+    def test_projection_shapes_follow_the_core(self):
+        model = _model(n=8, attn_heads=2)
+        head_width = model.attn.heads * model.attn.head_dim
+        kv_width = model.attn.kv_heads * model.attn.head_dim
+        opt = _adamw(model)
+        Neurogenesis.expand(model, opt, amount=4, verbose=False)
+
+        assert model.attn.q_proj.weight.shape == (head_width, 12)
+        assert model.attn.k_proj.weight.shape == (kv_width, 12)
+        assert model.attn.o_proj.weight.shape == (12, head_width)
+        assert model.attn.q_proj.in_features == 12
+        assert model.attn.o_proj.out_features == 12
+        assert model.attn.num_neurons == 12
+
+    def test_existing_columns_preserved(self):
+        model = _model(n=8, attn_heads=2)
+        torch.nn.init.normal_(model.attn.q_proj.weight, std=0.1)
+        original = model.attn.q_proj.weight.detach().clone()
+        Neurogenesis.expand(model, _adamw(model), amount=3, verbose=False)
+        assert torch.allclose(model.attn.q_proj.weight[:, :8], original)
+
+    def test_new_neurons_receive_nothing_at_first(self):
+        """Same asymmetry the core uses: new neurons emit small noise so
+        gradients can reach them, and receive zero so the existing dynamics
+        are undisturbed."""
+        model = _model(n=8, attn_heads=2)
+        torch.nn.init.normal_(model.attn.o_proj.weight, std=0.1)
+        Neurogenesis.expand(model, _adamw(model), amount=3, verbose=False)
+        assert torch.all(model.attn.o_proj.weight[8:] == 0.0)
+        assert model.attn.q_proj.weight[:, 8:].abs().sum() > 0
+
+    def test_cache_is_dropped(self):
+        model = _model(n=8, attn_heads=2)
+        model.reset_state(2)
+        with torch.no_grad():
+            model(torch.randn(2, 8), steps=4)
+        assert model.attn.cache_len > 0
+        Neurogenesis.expand(model, _adamw(model), amount=2, verbose=False)
+        assert model.attn.cache_len == 0
+
+    def test_training_continues_after_expand(self):
+        from odyssnet import ChaosGrad
+
+        model = _model(n=8, attn_heads=2)
+        opt = ChaosGrad.from_model(model)
+        new_opt = Neurogenesis.expand(model, opt, amount=4, verbose=False)
+        model.reset_state(2)
+        out, _ = model(torch.randn(2, 12), steps=4)
+        out.sum().backward()
+        new_opt.step()
+        new_opt.zero_grad()
+        assert torch.isfinite(model.attn.q_proj.weight).all()
+        assert 'attention' in {g['group_name'] for g in new_opt.param_groups}
