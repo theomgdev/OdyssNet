@@ -189,12 +189,11 @@ class Neurogenesis:
         if hasattr(model, '_cached_scaled_input'):
             delattr(model, '_cached_scaled_input')
 
-        # Grow the attention projections along their neuron-facing axis, with
-        # the same asymmetry the core uses: what the new neurons *emit* starts
-        # as small noise so gradients can reach them, what they *receive*
-        # starts at zero so the existing dynamics are undisturbed. The KV cache
-        # is dropped outright — every entry in it was written by projections
-        # that no longer have this shape.
+        # Grow the attention projections along their neuron-facing axis with
+        # the core's asymmetry: what new neurons emit starts as small noise so
+        # gradients reach them, what they receive starts at zero so existing
+        # dynamics are undisturbed. The KV cache is dropped — its entries were
+        # written by projections of a different shape.
         if attn is not None:
             def _grow_in(linear):
                 new_w = torch.zeros(linear.weight.shape[0], new_n, device=device)

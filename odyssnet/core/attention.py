@@ -1,70 +1,48 @@
 """
-Temporal attention for the chaos core (OdyssNet 3.0).
+Temporal attention for the chaos core.
 
-OdyssNet has no layers to stack attention *between*. Depth here is time: one
-NxN matrix `W` that the state echoes through, one step at a time. So attention
-is attached along the only axis the architecture has — the state's own past.
-
-At every step the current state queries a cache of earlier states:
+OdyssNet has no layers to stack attention between; depth here is time. So
+attention is attached along the state's own past. At every step the current
+state queries a cache of earlier states:
 
     q_t = h_t W_q                      one query, always
     k_i = h_i W_k , v_i = h_i W_v      one entry per *written* step
     a_t = softmax(q_t K^T / sqrt(d)) V
     h_t += a_t W_o                      (added to the pre-activation signal)
 
-Two consequences shape every design decision in this file.
+Two structural facts follow from the architecture and shape this file.
 
-**The query length is always 1.** The core cannot be unrolled in parallel — step
-t's input is step t-1's output — so a forward pass is a sequence of single-query
-attentions, exactly like a transformer's decode phase and never like its prefill.
-The score matrix is therefore `(B, H, 1, L)`: one row per key, small enough that
-there is nothing for a fused flash kernel to tile away
-(`F.scaled_dot_product_attention` solves a problem this shape does not have).
-What *is* expensive is re-materializing K and V, so the cache is kept in
-segments that are never concatenated — only their score blocks are, which is
-the cheap end of the same join and keeps the result a single exact softmax.
+**The query length is always 1.** The core cannot be unrolled in parallel, so a
+forward pass is a sequence of single-query attentions — a transformer's decode
+phase, never its prefill. The score matrix is `(B, H, 1, L)`, one row per key,
+which is why the cache is kept in segments that are never concatenated: only
+their score blocks are, and the result is a single exact softmax.
 
-**Order does not matter, so the cache can be a ring.** Softmax over keys is
-permutation-invariant, and every entry in the cache is strictly in the past
-(the write for step t happens after the read for step t), so no causal mask is
-ever needed and the buffer never has to be reordered. Position information is
-carried by RoPE, applied to each key *at write time* against its absolute
-position, so a rotated key stays correct wherever it later sits in the buffer.
+**Order carries no information.** Softmax over keys is permutation-invariant
+and every cached entry is strictly in the past, so no causal mask is needed and
+a ring buffer never has to be reordered. Position is carried by RoPE, applied
+to each key at write time against its absolute position.
 
 Cache representations
 ---------------------
-The cache exists in two forms and switches between them automatically:
+The cache exists in two forms and switches between them automatically, at the
+first write after the mode changes:
 
 * **Ring** (grad disabled — inference, validation, generation): a preallocated
-  `(B, H_kv, window, D)` buffer written in place through a narrowed view. Zero
-  allocation per token, which is the whole point of a KV cache.
+  `(B, H_kv, window, D)` buffer written in place through a narrowed view, with
+  no allocation per token.
 * **Segmented** (grad enabled — training): in-place writes are illegal under
-  autograd, so the carry from previous calls is held as one frozen tensor
-  (saved once for backward, however many steps read it) and this call's writes
-  accumulate in a list. Reads join the two at the scores.
-
-The switch is one copy, at the first write after the mode changes.
+  autograd, so the carry from previous calls is one frozen tensor and this
+  call's writes accumulate in a list. Reads join the two at the scores.
 
 Memory
 ------
 Training retains, per read, the keys and values it attended. The frozen segment
-is a single shared tensor, so it costs `2·B·H_kv·window·D` floats *once*; the
-growing segment costs `2·B·H_kv·D·(1+2+...+n)` for n writes in the call. That
-quadratic is in writes-per-forward (tokens per truncated-BPTT window), not in
-the run length, and it is why `kv_heads` defaults to 1 (multi-query): the KV
-cache, not the projections, is the term that decides whether a batch fits.
-
-Speed
------
-Every one of these operations is tiny and there are many of them per step, so
-this path is bound by kernel launches rather than by arithmetic — measured on
-an RTX 3060 Ti at 1024 neurons, attention runs 3.3x slower per token at batch
-128 and 2.8x at batch 512, because the overhead is per *step* and a larger
-batch amortizes it. Head count barely registers (4 heads cost the same as 1),
-which is the signature of that regime. Two consequences are baked in here:
-attention runs with autocast disabled (a query of length 1 has nothing to gain
-from fp16, and the implicit casts around it cost more than the math), and the
-segments are joined once at the scores rather than merged afterwards.
+costs `2·B·H_kv·window·D` floats once; the growing segment costs
+`2·B·H_kv·D·(1+2+...+n)` for n writes in the call. That quadratic is in
+writes-per-forward — tokens per truncated-BPTT window — not in run length, and
+it is why `kv_heads` defaults to 1: the cache, not the projections, decides
+whether a batch fits. `training_cache_bytes()` returns the number.
 """
 
 import math
@@ -244,9 +222,8 @@ class TemporalAttention(nn.Module):
         already past float32's resolution, and a silently wrong phase is worse
         than the microsecond this costs.
         """
-        # One-entry memo. Within a token group the query repeats its position
-        # for every echo step, and the write that follows takes the same index,
-        # so the hit rate is high enough to be worth the four lines.
+        # One-entry memo: within a token group the query repeats its position
+        # for every echo step, and the following write takes the same index.
         cached = self._rope_memo
         if cached is not None and cached[0] == pos and cached[1] == dtype and cached[2] == device:
             return cached[3], cached[4]
@@ -264,12 +241,9 @@ class TemporalAttention(nn.Module):
     # Read                                                                #
     # ------------------------------------------------------------------ #
 
-    # `attend` and `write` carry @torch._dynamo.disable. They run with autocast
-    # off so the cache stays single-dtype and the softmax accumulates in fp32,
-    # and torch.compile miscompiles that region: Inductor reports float for a
-    # buffer it emits as half, and o_proj dies on `Half != float`. A
-    # source-level `.float()` does not help — the same wrong model folds it
-    # away. Removing either decorator breaks every compiled run.
+    # `attend` and `write` carry @torch._dynamo.disable because torch.compile
+    # miscompiles their autocast-disabled region. Removing either decorator
+    # breaks every compiled run with attention on.
 
     def cache_view(self):
         """
@@ -328,14 +302,10 @@ class TemporalAttention(nn.Module):
         has nothing to look back at, and a softmax over zero keys is NaN, not
         zero.
 
-        Segments are joined at the *scores*, not at the keys. One softmax runs
-        over the concatenation of `(B, H, g, L_i)` score blocks — which are
-        one row per key and therefore cheap to concatenate — and each block's
-        probabilities are matched back against their own values. The keys and
-        values themselves are never copied, which is the whole reason the
-        cache is kept in segments; scores are simply the smaller thing to
-        join, and joining them keeps the result a single exact softmax with no
-        rescaling step.
+        Segments are joined at the *scores*, not at the keys: one softmax over
+        the concatenated `(B, H, g, L_i)` score blocks, then each block's
+        probabilities against its own values. Keys and values are never copied,
+        and the result is a single exact softmax with no rescaling step.
         """
         if not segments:
             return None

@@ -329,10 +329,8 @@ class OdyssNetTrainer:
                 if diff > 3 * std and loss_val > 1.2 * self._anomaly_ewma:
                     hook("spike", loss_val)
                     # Re-seed the mean at the spike level but keep the
-                    # pre-spike variance — zeroing it made the 3σ test
-                    # degenerate (trivially satisfied) for the next ~20
-                    # calls, spamming the hook. Same fix as
-                    # ChaosGrad.report_loss.
+                    # pre-spike variance: zeroing it makes the 3σ test
+                    # trivially satisfied for the next ~20 calls.
                     self._anomaly_ewma = loss_val
                     self._anomaly_var = pre_var
 

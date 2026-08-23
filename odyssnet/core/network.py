@@ -126,11 +126,8 @@ class OdyssNet(nn.Module):
         self.W.register_hook(_zero_diagonal_grad)
 
         # Temporal attention (optional); `attn_heads=None` builds nothing.
-        # Constructed *after* the core so it draws no RNG the core would have
-        # consumed — an attention-enabled model keeps the same W for the same
-        # seed, which is what makes ablating it a one-variable comparison.
-        # `attn_write` sets which steps enter the cache and `attn_read` which
-        # steps query it; see docs/LIBRARY.md for the cost of each.
+        # Must stay after the core's init: constructing it earlier consumes RNG
+        # the core would have drawn, and the same seed stops giving the same W.
         if attn_heads:
             self.attn = TemporalAttention(
                 num_neurons,
@@ -165,10 +162,9 @@ class OdyssNet(nn.Module):
         self.hebb_res = hebb_res
 
         # The plastic contribution is normalized and passed through a
-        # zero-initialized gain before it reaches W: the factor decides *which*
-        # synapses are plastic, the gain decides *how much*. Zero gain means
-        # switching plasticity on changes nothing until training moves it,
-        # which is what makes hebb_type a one-variable ablation.
+        # zero-initialized gain before it reaches W: the factor selects which
+        # synapses are plastic, the gain sets how much. The zero start must
+        # hold — it is what keeps plasticity inert until training moves it.
         self.hebb_norm = None
 
         self.t_hebb_factor = None
@@ -583,16 +579,10 @@ class OdyssNet(nn.Module):
                 max_outputs = x_input.shape[1]
 
         if self.hebb_type is not None:
-            # The live trace carries a batch dimension so every example writes
-            # its own associations; the persistent buffer holds the batch mean
-            # so checkpoints and neurogenesis stay (N, N). Every step retains
-            # one (B, N, N) trace for backward, so memory is steps x B x N^2 —
-            # affordable on small cores, not on large ones.
-            #
-            # Temporal and spatial differ only in which state the correlation
-            # pairs with, so they are stacked on a leading path axis and
-            # 'both' costs one set of kernels instead of two. The step is
-            # bound by kernel launches, not by the arithmetic in any of them.
+            # The live trace is per-example; the persistent buffer holds the
+            # batch mean and stays (N, N) for checkpoints and neurogenesis.
+            # Memory is steps x B x N^2. Temporal and spatial are stacked on a
+            # leading path axis so 'both' costs one set of kernels, not two.
             paths = []
             if self.hebb_type in ("temporal", "both"):
                 paths.append((self.t_hebb_factor, self.t_hebb_decay,
@@ -805,12 +795,9 @@ class OdyssNet(nn.Module):
                     h_t_f    = h_t.float()
                     h_prev_f = h_prev.float()
 
-                    # Novelty gate: co-activation across an already-strong
-                    # synapse says the weight fired the neuron, not that the
-                    # pattern is new, so the correlation is damped where W is
-                    # large. Detached, so it opens no second-order path through
-                    # W. `_offdiag` carries the 1/N scale and the diagonal mask,
-                    # making the whole gate one divide.
+                    # Novelty gate: damp the correlation where W is already
+                    # large. Detached, so no second-order path opens through W.
+                    # `_offdiag` carries the 1/N scale and the diagonal mask.
                     w_eff = self.W + cur_hebb_W
                     mem_eff = self.memory_feedback + cur_hebb_mem
                     gate_W   = self._offdiag / (1.0 + w_eff.detach().float().abs())

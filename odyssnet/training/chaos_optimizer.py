@@ -251,12 +251,9 @@ class ChaosGrad(torch.optim.Optimizer):
             elif any(k in name for k in ('embed', 'proj', 'output_decoder')):
                 families['projections'].append(param)
             elif 'hebb' in leaf:
-                # Factor/decay logits only. `hebb_norm.weight` is a norm gain,
-                # not a logit, and falls through to modulation with the
-                # QK-norm gains — which is where it belongs and, more to the
-                # point, where nothing decays it. It starts at zero and has to
-                # grow; a family with weight decay would pull it back and
-                # switch plasticity off without saying so.
+                # Factor/decay logits only. `hebb_norm.weight` is a norm gain
+                # and falls through to modulation with the QK-norm gains,
+                # where nothing decays it — it starts at zero and has to grow.
                 families['plasticity'].append(param)
             else:
                 families['modulation'].append(param)
@@ -653,12 +650,10 @@ class ChaosGrad(torch.optim.Optimizer):
         pre_ema = self._loss_ema
         pre_var = self._loss_var
         self._brake_step += 1
-        # Bias-correction-style warmup (same technique already used for Adam
-        # above, driven by an observable step count rather than a new
-        # parameter): the first ~1/alpha calls average over everything seen
-        # so far instead of committing to the steady-state window immediately,
-        # so the variance estimate isn't built from a handful of noisy early
-        # samples. Not reset on a spike reseed — that would fight the
+        # Bias-correction-style warmup: the first ~1/alpha calls average over
+        # everything seen so far rather than committing to the steady-state
+        # window, so the variance estimate is not built from a handful of noisy
+        # early samples. Not reset on a spike reseed, which would fight the
         # pre-spike variance retention just below.
         alpha = max(lead['brake_ema_alpha'], 1.0 / (self._brake_step + 1))
         self._loss_ema += alpha * diff
