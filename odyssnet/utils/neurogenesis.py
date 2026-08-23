@@ -283,6 +283,9 @@ class Neurogenesis:
         if isinstance(old_opt, ChaosGrad):
             # Rebuild with fresh architecture-aware grouping, preserving the
             # optimizer configuration and each family's step-scale estimate.
+            # The brake settings live entirely per-group, so they have to be
+            # forwarded explicitly or a customized brake is silently lost the
+            # moment the network grows.
             new_opt = ChaosGrad.from_model(
                 model,
                 lr=group.get('lr'),
@@ -294,9 +297,6 @@ class Neurogenesis:
                 growth_rate=group.get('growth_rate', float('inf')),
                 d_mode=group.get('d_mode', 'global'),
                 trust_ratio=group.get('trust_ratio', 0.25),
-                # Brake config lives entirely per-group -- forward it, or a
-                # user who customized the brake silently loses that
-                # customization the moment their network grows.
                 brake_factor=group.get('brake_factor', 0.5),
                 brake_sigma=group.get('brake_sigma', 3.0),
                 brake_ratio=group.get('brake_ratio', 1.2),

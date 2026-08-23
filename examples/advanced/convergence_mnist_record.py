@@ -128,8 +128,6 @@ def main():
         vocab_mode='continuous',
         weight_init='micro_quiet_warm',
         gate='none',
-        # Attention carries an early patch to a later one; 204 of the 634
-        # parameters live here.
         attn_heads=4,
         attn_write='step',
     )

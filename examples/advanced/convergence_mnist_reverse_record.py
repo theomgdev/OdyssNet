@@ -148,10 +148,6 @@ def main():
         vocab_mode='continuous',
         activation=['tanh', 'tanh', 'tanh'],
         weight_init='micro_quiet_warm',
-        # Each patch has to agree with the ones already drawn, and the only
-        # record of those is the core's own state history. `attn_write='step'`
-        # is required: the input is a single scalar, so the token ratio is 21
-        # and the default 'token' policy would cache one entry, at the end.
         attn_heads=4,
         attn_write='step',
     )

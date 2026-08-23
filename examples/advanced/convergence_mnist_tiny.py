@@ -33,8 +33,6 @@ def main():
         output_ids=output_ids, 
         pulse_mode=True, 
         device=DEVICE,
-        # One narrow head: attention's projections scale with the neuron
-        # count, so 4 heads would cost 8,288 parameters on a 59-neuron core.
         attn_heads=1,
         attn_head_dim=4,
         attn_write='step',

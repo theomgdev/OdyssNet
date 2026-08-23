@@ -1623,7 +1623,7 @@ SWEEPS = {
         ("tied_embed", dict(tie_embeddings=True, n_in=256, n_out=256)),
     ],
     # Does training on cold starts remove the degenerate absorbing state?
-    # `never` is the old behaviour: state carried for the entire run.
+    # `never` carries the state for the entire run.
     "coldstart": [
         ("never", dict(cold_start_every=0)),
         ("c128",  dict(cold_start_every=128)),
