@@ -107,7 +107,6 @@ def main():
     reversing the normal classification direction (image -> digit).
     This tests the network's ability to store and reconstruct visual patterns.
     """
-    # Seed 123 rather than the usual 42, matching the record experiments.
     set_seed(123)
     
     print("=" * 70)
@@ -149,20 +148,16 @@ def main():
         vocab_mode='continuous',
         activation=['tanh', 'tanh', 'tanh'],
         weight_init='micro_quiet_warm',
-        # Generation is the case temporal attention was built for: each
-        # patch has to agree with the ones already drawn, and the only
-        # record of those is the core's own state history.
-        # `attn_write='step'` is not optional here — the input is one
-        # scalar, so the token ratio is 21 and the default 'token'
-        # policy would write a single cache entry at the last step.
+        # Each patch has to agree with the ones already drawn, and the only
+        # record of those is the core's own state history. `attn_write='step'`
+        # is required: the input is a single scalar, so the token ratio is 21
+        # and the default 'token' policy would cache one entry, at the end.
         attn_heads=4,
         attn_write='step',
     )
     model = model.compile()
     
     total_params = model.get_num_params()
-    # The attention branch adds parameters the original <500 goal did not
-    # budget for; the bare core is unchanged.
     print(f"Total Params: {total_params} (core + 4 attention heads)")
     
     # Data Preparation

@@ -19,14 +19,14 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 
 > **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> OdyssNet, MNIST üzerinde yalnızca **480 parametre** ile **%90.14 doğruluk** elde etti. Bu, efsanevi LeNet-5'ten **110 kat daha verimli** olup yapay ağlar ile **Entropi Sıkıştırma Limitleri** arasındaki uçurumu kapatıyor.
+> OdyssNet, MNIST üzerinde **634 parametre** ile **%89.89 doğruluk** elde ediyor — parametre başına %0.14 doğruluk, bir kartvizite sığacak kadar küçük bir modelde.
 
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
 - **3.0 ile gelen yenilik:** çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
-- Yalnızca **480 parametre** ile **%90.14 MNIST doğruluğu** elde eder (LeNet-5'ten 110 kat daha verimli).
+- **634 parametre** ile **%89.89 MNIST doğruluğu**, 4,669 parametre ile 7x7 MNIST'te **%96.05** elde eder.
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
 - Kanıtlar için [örnekler](examples), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
@@ -47,16 +47,14 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 OdyssNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
 Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağlıdır. Ara katman yoktur.
 
-> **Yeniden ölçüm bekliyor (3.1.0).** `convergence_mnist_record`, `convergence_mnist_tiny` ve `convergence_mnist_reverse_record` artık Hebbian plastisite yerine temporal attention ile, seed 123 üzerinde çalışıyor — kontrollü iki seedli bir A/B record görevinde attention'ı önde çıkardı. Aşağıdaki bu üç örneğe ait bütün rakamlar önceki konfigürasyonda ölçüldü ve henüz yenilenmedi.
-
 | Görev | Geleneksel Kısıt | OdyssNet Çözümü | Sonuç | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Kimlik** | Önemsiz | **Atomik Birim** | Kayıp: 0.0 | `convergence_identity.py` |
 | **XOR** | Gizli Katman Gerekir | **Kaos Kapısı** (Zamana Katlanmış) | **Çözüldü (3 Nöron)** | `convergence_gates.py` |
 | **MNIST** | Gizli Katman Gerekir | **Sıfır-Gizli** | **Doğ: %98.71** | `convergence_mnist.py` |
 | **MNIST (8k)**| Gizli Katman Gerekir | **Gömülü Meydan Okuma** | **Doğ: %93.71** | `convergence_mnist_embed.py` |
-| **MNIST (Rekor)**| Gizli Katman Gerekir | **480-Param Rekoru** | **Doğ: %90.14** | `convergence_mnist_record.py` |
-| **MNIST Ters (Üretim)** | Dekoder Gerekir | **484-Param Üreteç** | **%93.83 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
+| **MNIST (Rekor)**| Gizli Katman Gerekir | **634-Param Çekirdek + Attention** | **Doğ: %89.89** | `convergence_mnist_record.py` |
+| **MNIST Ters (Üretim)** | Dekoder Gerekir | **728-Param Üreteç** | **%90.71 Sıkıştırma** | `convergence_mnist_reverse_record.py` |
 | **Sinüs Dalgası** | Osilatör Gerekir | **Programlanabilir VCO** | **Mükemmel Senkron** | `convergence_sine_wave.py` |
 | **Mandal** | LSTM Gerekir | **Çekici Havzası** (İrade) | **Sonsuz Tutma** | `convergence_latch.py` |
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
@@ -230,8 +228,6 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
     In:  1.0 -> Out:  0.9999
     In: -1.0 -> Out: -1.0000
     ```
-
-    ![Identity Convergence](img/convergence_identity.png)
     </details>
 *   **Script:** `examples/convergence_identity.py`
 *   **Çıkarım:** Mutlak minimum karmaşıklıkla temel sinyal iletimini ve `StepNorm` kararlılığını kanıtlar.
@@ -251,8 +247,6 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
        1.0   -1.0 |       0.9997 | 1 (Hedef: 1) TAMAM
        1.0    1.0 |      -1.0003 | 0 (Hedef: 0) TAMAM
     ```
-
-    ![XOR Convergence](img/convergence_gates.png)
     </details>
 *   **Mimari:** **3 Nöron** (2 Giriş, 1 Çıkış). **0 Gizli Nöron**. Toplam **9 Parametre**.
 *   **Düşünme Süresi:** **5 Adım**.
@@ -272,8 +266,6 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```text
     Epoch 100: Loss 0.0064 | Test Acc 98.71% | FPS: 5617.4
     ```
-
-    ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
 *   **Çıkarım:** Standart doğrusal modeller %92'de tavan yapar. OdyssNet, yalnızca **Zamansal Derinlik** aracılığıyla Derin Öğrenme katmanları olmadan Derin Öğrenme performansı (%98.71) elde eder.
@@ -298,17 +290,18 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
 *   **Hedef:** 7x7'ye Küçültülmüş MNIST. (Bir simgeden daha az.)
-*   **Mimari:** Toplam **59 Nöron** (~3.5k Parametre).
-*   **Sonuç:** **%95.58 Doğruluk**.
+*   **Mimari:** Toplam **59 Nöron**. 4,669 parametre — 3,717 parametrelik çekirdek ve genişliği 4 olan tek bir attention başlığı.
+*   **Sonuç:** **%96.05 Doğruluk**.
     <details>
     <summary>Küçük Sonuçları Gör</summary>
 
     ```text
-    Epoch 100: Loss 0.0242 | Test Acc 95.58%
+    Epoch  23: Loss 0.0155 | Test Acc 96.05%
+    Epoch 100: Loss 0.0155 | Test Acc 96.05%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
-*   **Çıkarım:** Bir önyükleyiciden daha küçük parametre sayılarıyla bile sistem sağlam özellikler öğrenir.
+*   **Çıkarım:** Bir önyükleyiciden daha küçük parametre sayılarıyla bile sistem sağlam özellikler öğrenir. Koşu 23. epoch'ta %96.05'e ulaşıp kalan 77 epoch boyunca bu değeri basamağına kadar koruyor — gürültülü bir plato değil, sabit nokta.
 
 #### 4. Ölçekli Test (Orta Kısıtlar)
 *   **Hedef:** 14x14'e Küçültülmüş MNIST.
@@ -341,36 +334,36 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Script:** `examples/advanced/convergence_mnist_embed.py`
 *   **Çıkarım:** 784 pikseli işlemek için 784 aktif nörona ihtiyaç duymadığımızı kanıtlar. **Asimetrik kelime dağarcığı projeksiyonu** kullanarak görsel bilgiyi yalnızca 10 nöronluk küçük bir "Düşünme Çekirdeğine" sıkıştırabiliriz; bu çekirdek daha sonra zamansal rezonans aracılığıyla sınıflandırmayı çözer. Standart modellerden 10 kat daha parametre-verimli.
 
-### E. 480 Parametrelik Dünya Rekoru (Elit Zeka Yoğunluğu)
-*   **Hedef:** MNIST'i çözmek ve **500'den az parametre** ile yüksek doğruluk elde etmek.
+### E. Parametre Rekoru (Elit Zeka Yoğunluğu)
+*   **Hedef:** MNIST'i %90'a ulaşan en küçük parametre bütçesiyle çözmek.
 *   **Kurulum:**
-    *   **Mimari:** 10 çekirdek nöronlu OdyssNet.
-    *   **Strateji:** 10 Sıralı Parça (her biri 79 piksel).
-    *   **Gizli Sos:** Küçük 3 nöronlu giriş projeksiyonu ve 10 sınıflı çıkış çözümleyici.
-    *   **Toplam Parametre:** **480**.
-*   **Sonuç:** 100 epoch'ta **Doğ: %90.14**.
+    *   **Mimari:** 4 temporal attention başlıklı 10 çekirdek nöron.
+    *   **Strateji:** 7x7'lik 16 spiral yama, düşünme adımı başına bir yama.
+    *   **Projeksiyonlar:** 4 nöronluk giriş gömmesi ve 10 sınıflı çıkış çözümleyici.
+    *   **Toplam Parametre:** **634** — 430 çekirdek, 204 attention.
+*   **Sonuç:** 100 epoch sonunda **Doğ: %89.89**, zirve **%90.91** (epoch 68).
     <details>
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
 
     ```text
-    OdyssNet: MNIST RECORD CHALLENGE (Elite 480-Param Model)
-    Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
-    Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
+    Epoch    1/100 | Loss 1.2036 | Acc 86.04%
+    Epoch   10/100 | Loss 0.9356 | Acc 90.23%
+    Epoch   68/100 | Loss 0.9045 | Acc 90.91%
+    Epoch  100/100 | Loss 0.9052 | Acc 89.89%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_record.py`
-*   **Çıkarım:** **Parametre başına %0.188 doğruluk** (90.14% / 480 parametre) elde ediyor. Bu model **LeNet-5'ten 110 kat daha verimli**. Zamansal düşünme adımlarından yararlanarak yüksek seviyeli zekanın mikroskobik bir parametrik alana sıkıştırılabileceğini gösteriyor. Modern yapay zekadaki **Entropi Sıkıştırma Limitlerine** en yakın şey budur.
-*   **Durum:** Bu tam %90.14 koşusu mevcut ChaosGrad optimizerından önceye ait (farklı bir scheduler/preset kombinasyonu, artık kaldırıldı). Bugünün zero-config ChaosGrad'ı ile script artık 100 epoch boyunca temiz bir şekilde eğitiliyor (artık ortada donmuyor — bkz. optimizer'ın loss-spike brake düzeltmesi) ve şu anda **%87.98**'de duruyor (zirve %88.46, epoch 86). Rekoru tekrar yakalamak ve geçmek için aktif olarak ayarlanıyor.
+*   **Çıkarım:** Parametre başına %0.14 doğruluk. Zamansal düşünme adımlarıyla yüksek seviyeli zeka mikroskobik bir parametrik alana sıkıştırılıyor; modern yapay zekada **Entropi Sıkıştırma Limitlerine** en yakın şey bu. 634 parametrenin 204'ü attention dalına ait ve erken bir yamayı geç bir yamaya taşıyan da o; kontrollü iki seedli bir karşılaştırma bu görevde onu Hebbian plastisitenin önüne koydu.
 
-### F. Ters Üreteç (484-Param Görsel Sentezi)
+### F. Ters Üreteç (728-Param Görsel Sentezi)
 *   **Hedef:** MNIST GÖREVİNİ TERSLE—dijital etiketlerden (0-9) 28×28 görseller üret.
 *   **Yön:** Rakam (Skaler) → Görsel (784 Piksel).
 *   **Kurulum:**
     *   **Mimari:** 12 nöronlu OdyssNet (2 giriş, 6 çıkış, 4 gizli).
     *   **Strateji:** 5 ısınma adımı + 16 çıkış adımı = toplam 21 düşünme adımı.
     *   **Parçalar:** 16 parça (7×7 her biri) 28×28 ızgarada döşenmiş.
-    *   **Toplam Parametre:** **484**.
-    *   **Sıkıştırma:** 10×784 = 7,840 değer vs. 484 parametre = **≈%93.83 Nöral Sıkıştırma**.
+    *   **Toplam Parametre:** **728** — 484 parametrelik çekirdek ve 4 temporal attention başlığı.
+    *   **Sıkıştırma:** 10×784 = 7,840 değer vs. 728 parametre = **≈%90.71 Nöral Sıkıştırma**.
 *   **Sonuç:** Eğitim sırasında tüm MNIST rakamlarının mükemmel görsel rekonstruksiyonu.
     <details>
     <summary>Üretilmiş Görselleri Gör (Eğitim İlerleme)</summary>
@@ -380,7 +373,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamının görsel desenine başarıyla eşlemeyi öğrendi. Çıkış, tüm 10 rakamın öğrenilmiş dinamiklerden temiz bir şekilde rekonstruksiyon ettiğini gösteriyor.
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_reverse_record.py`
-*   **Çıkarım:** OdyssNet'in **çift yönlü eşlemeleri** çözebildiğini kanıtlar. Burada kullanılan 484 parametreli ters-üreteç mimarisi, yukarıda anlatılan 480 parametreli sınıflandırıcıdan farklı bir kurulumdur; ancak her ikisi de aynı OdyssNet dinamik prensiplerini paylaşır. Bu üreteç, desen depolamasını sıralı sentez ile birleştirerek üretimi çözebilir. Bu, zamansal dinamiklerin mikroskobik parametre alanında tam görsel desenleri kodlayabileceğini gösteriyor. 480 parametreli sınıflandırıcı ile birleştirildiğinde, **toplam ~1KB parametre içeren tam çift yönlü MNIST modeli** elde ettik—ultra-verimli nöral bilişim için bir kapı açar.
+*   **Çıkarım:** OdyssNet'in **çift yönlü eşlemeleri** çözebildiğini kanıtlar. Üretim, temporal attention'ın tam da tasarlandığı durum: her yama daha önce çizilenlerle tutarlı olmak zorunda ve bunların tek kaydı çekirdeğin kendi durum geçmişi. 634 parametreli sınıflandırıcı ile bu 728 parametreli üreteç birlikte, **1,400 parametrenin altında tam çift yönlü bir MNIST modeli** oluşturuyor.
 
 ### G. Sinüs Dalgası Üreticisi (Dinamik Rezonans)
 *   **Hedef:** Frekansın $t=0$'daki tek bir giriş değeriyle kontrol edildiği sinüs dalgası üretmek.
@@ -492,24 +485,20 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 ### L. Beceri Transferi (Toplama -> Çarpma Transplantı)
 *   **Hedef:** Küçük bir OdyssNet'e gecikmeli iki darbenin toplamını öğretmek, öğrenilen ağırlıkları daha büyük bir OdyssNet'e transplant etmek ve çarpma görevinde transplanted ağ ile scratch ağı karşılaştırmak.
 *   **Meydan Okuma:** Zamansal aritmetik bilgisinin daha zor ama ilişkili bir göreve öğrenme hızlandırıcı olarak taşınıp taşınmadığını test etmek.
-*   **Sonuç:** Kontrollü başa baş koşuda **net transfer üstünlüğü**.
+*   **Sonuç:** Kontrollü başa baş koşuda **net transfer üstünlüğü**. Transplant edilen model, scratch modelin hiç ulaşamadığı bir kayba iniyor.
     <details>
     <summary>Transfer vs Scratch Günlüğünü Gör</summary>
 
     ```text
-    Küçük ADD final kayıp: 0.186758
-    Transplant copied: 1972/28612 (%6.9)
-    MULTIPLY ortalama kayıp | transplanted=0.260212 | scratch=0.084837
-    MULTIPLY final kayıp | transplanted=0.003207 | scratch=0.019192
-    loss <= 0.020 eşiğine iniş | transplanted=76 | scratch=273
-    Test MAE | transplanted=0.080321 | scratch=0.170214
-
-    Örnek tahminler (hedef= a*b):
-    a=-0.80, b=-0.70, hedef=+0.5600 | transferred=+0.6143 | scratch=+0.4472
+    Küçük ADD final kayıp: 0.073182
+    Transplant copied: 3448/51796 (%6.7)
+    MULTIPLY final kayıp | transplanted=0.016486 | scratch=0.028157
+    loss <= 0.020 eşiğine iniş | transplanted=194 | scratch=hiç
+    Test MAE | transplanted=0.196066 | scratch=0.203422
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
-*   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Bu, bileşimsel öğrenme yönünde somut bir adım ve AGI yolunda pratik kapılar açıyor.
+*   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Büyük modelin parametrelerinin yalnızca %6.7'si vericiden geliyor ve bu oran eğitimin nerede bittiğini değiştirmeye yetiyor. Bu, bileşimsel öğrenme yönünde somut bir adım.
 
 ## Vizyon: Silikonun Ruhu (OdyssNet-1B)
 OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.

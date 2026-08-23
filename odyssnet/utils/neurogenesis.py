@@ -249,10 +249,8 @@ class Neurogenesis:
                     return nn.Parameter(old_param.data.clone())
                 return nn.Parameter(new_p)
 
-            # The plastic gain and the off-diagonal mask are neuron-shaped and
-            # move with the core. New neurons start at gain zero, which is
-            # where every neuron starts: they receive no plastic drive until
-            # training asks for it.
+            # The plastic gain and the off-diagonal mask are neuron-shaped
+            # and move with the core; new neurons start at gain zero.
             if old_hebb_norm_w is not None:
                 new_hebb_norm = nn.RMSNorm(new_n, eps=model.hebb_norm.eps).to(device)
                 with torch.no_grad():

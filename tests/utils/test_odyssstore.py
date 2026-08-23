@@ -91,8 +91,8 @@ class TestSaveCheckpoint:
     def test_bare_filename_no_crash(self, tmp_path):
         """Saving to a filename with no parent component must not raise.
 
-        Previously, os.path.dirname("model.pt") returned "" and
-        os.makedirs("") raised FileNotFoundError on Windows.
+        `os.path.dirname("model.pt")` is "", and `os.makedirs("")` raises
+        FileNotFoundError on Windows.
         """
         import os as _os
         original_cwd = _os.getcwd()

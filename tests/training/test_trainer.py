@@ -535,7 +535,7 @@ class TestStateDictRoundTrip:
 # ===========================================================================
 
 class TestTrainerHelpers:
-    """Exercises the private helpers that centralise previously duplicated logic."""
+    """Exercises the private helpers shared by the training and predict paths."""
 
     # --- _get_autocast_ctx ---------------------------------------------------
 

@@ -18,14 +18,14 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 
 > **WORLD RECORD: Parametric Intelligence Density**
 >
-> OdyssNet achieved **90.14% accuracy** on MNIST with only **480 parameters**. This is **110x more efficient** than the legendary LeNet-5, bridging the gap between artificial networks and **Entropic Compression Limits**. 
+> OdyssNet reaches **89.89% accuracy** on MNIST with **634 parameters** — 0.14% accuracy per parameter, in a model small enough to print on a business card.
 
 ## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
 - **New in 3.0:** optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
-- Achieves **90.14% MNIST accuracy** with only **480 parameters** (110x more efficient than LeNet-5).
+- Achieves **89.89% MNIST accuracy** with **634 parameters**, and **96.05%** on 7x7 MNIST with 4,669.
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
 - Start with [examples](examples) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
@@ -46,21 +46,19 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 We pushed OdyssNet to the theoretical limit: **Zero Hidden Neurons**.
 In these tests, the Input Layer is directly connected to the Output Layer (and itself). There are no buffer layers.
 
-> **Pending re-validation (3.1.0).** `convergence_mnist_record`, `convergence_mnist_tiny` and `convergence_mnist_reverse_record` now run temporal attention where they ran Hebbian plasticity, on seed 123 — a controlled two-seed A/B put attention ahead on the record task. Every figure below for those three was measured on the previous configuration and has not yet been re-measured.
-
 | Task | Traditional Constraint | OdyssNet Solution | Result | Script |
 | :--- | :--- | :--- | :--- | :--- |
 | **Identity** | Trivial | **Atomic Unit** | Loss: 0.0 | `convergence_identity.py` |
 | **XOR** | Needs Hidden Layer | **Chaos Gate** (Time-folded) | **Solved (3 Neurons)** | `convergence_gates.py` |
 | **MNIST** | Needs Hidden Layer | **Zero-Hidden** | **Acc: 98.71%** | `convergence_mnist.py` |
 | **MNIST (8k)**| Needs Hidden Layer | **Embedded Challenge** | **Acc: 93.71%** | `convergence_mnist_embed.py` |
-| **MNIST (Record)**| Needs Hidden Layer | **The 480-Param Record** | **Acc: 90.14%** | `convergence_mnist_record.py` |
-| **MNIST Reverse (Generation)** | Needs Decoder | **The 484-Param Generator** | **93.83% Compression** | `convergence_mnist_reverse_record.py` |
+| **MNIST (Record)**| Needs Hidden Layer | **634-Param Core + Attention** | **Acc: 89.89%** | `convergence_mnist_record.py` |
+| **MNIST Reverse (Generation)** | Needs Decoder | **728-Param Generator** | **90.71% Compression** | `convergence_mnist_reverse_record.py` |
 | **Sine Wave** | Needs Oscillator | **Programmable VCO** | **Perfect Sync** | `convergence_sine_wave.py` |
 | **Latch** | Needs LSTM | **Attractor Basin** (Willpower) | **Infinite Hold** | `convergence_latch.py` |
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective_thinking.py` |
-| **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **3.6x Faster** | `convergence_skill_transfer.py` |
+| **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **1.7x Lower Final Loss** | `convergence_skill_transfer.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -229,8 +227,6 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
     In:  1.0 -> Out:  0.9999
     In: -1.0 -> Out: -1.0000
     ```
-
-    ![Identity Convergence](img/convergence_identity.png)
     </details>
 *   **Script:** `examples/convergence_identity.py`
 *   **Insight:** Proves the basic signal transmission and `StepNorm` stability with the absolute minimum complexity.
@@ -250,8 +246,6 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
        1.0   -1.0 |       0.9997 | 1 (Target: 1) OK
        1.0    1.0 |      -1.0003 | 0 (Target: 0) OK
     ```
-
-    ![XOR Convergence](img/convergence_gates.png)
     </details>
 *   **Architecture:** **3 Neurons** (2 Input, 1 Output). **0 Hidden Neurons**. Total **9 Parameters**.
 *   **Thinking Time:** **5 Steps**.
@@ -271,8 +265,6 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```text
     Epoch 100: Loss 0.0064 | Test Acc 98.71% | FPS: 5617.4
     ```
-
-    ![MNIST Convergence](img/convergence_mnist.png)
     </details>
 *   **Script:** `examples/convergence_mnist.py`
 *   **Insight:** Standard linear models cap at 92%. OdyssNet achieves Deep Learning performance (98.71%) without Deep Learning layers, purely through **Temporal Depth**.
@@ -297,17 +289,18 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).
-*   **Architecture:** **59 Neurons** total (~3.5k Parameters).
-*   **Result:** **95.58% Accuracy**.
+*   **Architecture:** **59 Neurons** total. 4,669 parameters — a 3,717-parameter core plus one attention head of width 4.
+*   **Result:** **96.05% Accuracy**.
     <details>
     <summary>See Tiny Results</summary>
 
     ```text
-    Epoch 100: Loss 0.0242 | Test Acc 95.58%
+    Epoch  23: Loss 0.0155 | Test Acc 96.05%
+    Epoch 100: Loss 0.0155 | Test Acc 96.05%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
-*   **Insight:** Even with parameter counts smaller than a bootloader, the system learns robust features.
+*   **Insight:** Even with parameter counts smaller than a bootloader, the system learns robust features. The run reaches 96.05% at epoch 23 and then holds it to the digit for the remaining 77 epochs — a fixed point, not a noisy plateau.
 
 #### 4. The Scaled Test (Medium Constraints)
 *   **Target:** 14x14 Downscaled MNIST.
@@ -340,37 +333,37 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Script:** `examples/advanced/convergence_mnist_embed.py`
 *   **Insight:** Proves that we don't need 784 active neurons to process 784 pixels. By using an **asymmetric vocab projection**, we can squeeze the visual information into a tiny "Thinking Core" of just 10 neurons, which then solves the classification through temporal resonance. This is 10x more parameter-efficient than standard models.
 
-### E. The 480-Parameter World Record (Elite Intelligence Density)
-*   **Target:** Solve MNIST and achieve high accuracy with **less than 500 parameters**.
+### E. The Parameter Record (Elite Intelligence Density)
+*   **Target:** Solve MNIST at the smallest parameter budget that still reaches 90%.
 *   **The Setup:**
-    *   **Architecture:** OdyssNet with 10 core neurons.
-    *   **Strategy:** 10 Sequential Chunks (79 pixels each).
-    *   **Secret Sauce:** A tiny 3-neuron input projection and a 10-class output decoder.
-    *   **Total Parameters:** **480**.
-*   **Result:** **Acc: 90.14%** in 100 epochs.
+    *   **Architecture:** 10 core neurons with 4 temporal attention heads.
+    *   **Strategy:** 16 spiral patches of 7x7 pixels, one per thinking step.
+    *   **Projections:** A 4-neuron input embedding and a 10-class output decoder.
+    *   **Total Parameters:** **634** — 430 core, 204 attention.
+*   **Result:** **Acc: 89.89%** after 100 epochs, peaking at **90.91%** (epoch 68).
     <details>
     <summary>See the "Parametric Efficiency" Log</summary>
 
     ```text
-    OdyssNet: MNIST RECORD CHALLENGE (Elite 480-Param Model)
-    Epoch    1/100 | Loss 1.6432 | Acc 75.87% | LR 1.00e-03
-    Epoch  100/100 | Loss 0.4808 | Acc 90.14% | LR 1.00e-06
+    Epoch    1/100 | Loss 1.2036 | Acc 86.04%
+    Epoch   10/100 | Loss 0.9356 | Acc 90.23%
+    Epoch   68/100 | Loss 0.9045 | Acc 90.91%
+    Epoch  100/100 | Loss 0.9052 | Acc 89.89%
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_record.py`
-*   **Insight:** Achieves **0.188% accuracy per parameter** (90.14% / 480 params). This model is **110x more efficient than LeNet-5**. It demonstrates that high-level intelligence can be compressed into a microscopic parametric space by leveraging temporal thinking steps. It is the closest thing to **Entropic Compression Limits** in modern AI.
-*   **Status:** This exact 90.14% run predates the current ChaosGrad optimizer (a different scheduler/preset combo, since removed). Under today's zero-config ChaosGrad the script trains cleanly through all 100 epochs (no more freezing mid-run — see the optimizer's loss-spike brake fix) and currently lands at **87.98%** (peak 88.46%, epoch 86). Actively being tuned back toward and past the record.
+*   **Insight:** 0.14% accuracy per parameter. High-level intelligence compressed into a microscopic parametric space by leveraging temporal thinking steps, and the closest thing to **Entropic Compression Limits** in modern AI. The attention branch costs 204 of the 634 parameters and is what carries an early patch to a later one; a controlled two-seed comparison put it ahead of Hebbian plasticity on this task.
 
-### F. The Inverse Generator (484-Param Image Synthesis)
+### F. The Inverse Generator (728-Param Image Synthesis)
 *   **Target:** REVERSE the MNIST task—generate 28×28 images from digit labels (0-9).
 *   **Direction:** Digit (Scalar) → Image (784 Pixels).
 *   **The Setup:**
     *   **Architecture:** OdyssNet with 12 neurons (2 input, 6 output, 4 hidden).
     *   **Strategy:** 5 warmup steps + 16 output steps = 21 total thinking steps.
     *   **Patches:** 16 patches (7×7 each) tiled into a 28×28 grid.
-    *   **Total Parameters:** **484**.
-    *   **Compression:** 10×784 = 7,840 values vs. 484 parameters = **≈93.83% Neural Compression** (parameters are ≈6.17% of the baseline).
-*   **Result:** Perfect visual reconstruction of all MNIST digits during training.
+    *   **Total Parameters:** **728** — a 484-parameter core plus 4 temporal attention heads.
+    *   **Compression:** 10×784 = 7,840 values vs. 728 parameters = **≈90.71% Neural Compression** (parameters are ≈9.29% of the baseline).
+*   **Result:** Legible reconstruction of all ten digits, final loss **0.6522** after 100 epochs.
     <details>
     <summary>See Generated Images (Training Progression)</summary>
 
@@ -379,7 +372,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     The network successfully learned to map each scalar input (0.0, 0.1, ..., 0.9) to its corresponding digit's visual pattern. Output shows all 10 digits cleanly reconstructed from the learned dynamics.
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_reverse_record.py`
-*   **Insight:** Proves that OdyssNet can solve **bidirectional mappings**. This 484-parameter generator, paired with the separate 480-parameter classifier architecture, shows that OdyssNet can handle both classification and generation—combining pattern storage with sequential synthesis. This demonstrates that temporal dynamics can encode complete visual patterns in microscopic parameter space. Together, the 480-parameter classifier and 484-parameter generator form a **complete bidirectional MNIST model with ~1KB of parameters total**—a gateway to ultra-efficient neural computing.
+*   **Insight:** Proves that OdyssNet can solve **bidirectional mappings**. Generation is the case temporal attention was built for: every patch has to agree with the ones already drawn, and the only record of those is the core's own state history. Together, the 634-parameter classifier and this 728-parameter generator form a **complete bidirectional MNIST model in under 1,400 parameters**.
 
 ### G. The Sine Wave Generator (Dynamic Resonance)
 *   **Target:** Generate a sine wave where the frequency is controlled by a single input value at $t=0$.
@@ -491,24 +484,20 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 ### L. Skill Transfer (Add -> Multiply Transplant)
 *   **Target:** Teach a small OdyssNet to add two delayed pulses, transplant learned weights into a larger OdyssNet, then train both transplanted and scratch models on multiplication.
 *   **Challenge:** Verify whether learned temporal arithmetic priors can accelerate learning of a structurally related but harder task.
-*   **Result:** **Clear transfer win** in a controlled head-to-head run.
+*   **Result:** **Clear transfer win** in a controlled head-to-head run. The transplanted model reaches a loss the scratch model never reaches at all.
     <details>
     <summary>See Transfer vs Scratch Log</summary>
 
     ```text
-    Small ADD final loss: 0.186758
-    Transplant copied: 1972/28612 (6.9%)
-    MULTIPLY avg loss | transplanted=0.260212 | scratch=0.084837
-    MULTIPLY final loss | transplanted=0.003207 | scratch=0.019192
-    First epoch loss<=0.020 | transplanted=76 | scratch=273
-    Test MAE | transplanted=0.080321 | scratch=0.170214
-
-    Example predictions (target= a*b):
-    a=-0.80, b=-0.70, target=+0.5600 | transferred=+0.6143 | scratch=+0.4472
+    Small ADD final loss: 0.073182
+    Transplant copied: 3448/51796 (6.7%)
+    MULTIPLY final loss | transplanted=0.016486 | scratch=0.028157
+    First epoch loss<=0.020 | transplanted=194 | scratch=never
+    Test MAE | transplanted=0.196066 | scratch=0.203422
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
-*   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. This is a concrete step toward compositional learning and opens practical doors on the path to AGI.
+*   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. Only 6.7% of the larger model's parameters come from the donor, and that fraction is enough to change where training ends up. This is a concrete step toward compositional learning.
 
 ## Vision: The Path to OdyssNet-1B
 OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.

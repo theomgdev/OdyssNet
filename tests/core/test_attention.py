@@ -353,12 +353,8 @@ class TestKVCache:
         assert model.attn.position == 4
 
     def test_cache_is_float32_under_autocast(self):
-        """Attention runs with autocast off, so the cache has one dtype
-        whatever the surrounding precision is — a cache written in fp16 during
-        training and read in fp32 during evaluation would otherwise have to be
-        converted at exactly the wrong moment. It is not free accuracy either:
-        half-precision attention trailed this path by a stable ~0.017 of loss
-        on embedded MNIST with four heads."""
+        """Attention runs with autocast off, so the cache holds one dtype
+        whatever the surrounding precision is."""
         model = _model()
         model.reset_state(2)
         with torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=True):
@@ -368,12 +364,9 @@ class TestKVCache:
         assert cached.dtype == torch.float32
 
     def test_read_and_write_stay_out_of_the_compiled_graph(self):
-        """The fp32 region above is what `torch.compile` miscompiles — Inductor
-        reports float for a buffer it emits as half and `o_proj` dies on the
-        mismatch — so both methods are hidden from Dynamo. Removing the
-        decorator silently breaks every compiled run with attention on, and
-        costs nothing to keep: the rest of the step still fuses around the
-        break (17.4 ms/batch against 17.6 fully traced in half, 60.4 eager)."""
+        """`torch.compile` miscompiles the fp32 region above, so both methods
+        are hidden from Dynamo. Removing the decorator breaks every compiled
+        run with attention on."""
         assert getattr(TemporalAttention.attend, "_torchdynamo_disable", False)
         assert getattr(TemporalAttention.write, "_torchdynamo_disable", False)
 

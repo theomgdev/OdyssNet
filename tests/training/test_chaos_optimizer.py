@@ -234,9 +234,9 @@ class TestStepping:
         for group in opt.param_groups:
             assert 'rms0' in group
 
-    def test_anchor_weight_matches_old_hard_regions(self):
-        # Deep inside what used to be the hard-included region, weight must
-        # still be (near) 1; deep inside what used to be excluded, (near) 0.
+    def test_anchor_weight_saturates_outside_the_ramp(self):
+        # Deep inside the trusted region the weight must be (near) 1; deep
+        # inside the excluded region, (near) 0. Only the ramp is gradual.
         assert ChaosGrad._anchor_weight(0.02) == pytest.approx(1.0, abs=1e-6)
         assert ChaosGrad._anchor_weight(0.5) == pytest.approx(1.0, abs=1e-6)
         assert ChaosGrad._anchor_weight(1e-6) == pytest.approx(0.0, abs=1e-6)
@@ -356,13 +356,11 @@ class TestBrake:
             ChaosGrad(m.parameters(), brake_factor=0.0)
 
     def test_spike_shrinks_applied_step(self):
-        # Intent changed, not just implementation: the brake used to mutate
-        # `d`/`d_numerator` directly, which permanently scarred the D-adaptation
-        # estimator on every trigger -- fatal on tasks where ordinary minibatch
-        # noise crosses the spike threshold every few hundred steps (see
-        # `_apply_brake`'s docstring). It now throttles a separate transient
-        # `brake_ceiling` and leaves the estimator's own bookkeeping untouched,
-        # so it keeps learning the true scale even while suppressed.
+        # The brake throttles a separate transient `brake_ceiling` and leaves
+        # the estimator's bookkeeping untouched, so it keeps learning the true
+        # scale while suppressed. Mutating `d`/`d_numerator` instead would scar
+        # the estimator on every trigger -- fatal where ordinary minibatch
+        # noise crosses the spike threshold (see `_apply_brake`'s docstring).
         m = _model()
         opt = ChaosGrad.from_model(m)
         _train_steps(m, opt, steps=20)
@@ -737,10 +735,9 @@ class TestNeurogenesisMigration:
 
     def test_fixed_lr_history_switches_to_adaptive(self):
         # A checkpoint trained under a fixed rate, later switched to the
-        # estimator (groups' lr set back to None): fixed-rate mode never
-        # created the estimator state `s`/`p0`, and the first adaptive step
-        # used to crash with a KeyError. They are now lazily initialized at
-        # the switch, with the reference point at the current (warm) weights.
+        # estimator (groups' lr set back to None). Fixed-rate mode never
+        # creates `s`/`p0`, so the switch has to initialize them lazily with
+        # the reference point at the current (warm) weights.
         m = _model()
         opt = ChaosGrad.from_model(m, lr=1e-3)
         _train_steps(m, opt, steps=5)
@@ -754,10 +751,9 @@ class TestNeurogenesisMigration:
 
 class TestPlasticGainIsNeverDecayed:
     def test_hebb_norm_gain_lands_in_a_decay_free_family(self):
-        """The plastic gain starts at zero and has to grow. Weight decay would
-        pull it back and switch plasticity off silently — the exact failure the
-        3.1.0 repair existed to end. It reaches `modulation` by falling through
-        the classifier rather than by name, so pin it."""
+        """The plastic gain starts at zero and has to grow; weight decay would
+        pull it back and switch plasticity off silently. It reaches
+        `modulation` by falling through the classifier, so pin it."""
         model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7],
                          device="cpu", hebb_type="both")
         groups = ChaosGrad.classify_params(model)

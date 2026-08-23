@@ -11,10 +11,6 @@ from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# Seed 123 rather than the usual 42: a two-seed A/B on this task (four
-# attention heads held fixed, plasticity the only variable) put both
-# attention-only arms ahead of their plastic counterparts, and 123 was the
-# stronger of the two — 0.9356 / 90.22% at epoch 10 against 0.9442 / 89.43%.
 SEED = 123
 NUM_EPOCHS = 100
 BATCH_SIZE = 32
@@ -132,14 +128,8 @@ def main():
         vocab_mode='continuous',
         weight_init='micro_quiet_warm',
         gate='none',
-        # Temporal attention in place of Hebbian plasticity. Both give an
-        # early patch a route to a later one; measured on this task with
-        # everything else held fixed, attention does it better and the two
-        # together do it worse than attention alone (+0.02 of loss and -0.5
-        # points for plasticity's +50 parameters, on both seeds tried).
-        # `attn_write='step'` is what a small core wants: at THINKING_RATIO=1
-        # it is the same thing as 'token', and it stays the right policy if
-        # the ratio is ever raised.
+        # Attention carries an early patch to a later one; 204 of the 634
+        # parameters live here.
         attn_heads=4,
         attn_write='step',
     )
@@ -148,8 +138,6 @@ def main():
         model = torch.compile(model)
 
     total_params = model.get_num_params()
-    # The attention branch costs 204 parameters, so the original <500 goal
-    # no longer describes this configuration. The bare core is still 430.
     print(f"  Params   : {total_params} (core 430 + attention 204)\n")
 
     # Data

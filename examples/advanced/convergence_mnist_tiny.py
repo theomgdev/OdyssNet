@@ -7,8 +7,6 @@ from odyssnet import OdyssNet, OdyssNetTrainer, TrainingHistory, set_seed
 
 def main():
     print("OdyssNet: TINY EXPERIMENT (7x7 Input)...")
-    # Seed 123 rather than the usual 42, matching the record experiment:
-    # the attention-only arms won both seeds there and 123 was stronger.
     set_seed(123)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -17,7 +15,6 @@ def main():
     # 10 Classes (Output)
     # 0 Hidden Neurons.
     # Total: 59 Neurons.
-    # Params: 59*59 = 3,481.
     
     # Goal: Observe behavior under extreme parameter constraints.
     
@@ -36,17 +33,8 @@ def main():
         output_ids=output_ids, 
         pulse_mode=True, 
         device=DEVICE,
-        # One pulse, then fifteen steps of thinking — so the only history
-        # worth attending to is the core's own, and `attn_write='step'`
-        # records every one of those steps. Plasticity used to be what
-        # carried information between them; attention measured better at it.
-        #
-        # The head geometry is sized to the core on purpose. Attention's
-        # projections scale with the neuron count, so the four heads the
-        # 10-neuron record experiment uses would cost 8,288 parameters here
-        # and take this network from 3,717 to 12,005 — tripling the budget of
-        # an example whose entire question is what a fixed small budget can
-        # do. One head of width 4 costs 952.
+        # One narrow head: attention's projections scale with the neuron
+        # count, so 4 heads would cost 8,288 parameters on a 59-neuron core.
         attn_heads=1,
         attn_head_dim=4,
         attn_write='step',

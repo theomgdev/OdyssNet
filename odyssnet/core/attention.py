@@ -158,28 +158,19 @@ class TemporalAttention(nn.Module):
         self.rope_theta = float(rope_theta)
         self.scale = 1.0 / math.sqrt(head_dim)
 
-        # The branch's contribution is divided by the square root of its own
-        # width, and this is load-bearing rather than cosmetic. `o_proj` starts
-        # at zero and every optimizer in this library is Adam-family, so its
-        # magnitude after k steps is set by the step size, not by the gradient:
-        # |o_proj| ~ k*lr whatever the width. The contribution it produces
-        # would then grow as sqrt(heads*head_dim) — a wide branch reaches a
-        # destructive scale in the same number of steps a narrow one takes to
-        # reach a useful one. Measured on associative recall at 128 neurons:
-        # without this, 1 head x 16 matched the no-attention baseline (54%)
-        # while 4 heads x 64 collapsed to chance (6%), having drowned the
-        # recurrence it was supposed to assist. Dividing here makes the
-        # reachable contribution width-independent, which is the same reasoning
-        # behind GPT-2's 1/sqrt(2*n_layers) residual-branch init.
+        # Load-bearing. `o_proj` starts at zero under an Adam-family
+        # optimizer, so |o_proj| ~ k*lr regardless of width and the branch's
+        # contribution would otherwise grow as sqrt(heads*head_dim) — wide
+        # branches reach a destructive scale while narrow ones reach a useful
+        # one. Same reasoning as GPT-2's 1/sqrt(2*n_layers) residual init.
         self.out_scale = 1.0 / math.sqrt(heads * head_dim)
 
         self.q_proj = nn.Linear(num_neurons, heads * head_dim, bias=False, device=device)
         self.k_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
         self.v_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
-        # Zero-initialized: at step zero the attention branch contributes
-        # exactly nothing, so an attention-enabled model *is* the 2.x model
-        # until training decides otherwise. Every known-good initialization
-        # story (resonant core, edge of chaos) survives switching this on.
+        # Zero-initialized: the branch contributes exactly nothing at step
+        # zero, so switching attention on leaves the core's initialization
+        # story intact.
         self.o_proj = nn.Linear(heads * head_dim, num_neurons, bias=False, device=device)
         nn.init.zeros_(self.o_proj.weight)
 
@@ -191,9 +182,8 @@ class TemporalAttention(nn.Module):
             inv = 1.0 / (self.rope_theta ** (
                 torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim
             ))
-            # Not persistent: it is a constant derived from the config, and
-            # keeping it out of the state dict keeps checkpoints comparable
-            # with models that only differ in `rope_theta`.
+            # Non-persistent: derived from config, so checkpoints stay
+            # comparable across models differing only in `rope_theta`.
             self.register_buffer('inv_freq', inv, persistent=False)
         else:
             self.inv_freq = None
@@ -274,6 +264,13 @@ class TemporalAttention(nn.Module):
     # Read                                                                #
     # ------------------------------------------------------------------ #
 
+    # `attend` and `write` carry @torch._dynamo.disable. They run with autocast
+    # off so the cache stays single-dtype and the softmax accumulates in fp32,
+    # and torch.compile miscompiles that region: Inductor reports float for a
+    # buffer it emits as half, and o_proj dies on `Half != float`. A
+    # source-level `.float()` does not help — the same wrong model folds it
+    # away. Removing either decorator breaks every compiled run.
+
     def cache_view(self):
         """
         The attendable cache as `(segments, position)`.
@@ -339,8 +336,6 @@ class TemporalAttention(nn.Module):
         cache is kept in segments; scores are simply the smaller thing to
         join, and joining them keeps the result a single exact softmax with no
         rescaling step.
-
-        Hidden from Dynamo on purpose — see `write` for why.
         """
         if not segments:
             return None
@@ -380,34 +375,7 @@ class TemporalAttention(nn.Module):
 
     @torch._dynamo.disable
     def write(self, h):
-        """
-        Append one cache entry built from state `h`, shaped `(B, N)`.
-
-        `attend` and `write` are both kept out of Dynamo's graph, and the two
-        reasons compound.
-
-        The precision one: attention runs with autocast off so the cache holds
-        one dtype whatever the surrounding precision is, and so the softmax and
-        the accumulation over keys stay in float32. That is not cosmetic — on
-        embedded MNIST with four heads, half-precision attention trailed the
-        float32 path by a stable ~0.017 of loss from the fourth epoch on
-        (0.8220 against 0.8043 at epoch 8). But `torch.compile` miscompiles an
-        `autocast(enabled=False)` region: Inductor's dtype model reports float
-        for a buffer it emits as half, and `o_proj`'s matmul dies on
-        `expected mat1 and mat2 to have the same dtype ... Half != float`. No
-        source-level cast repairs it — an explicit `.float()` is folded away by
-        the same wrong model.
-
-        Hiding the two methods costs nothing measurable. The step is bound by
-        kernel launches, and the rest of it still fuses around the break:
-        compiled with plasticity and four heads, 17.4 ms/batch here against
-        17.6 for a fully traced half-precision path and 60.4 eager (10
-        neurons, batch 32, 16 steps). So the graph break buys exact float32
-        attention for free rather than trading accuracy for speed.
-
-        The bookkeeping one: `write` appends to Python lists and bumps a
-        counter. Eager is where that belongs.
-        """
+        """Append one cache entry built from state `h`, shaped `(B, N)`."""
         with torch.amp.autocast(device_type=h.device.type, enabled=False):
             self._write(h.float())
         self._writes += 1

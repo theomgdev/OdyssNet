@@ -104,7 +104,8 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
-        hebb_type="both"
+        hebb_type="both",
+        attn_heads=4
     )
     small_trainer = OdyssNetTrainer(
         small_model,
@@ -141,7 +142,8 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
-        hebb_type="both"
+        hebb_type="both",
+        attn_heads=4
     )
 
     set_seed(777)
@@ -150,7 +152,8 @@ def main():
         input_ids=[0],
         output_ids=[1],
         device=device,
-        hebb_type="both"
+        hebb_type="both",
+        attn_heads=4
     )
 
     transplant_stats = transplant_weights(transfer_model, ckpt_path, device=device, verbose=True)

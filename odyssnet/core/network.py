@@ -125,35 +125,12 @@ class OdyssNet(nn.Module):
             return grad.clone().fill_diagonal_(0.0)
         self.W.register_hook(_zero_diagonal_grad)
 
-        # Temporal attention (optional). `attn_heads=None` — the default —
-        # builds nothing at all: no parameters, no cache, no per-step cost, and
-        # a state dict identical to a 2.x model's.
-        #
-        # Built *after* the core is initialized, deliberately. The projections
-        # draw from the same RNG stream, so constructing them earlier would
-        # shift every later draw and give an attention-enabled model a
-        # different W for the same seed — turning "with attention" vs "without"
-        # into a two-variable comparison.
-        #
-        # Two knobs decide how often attention runs, and they are the ones that
-        # set its cost. Both are no-ops at one step per token.
-        #
-        # `attn_write` — which steps leave a trace in the KV cache:
-        #   "token" — one entry per input token (the last echo step of each
-        #             token group, the same state the output is read from), so
-        #             the cache is measured in tokens and extra thinking steps
-        #             do not multiply its length.
-        #   "step"  — one entry per thinking step, letting the model attend to
-        #             its own intermediate reasoning at (steps-per-token)x the
-        #             cache.
-        # `attn_read` — which steps issue a query:
-        #   "step"  — every one of them. The most expressive, and the reason
-        #             extra thinking steps cost more with attention than
-        #             without: the query, not the entry, is what repeats.
-        #   "token" — only the step a token arrives on, which is where a
-        #             lookup has something new to be about. The echo steps
-        #             then run on state alone, exactly as pulse_mode does with
-        #             the input itself.
+        # Temporal attention (optional); `attn_heads=None` builds nothing.
+        # Constructed *after* the core so it draws no RNG the core would have
+        # consumed — an attention-enabled model keeps the same W for the same
+        # seed, which is what makes ablating it a one-variable comparison.
+        # `attn_write` sets which steps enter the cache and `attn_read` which
+        # steps query it; see docs/LIBRARY.md for the cost of each.
         if attn_heads:
             self.attn = TemporalAttention(
                 num_neurons,
@@ -168,29 +145,17 @@ class OdyssNet(nn.Module):
                 device=device,
             )
             with torch.no_grad():
-                # Query/key/value only. `o_proj` keeps the zeros the attention
-                # module set: it is what makes an attention-enabled network
-                # start out numerically identical to the same network without
-                # it, so 'resonant' and the rest of the core's init story hold
-                # unchanged.
+                # Query/key/value only — `o_proj` keeps its zeros, which is
+                # what makes the branch inert at step zero.
                 self._apply_init(self.attn.q_proj.weight, self.attn_weight_init)
                 self._apply_init(self.attn.k_proj.weight, self.attn_weight_init)
                 self._apply_init(self.attn.v_proj.weight, self.attn_weight_init)
 
-        # Hebbian Learning (optional)
-        # hebb_type controls the active plasticity mechanism:
-        #   None       — plasticity disabled (default).
-        #   "temporal" — STDP-style correlation between t and t-1.
-        #   "spatial"  — co-activation correlation at t.
-        #   "both"     — both mechanisms active.
-        # hebb_res controls the structural resolution of plasticity:
-        #   "global"   — single scalar factor and decay.
-        #   "neuron"   — per-neuron (N,) vector factor and decay.
-        #   "synapse"  — per-synapse (N,N) matrix factor and decay.
-        # Factors and decays are raw logits; sigmoid maps them to (0, 1).
-        # sigmoid(-3.0) ≈ 0.047 — small initial Hebbian influence.
-        # sigmoid( 2.2) ≈ 0.900 — high initial retention.
-
+        # Hebbian plasticity (optional). `hebb_type` selects the mechanism
+        # (temporal = h_t against h_{t-1}, spatial = h_t against itself, both);
+        # `hebb_res` its resolution (scalar, per-neuron, per-synapse). Factors
+        # and decays are raw logits: sigmoid(-3.0) ~ 0.047 initial influence,
+        # sigmoid(2.2) ~ 0.900 initial retention.
         if hebb_type not in (None, "temporal", "spatial", "both"):
             raise ValueError(f"hebb_type must be None, 'temporal', 'spatial', or 'both', got {hebb_type!r}")
         if hebb_res not in ("global", "neuron", "synapse"):
@@ -200,22 +165,10 @@ class OdyssNet(nn.Module):
         self.hebb_res = hebb_res
 
         # The plastic contribution is normalized and passed through a
-        # zero-initialized gain before it reaches W. Three things follow, and
-        # each of them was a defect before:
-        #   1. The strength factor used to multiply twice — once accumulating
-        #      into the trace, once applying it — so the effective gain was
-        #      sigmoid(logit)**2, roughly 32x below the measured optimum while
-        #      the logit claimed otherwise. Normalizing removes the scale from
-        #      the application, so the factor shapes *which* synapses are
-        #      plastic and the gain decides *how much*.
-        #   2. Nothing could reach the plasticity controls with a gradient
-        #      worth the name; the factor logits sat on their initialization
-        #      forever. The gain is a straight multiplier on the contribution,
-        #      so it gets one.
-        #   3. Turning plasticity on used to change the network immediately.
-        #      At gain zero it does not change it at all, which makes
-        #      hebb_type an ablation with one variable in it — the same
-        #      property temporal attention gets from its zero-init o_proj.
+        # zero-initialized gain before it reaches W: the factor decides *which*
+        # synapses are plastic, the gain decides *how much*. Zero gain means
+        # switching plasticity on changes nothing until training moves it,
+        # which is what makes hebb_type a one-variable ablation.
         self.hebb_norm = None
 
         self.t_hebb_factor = None
@@ -248,11 +201,9 @@ class OdyssNet(nn.Module):
 
             self.hebb_norm = nn.RMSNorm(num_neurons).to(device)
             nn.init.zeros_(self.hebb_norm.weight)
-            # Off-diagonal mask, pre-divided by the fan-in: self-correlation
-            # is memory_feedback's job and W's diagonal is structurally zero,
-            # and every correlation is scaled by 1/N anyway, so the two ride
-            # in one buffer and one multiply. A buffer rather than
-            # fill_diagonal_, because the correlation is differentiable now.
+            # Off-diagonal mask pre-divided by the fan-in: self-correlation
+            # belongs to memory_feedback and W's diagonal is structurally zero,
+            # so the mask and the 1/N scale ride in one buffer.
             self.register_buffer('_offdiag',
                                  (1.0 - torch.eye(num_neurons, device=device)) / num_neurons,
                                  persistent=False)
@@ -560,8 +511,7 @@ class OdyssNet(nn.Module):
             if hebb_W_contrib is None:
                 signal = h_t_in @ self.W + self.B
             else:
-                # (B, N, N): one effective matrix per example, so the batched
-                # product is a bmm rather than a shared matmul.
+                # One effective matrix per example, so this is a bmm.
                 W_eff = self.W + hebb_W_contrib
                 signal = torch.bmm(h_t_in.unsqueeze(1), W_eff).squeeze(1) + self.B
             if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
@@ -633,34 +583,16 @@ class OdyssNet(nn.Module):
                 max_outputs = x_input.shape[1]
 
         if self.hebb_type is not None:
-            # The live trace carries a batch dimension: every example writes
-            # its own associations. Without it a batch shares one trace, the
-            # per-example associations average away, and a batched forward
-            # computes a different function than the same examples run one at
-            # a time (measured: 9.5e-3 against 2.98e-7) — training then never
-            # exercises the mechanism inference uses, which is why plasticity
-            # could not do one-shot binding at all.
+            # The live trace carries a batch dimension so every example writes
+            # its own associations; the persistent buffer holds the batch mean
+            # so checkpoints and neurogenesis stay (N, N). Every step retains
+            # one (B, N, N) trace for backward, so memory is steps x B x N^2 —
+            # affordable on small cores, not on large ones.
             #
-            # The *persistent* buffer stays (N, N) and holds the batch mean, so
-            # checkpoints, neurogenesis padding and weight transplants are
-            # untouched, and the carry into the next call is the shared part of
-            # what the batch learned.
-            #
-            # The cost is real and worth stating plainly: the live trace is
-            # `(B, N, N)` and every step retains one for the backward pass, so
-            # memory grows as steps x B x N^2. That is affordable exactly where
-            # plasticity earns its place — small cores with short rollouts —
-            # and unaffordable on a large core, where it was measured to
-            # contribute nothing anyway. Run big cores with hebb_type=None.
-            #
-            # Temporal and spatial differ in one thing only: which state the
-            # correlation pairs with. Everything downstream is the same
-            # arithmetic on the same shapes, so the paths are stacked on a
-            # leading axis and 'both' costs one set of kernels instead of two.
-            # That is the axis worth optimizing here — profiled on the record
-            # config (10 neurons, batch 32, 16 steps) a step issues thousands
-            # of kernel launches for 20 ms of GPU work, so the launch count is
-            # the runtime, not the arithmetic in any one of them.
+            # Temporal and spatial differ only in which state the correlation
+            # pairs with, so they are stacked on a leading path axis and
+            # 'both' costs one set of kernels instead of two. The step is
+            # bound by kernel launches, not by the arithmetic in any of them.
             paths = []
             if self.hebb_type in ("temporal", "both"):
                 paths.append((self.t_hebb_factor, self.t_hebb_decay,
@@ -678,9 +610,8 @@ class OdyssNet(nn.Module):
                               .unsqueeze(1).expand(-1, batch_sz, -1).clone())
 
             # Broadcast shapes resolved once rather than per step. 'neuron'
-            # indexes W's presynaptic row; 'synapse' carries a factor per
-            # connection and hands its diagonal to the self-connections that
-            # memory_feedback owns.
+            # indexes W's presynaptic row; 'synapse' hands its diagonal to the
+            # self-connections memory_feedback owns.
             n = self.num_neurons
             if self.hebb_res == "global":
                 w_view, m_view = (n_paths, 1, 1, 1), (n_paths, 1, 1)
@@ -816,15 +747,13 @@ class OdyssNet(nn.Module):
 
             if self.hebb_type is not None:
                 h_prev = h_t
-                # The factor decides *which* synapses are plastic; the summed
-                # paths are what the recurrence sees, so they take one
-                # normalization and one learnable gain between them.
+                # The summed paths are what the recurrence sees, so they share
+                # one normalization and one gain.
                 cur_hebb_W   = (hebb_lr_W * local_hebb_W).sum(0)
                 cur_hebb_mem = (hebb_lr_m * local_hebb_mem).sum(0)
-                # RMSNorm rescales each row of the last dimension on its own,
-                # so norming W's rows and the memory vector in a single call is
-                # arithmetically the same as norming them apart — and it is one
-                # kernel chain instead of two.
+                # RMSNorm rescales each row of the last dimension independently,
+                # so norming W's rows and the memory vector together is exactly
+                # norming them apart, in one kernel chain instead of two.
                 normed = self.hebb_norm(
                     torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
                 cur_hebb_W   = normed[:, :-1]
@@ -867,30 +796,21 @@ class OdyssNet(nn.Module):
                 self.attn.write(h_t)
 
             if self.hebb_type is not None:
-                # AMP autocast overrides explicit .float() casts for matmul-family ops
-                # (einsum included), forcing them back to float16. Disable autocast here
-                # so the correlation is always accumulated in float32.
+                # AMP would force these matmul-family ops back to float16
+                # whatever the explicit casts say; the correlation accumulates
+                # in float32.
                 with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
-                    # Not detached, and that is the point. Two stop-gradients
-                    # used to sit on this path: one hiding the correlation's
-                    # dependence on the state, one truncating the trace's own
-                    # history. Only the second costs memory, and only the
-                    # first costs capability — leaving the correlation
-                    # attached while the trace history stays truncated at one
-                    # step recovers three quarters of the gap for the same
-                    # bytes (0.8321 -> 0.9550 on episodic recall). The
-                    # truncation is still there: `local_*.detach()` below.
+                    # The correlation carries gradient. Only the trace's own
+                    # history is truncated, by `local_*.detach()` below.
                     h_t_f    = h_t.float()
                     h_prev_f = h_prev.float()
 
-                    # Novelty gate. Co-activation across an already-strong
-                    # synapse is tautological — the neuron fired because the
-                    # weight drove it, not because the pattern is new — so the
-                    # correlation is damped where W is large and left alone
-                    # where it is small. Parameter-free and detached: it
-                    # shapes plasticity without opening a second-order path
-                    # through W. `_offdiag` already carries the 1/N scale and
-                    # the diagonal mask, so the whole gate is one divide.
+                    # Novelty gate: co-activation across an already-strong
+                    # synapse says the weight fired the neuron, not that the
+                    # pattern is new, so the correlation is damped where W is
+                    # large. Detached, so it opens no second-order path through
+                    # W. `_offdiag` carries the 1/N scale and the diagonal mask,
+                    # making the whole gate one divide.
                     w_eff = self.W + cur_hebb_W
                     mem_eff = self.memory_feedback + cur_hebb_mem
                     gate_W   = self._offdiag / (1.0 + w_eff.detach().float().abs())
@@ -898,9 +818,8 @@ class OdyssNet(nn.Module):
                     if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
                     if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
 
-                    # The only difference between the paths: temporal pairs the
-                    # previous state with the current one, spatial pairs the
-                    # current state with itself.
+                    # Temporal pairs the previous state with the current one;
+                    # spatial pairs the current state with itself.
                     if self.hebb_type == "temporal":
                         src = h_prev_f.unsqueeze(0)
                     elif self.hebb_type == "spatial":
@@ -931,8 +850,7 @@ class OdyssNet(nn.Module):
                 self.attn.detach_cache()
             if self.hebb_type is not None:
                 # Back out of the stacked path axis into the per-mechanism
-                # buffers, taking the batch mean: what survives the call is the
-                # part of the trace the whole batch agreed on.
+                # buffers; the batch mean is what survives the call.
                 carry_W   = local_hebb_W.detach().mean(dim=1)
                 carry_mem = local_hebb_mem.detach().mean(dim=1)
                 path = 0

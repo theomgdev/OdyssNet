@@ -301,9 +301,8 @@ class ChaosGrad(torch.optim.Optimizer):
         ``torch.optim.Optimizer.load_state_dict`` replaces the group dicts
         wholesale with the saved ones, so any key added to ``defaults``
         after a checkpoint was written would silently vanish and resurface
-        as a ``KeyError`` mid-training (this exact gap has shipped before —
-        the brake-config fields once fell out of a round-trip). Missing
-        keys are filled from ``defaults``; ``rms0`` (computed at
+        as a ``KeyError`` mid-training. Missing keys are filled from
+        ``defaults``; ``rms0`` (computed at
         construction, not part of ``defaults``) is preserved from the
         pre-load groups by position — the traction anchor must keep
         pointing at the *initial* weight scale, and torch already requires
@@ -378,13 +377,10 @@ class ChaosGrad(torch.optim.Optimizer):
                     state['exp_avg'] = torch.zeros_like(p)
                     state['exp_avg_sq'] = torch.zeros_like(p)
                 if adaptive and 's' not in state:
-                    # Covers both fresh state and a fixed-lr history switched
-                    # to adaptive afterwards (e.g. a checkpoint trained under
-                    # `lr=<float>` resumed with the estimator on): fixed-rate
-                    # mode never creates `s`/`p0`, and indexing them here
-                    # used to crash the first adaptive step with a KeyError.
-                    # The reference point is wherever the weights are *now* —
-                    # for a warm start that is the correct distance origin.
+                    # Covers fresh state and a fixed-lr history switched to
+                    # adaptive afterwards: fixed-rate mode never creates
+                    # `s`/`p0`. The reference point is wherever the weights
+                    # are now, the correct distance origin for a warm start.
                     state['s'] = torch.zeros_like(p)
                     state['p0'] = p.detach().clone()
 
@@ -468,16 +464,12 @@ class ChaosGrad(torch.optim.Optimizer):
     #: (zeros / micro-quiet) and fade out of the traction anchor; groups
     #: whose RMS lands within `_TRUST_RMS_NEUTRAL_BAND` of exactly 1.0 are
     #: neutral multiplier inits (scales, norms) and fade out for the same
-    #: reason. Both boundaries used to be hard cutoffs: a custom init landing
-    #: one float off either edge (rms0=0.0009 vs 0.0011, or 1.05 vs 1.15)
-    #: got a silently different cap with no warning — and this floor sits
-    #: exactly on the init std of `micro_quiet_warm` (network.py, std=1e-3),
-    #: one of this library's own bundled init strategies, so groups using it
-    #: land squarely on the old cliff by construction, not by edge case:
-    #: measured on `convergence_mnist_record.py` (which uses it), the same
-    #: seed produced a 16.8x different cap on CPU vs CUDA under the old hard
-    #: cutoff, purely from which side of 1e-3 the RNG noise landed a group's
-    #: rms0 on. `_anchor_weight` turns both boundaries into ramps over the
+    #: reason. Both boundaries are ramps rather than cutoffs: a hard edge makes
+    #: the cap discontinuous in rms0, and this floor sits exactly on the init
+    #: std of `micro_quiet_warm` (network.py, std=1e-3), so groups using that
+    #: bundled strategy land on it by construction. With a cutoff, the same
+    #: seed produced a 16.8x different cap on CPU vs CUDA purely from which
+    #: side of 1e-3 RNG noise put rms0 on. `_anchor_weight` ramps over the
     #: same numbers instead of adding new ones.
     _TRUST_RMS_FLOOR = 1e-3
     #: One decade above the floor: full confidence is reached, not at the
@@ -527,17 +519,16 @@ class ChaosGrad(torch.optim.Optimizer):
 
         The reference itself is the smallest rms0 among groups already at
         full trust, not a fixed constant. A fixed reference
-        (`_TRUST_RMS_FLOOR_HIGH` — tried and rejected) is "non-binding" only
-        relative to itself: if some other, genuinely-trusted group's own
-        rms0 is smaller than that constant (a perfectly normal "quiet"
-        init), an excluded group's fallback would undercut it and tighten
-        the cap for a reason that has nothing to do with the excluded
-        group's own scale. Measured on `convergence_mnist_record.py`: under
-        the fixed reference, `chaos_core`/`projections` (excluded,
-        near-zero) fell back to 0.01, undercutting `memory_feedback`'s real
-        0.024 and moving the cap from 0.006 to 0.0025 — a regression on an
-        already-validated example. Anchoring to the trusted set's own
-        minimum instead reproduces the old value exactly whenever nothing
+        (`_TRUST_RMS_FLOOR_HIGH`) is "non-binding" only relative to itself:
+        if some other, genuinely-trusted group's own rms0 is smaller than
+        that constant (a perfectly normal "quiet" init), an excluded group's
+        fallback would undercut it and tighten the cap for a reason that has
+        nothing to do with the excluded group's own scale. On
+        `convergence_mnist_record.py` a fixed reference let
+        `chaos_core`/`projections` fall back to 0.01, undercutting
+        `memory_feedback`'s real 0.024 and moving the cap from 0.006 to
+        0.0025. Anchoring to the trusted set's own minimum instead
+        reproduces the unclamped value exactly whenever nothing
         sits mid-ramp (every bundled example), and degrades gracefully
         (falls back to `_TRUST_RMS_FLOOR_HIGH`) only when no group is fully
         trusted yet.
@@ -614,10 +605,10 @@ class ChaosGrad(torch.optim.Optimizer):
     _BRAKE_RELEASE = 0.99
     #: Relaxation while the loss is still elevated above the pre-spike
     #: reference. Deliberately glacial (~1400 calls to undo one brake hit):
-    #: an unconditional release was measured handing a diverging LLM run its
-    #: full step size back within 200 steps of the brake firing, while the
-    #: loss was still climbing — the brake must not let go just because time
-    #: passed. Nonzero rather than a hard hold so a permanent regime shift
+    #: an unconditional release hands a diverging run its full step size back
+    #: within 200 steps of the brake firing, while the loss is still climbing.
+    #: The brake must not let go just because time passed. Nonzero rather than
+    #: a hard hold so a permanent regime shift
     #: (loss legitimately settling at a higher level, e.g. a task change)
     #: eventually frees the step size instead of pinning it forever.
     _BRAKE_RELEASE_HELD = 0.9995
@@ -684,9 +675,8 @@ class ChaosGrad(torch.optim.Optimizer):
         # finitely many calls even though it never crosses it exactly. The
         # σ floor cuts the other way too: a very noisy divergence on a task
         # whose healthy loss sits near zero (σ > |ref|) can be declared
-        # recovered early — accepted, because in that regime the crawl vs
-        # fast-release distinction matters less than never releasing at all
-        # did, and |ref| dominates σ in every workload measured so far.
+        # recovered early. Accepted — |ref| dominates σ in every workload
+        # measured so far.
         std = math.sqrt(self._loss_var)
         for group in self.param_groups:
             if group['brake_factor'] is None:

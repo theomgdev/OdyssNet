@@ -171,10 +171,9 @@ For tasks where **online synaptic plasticity** may help — e.g., fast-adaptatio
 *   **When *not* to use it (Classification / Independent Features):** Avoid Hebbian in classification tasks where each step processes distinct, independent chunks of information (e.g. sequential MNIST classification). In these tasks, inter-step short-term memory acts as "overfit noise".
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
 *   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
-*   **Switching it on is free until training says otherwise.** The plastic contribution is normalized and scaled by a zero-initialized gain (`hebb_norm`, +N parameters), and building the module draws no RNG, so a plastic model and a plain one at the same seed share a core and produce identical output at step zero. An ablation of `hebb_type` therefore has one variable in it.
-*   **Cost:** the live trace is per-example, `(B, N, N)`, and every step retains one for the backward pass — memory grows as `steps x B x N²`. That is the price of one-shot binding, and it is affordable exactly where plasticity earns its place: small cores with short rollouts. On a large core prefer `hebb_type=None`.
-*   **Compile it.** The step is bound by kernel launches, not arithmetic. Eager, `hebb_type='both'` adds 132% to the step; under `torch.compile` it adds 26%. If a run with plasticity feels like it is running an LLM, that is the reason and `torch.compile` is the fix.
-*   **Ablate it; do not assume it.** Measured on the record task: plasticity ahead with attention off (one seed), *behind* with four attention heads held fixed (two seeds, +0.02 loss and -0.5 points for +50 parameters), slightly behind on single-injection classification. Attention appears to do the same job better where both apply. The zero-initialized gain exists so that `hebb_type=None` is an exact control — use it.
+*   **Free to try:** the plastic contribution is scaled by a zero-initialized gain (`hebb_norm`, +N parameters) and the module draws no RNG, so a plastic model and a plain one at the same seed share a core and agree exactly until training moves the gain. Ablations of `hebb_type` have one variable in them.
+*   **Cost:** the live trace is per-example `(B, N, N)` and every step retains one for the backward pass, so memory grows as `steps x B x N²`. Affordable on small cores with short rollouts; prefer `hebb_type=None` on a large one. The step is launch-bound, so `hebb_type='both'` adds 132% to it eager and 26% compiled — reach for `torch.compile` before blaming plasticity for a slow run.
+*   **Ablate it; do not assume it.** Temporal attention fills the same role on sequential classification and measured better there. The two are alternatives more often than complements.
 
 ```python
 # NLP / Logic / Reasoning — synapse-level plasticity for dynamic variable binding
@@ -234,7 +233,7 @@ model = OdyssNet(
 *   **Optimizer:** ChaosGrad classifies the four projections into an `attention` family (weight decay on), and the QK-norm gains into `modulation` (decay off) — never decay those by hand in a custom optimizer.
 *   **Transplantation:** `attn_head_dim` defaults to a value derived from `num_neurons`, so pin it explicitly when transplanting between cores of different sizes, or the attention geometry moves with the neuron count.
 *   **Compatibility:** works with `gradient_checkpointing=True`, AMP, neurogenesis and Hebbian plasticity; tested for all of them.
-*   **Precision, and the `@torch._dynamo.disable` on `attend`/`write`:** attention runs with autocast off so the cache has one dtype and the softmax accumulates in fp32 — half-precision attention is measurably worse (~0.017 of loss on embedded MNIST with four heads, from the fourth epoch on). `torch.compile` miscompiles that region, so both methods are hidden from Dynamo. Do not remove the decorator — every compiled run with attention on dies on `Half != float`. The break is free when the step has other work to fuse (17.4 ms/batch with plasticity and four heads, against 17.6 fully traced and 60.4 eager) and close to a no-op when attention is the *only* thing switched on (48.5 against 45.4 eager). Measure before assuming `--compile` will pay on an attention-only run.
+*   **Precision:** attention runs with autocast off, so the cache is single-dtype and the softmax accumulates in fp32; half precision measured ~0.017 of loss worse. `attend`/`write` carry `@torch._dynamo.disable` because Inductor miscompiles that region — **do not remove it**, every compiled run with attention on dies on `Half != float`. The resulting graph break is free when the step has other work to fuse and costs the speedup when attention is the only thing switched on, so measure before assuming `torch.compile` pays there.
 *   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` being the 2.x architecture exactly. On TinyStories at 2 min/arm it is the 2.x architecture that wins — see the sweep's own notes.
 
 ---
@@ -249,13 +248,9 @@ torch.set_float32_matmul_precision('high')
 ```
 
 ### 2. Compilation
-Not a nicety — it is the largest speedup this architecture has. The echo loop
-issues thousands of small kernels per step and is bound by launching them, not
-by the arithmetic inside any of them (profiled: ~5,800 launches for ~20 ms of
-GPU work on a 10-neuron core at batch 32 over 16 steps). Measured ms/batch,
-eager → compiled: bare core 13.8 → 6.4, `hebb_type='both'` 32.1 → 8.1, `'both'`
-with four attention heads 62.7 → 17.3. It is what makes plasticity affordable:
-+132% on the step eager, +26% compiled.
+The largest speedup this architecture has. The echo loop issues thousands of
+small kernels per step and is bound by launching them: eager → compiled is
+2.2x on a bare core and 4.0x with plasticity.
 
 ```python
 model.compile()                          # or torch.compile(model.forward)
@@ -266,14 +261,10 @@ reaches through the model for state, KV caches, plastic buffers or
 checkpointing — an `OptimizedModule` wrapper sits between them and the real
 object.
 
-**Give it fixed shapes, or it will quietly stop compiling.** A ragged final
-batch is a new shape, and enough recompiles exhaust Dynamo's budget and drop
-the run back to eager *for the rest of the process*, with nothing in the output
-saying so — the only symptom is that the step time never improved. Pass
-`drop_last=True` to your loaders (both of them; the evaluation loader is the
-usual culprit, since a test set rarely divides by the batch size). The
-train/eval alternation itself is fine: it settles at three compiled graphs and
-stays there.
+**Give it fixed shapes, or it will quietly stop compiling.** Every new shape
+costs a recompile, and enough of them exhaust Dynamo's budget and drop the
+process back to eager for good, with nothing in the output saying so. Pass
+`drop_last=True` to both loaders — a test set rarely divides by the batch size.
 
 ---
 
@@ -329,7 +320,7 @@ Use the `prepare_input` utility implicitly via the Trainer.
 
 1.  **Reproducibility & Seeding:** 🔴 **MANDATORY** — All example and experiment scripts MUST set a fixed seed for reproducible results.
     *   **Why?** Reproducible results are essential for debugging, comparing strategies, and publishing findings.
-    *   **How?** Call `set_seed(...)` at the **very start** of your `main()` function, before any random operations. 42 is the default and what a new example should use. A different seed is allowed only when a measurement chose it — `convergence_mnist_record`, `convergence_mnist_tiny` and `convergence_mnist_reverse_record` use 123 because a two-seed A/B on the record task picked it — and the reason has to sit in a comment next to the call.
+    *   **How?** Call `set_seed(...)` at the **very start** of your `main()` function, before any random operations. Use 42 unless a measurement chose otherwise; the three MNIST record/tiny examples use 123.
     *   **Import:** `from odyssnet import set_seed`
     *   **Example:**
     ```python
@@ -597,7 +588,7 @@ When modifying the library itself (not examples), follow these additional rules:
 - [ ] Documentation updated in relevant markdown files (docs/LIBRARY.md, CONTRIBUTING.md)
 
 ### New/modified example scripts (`examples/`)
-1.  [ ] **Does your script call `set_seed(...)` at the START of `main()`?** (MANDATORY for reproducibility. Use 42 unless a measurement chose otherwise, and say which in a comment.)
+1.  [ ] **Does your script call `set_seed(...)` at the START of `main()`?** (MANDATORY for reproducibility. Use 42 unless a measurement chose otherwise.)
 2.  [ ] **Is the trainer zero-config (`OdyssNetTrainer(model, device=...)`) unless there is a documented reason to pin `lr`?** Zero-config ChaosGrad is the recommended default for examples. Pin an explicit `lr` only for precision-record scripts whose advertised metrics depend on a specific tuned rate — and say so in a comment.
 3.  [ ] Did you place it in the correct folder (`examples/` for core validations, `examples/advanced/` for complex tasks)?
 4.  [ ] Are you using `OdyssNetTrainer`?

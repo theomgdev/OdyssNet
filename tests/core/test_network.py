@@ -703,11 +703,8 @@ class TestHebbianTypes:
 
 class TestHebbianRepair:
     def test_plasticity_starts_as_an_exact_no_op(self):
-        """The gain is zero-initialized, so switching plasticity on changes
-        nothing until training decides otherwise. That is what makes hebb_type
-        an ablation with one variable in it — the same property temporal
-        attention gets from its zero-init output projection. Construction must
-        also draw no randomness, or the two arms would not share a core."""
+        """Zero gain plus RNG-free construction is what makes `hebb_type` a
+        one-variable ablation: both arms must share a core and agree."""
         torch.manual_seed(0)
         plain = _make(6, hebb_type=None)
         torch.manual_seed(0)
@@ -720,10 +717,8 @@ class TestHebbianRepair:
         assert torch.allclose(a, b, atol=1e-6)
 
     def test_the_gain_is_trainable(self):
-        """The old implementation applied the strength factor twice — once
-        accumulating into the trace, once applying it — so the effective gain
-        was sigmoid(logit)**2 and nothing could move it. The normalized gain is
-        a straight multiplier and gets a real gradient."""
+        """The gain is a straight multiplier on the contribution, so it has
+        to receive gradient — without it plasticity can never leave zero."""
         model = _make(6, hebb_type="both", hebb_res="neuron")
         model.train()
         out, _ = model(torch.randn(3, 6), steps=5)
@@ -732,11 +727,8 @@ class TestHebbianRepair:
         assert model.hebb_norm.weight.grad.abs().sum().item() > 0.0
 
     def test_a_batch_is_the_examples_run_one_at_a_time(self):
-        """The trace carries a batch dimension: every example writes its own
-        associations. Sharing one trace across a batch averages them away, and
-        a batched forward then computes a different function than the same
-        examples run singly — training would never exercise the mechanism
-        inference uses."""
+        """A shared trace would average per-example associations away, making
+        training exercise a different function than inference."""
         model = _make(6, hebb_type="both", hebb_res="neuron")
         with torch.no_grad():
             model.hebb_norm.weight.fill_(1.0)   # gain off its zero start
@@ -753,10 +745,8 @@ class TestHebbianRepair:
         assert torch.allclose(batched, torch.cat(singles), atol=1e-5)
 
     def test_the_two_mechanisms_stay_distinct(self):
-        """Temporal and spatial share one stacked code path now; the path axis
-        must still keep them apart. Temporal pairs the previous state with the
-        current one, spatial pairs the current state with itself, so their
-        traces cannot come out equal."""
+        """The two mechanisms share one stacked code path; the path axis must
+        keep them apart."""
         model = _make(6, hebb_type="both", hebb_res="neuron")
         model(torch.randn(3, 6), steps=6)
         assert not torch.allclose(model.t_hebb_state_W, model.s_hebb_state_W)
@@ -766,8 +756,8 @@ class TestHebbianRepair:
     @pytest.mark.parametrize("res", ["global", "neuron", "synapse"])
     @pytest.mark.parametrize("htype", ["temporal", "spatial", "both"])
     def test_every_type_and_resolution_trains(self, res, htype):
-        """The stacked path axis carries one entry for a single mechanism and
-        two for 'both', and each resolution broadcasts differently against it."""
+        """The path axis carries one entry per active mechanism, and each
+        resolution broadcasts differently against it."""
         model = _make(5, hebb_type=htype, hebb_res=res)
         model.train()
         with torch.no_grad():
