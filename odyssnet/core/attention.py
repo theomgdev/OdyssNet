@@ -10,13 +10,12 @@ state queries a cache of earlier states:
     a_t = softmax(q_t K^T / sqrt(d)) V
     h_t += a_t W_o                      (added to the pre-activation signal)
 
-Two structural facts follow from the architecture and shape this file.
+Two structural facts shape the implementation.
 
 **The query length is always 1.** The core cannot be unrolled in parallel, so a
-forward pass is a sequence of single-query attentions — a transformer's decode
-phase, never its prefill. The score matrix is `(B, H, 1, L)`, one row per key,
-which is why the cache is kept in segments that are never concatenated: only
-their score blocks are, and the result is a single exact softmax.
+forward pass is a sequence of single-query attentions. The score matrix is
+`(B, H, 1, L)`, one row per key, so the cache is held in segments that are
+never concatenated — only their score blocks are, under one exact softmax.
 
 **Order carries no information.** Softmax over keys is permutation-invariant
 and every cached entry is strictly in the past, so no causal mask is needed and
@@ -78,18 +77,15 @@ class TemporalAttention(nn.Module):
             the entry's absolute write index. Default True.
         rope_theta (float): RoPE base frequency. Default 10000.0.
         qk_norm (bool): RMSNorm on queries and keys before the dot product.
-            Default True — the core is chaotic and its state norm is only
-            controlled at the end of a step, so unnormalized logits here are
-            the first thing to blow up.
+            Default True. The state norm is only controlled at the end of a
+            step, so unnormalized logits here are the first thing to overflow.
         dropout (float): Dropout on the attention weights during training.
             Applied to the joined score block. Default 0.0.
         device: Torch device for the projections.
 
     The output projection is zero-initialized and the branch is divided by
-    `sqrt(heads * head_dim)`, so switching attention on — or widening it —
-    does not change the scale of what reaches the recurrence. See `out_scale`
-    below; that factor is the difference between attention helping and
-    attention drowning the core.
+    `sqrt(heads * head_dim)`, so switching attention on — or widening it — does
+    not change the scale of what reaches the recurrence.
     """
 
     def __init__(self, num_neurons, heads=4, head_dim=None, kv_heads=1,
@@ -111,9 +107,8 @@ class TemporalAttention(nn.Module):
             raise ValueError(f"attn_window must be >= 1, got {window}")
 
         if head_dim is None:
-            # Rounded down to even so the default is always RoPE-compatible;
-            # an explicit odd value is the user's call and only rejected when
-            # RoPE is actually on.
+            # Even, so the default is always RoPE-compatible. An explicit
+            # odd value is rejected only when RoPE is on.
             head_dim = min(64, max(2, num_neurons // heads))
             head_dim -= head_dim % 2
         head_dim = int(head_dim)
@@ -136,19 +131,15 @@ class TemporalAttention(nn.Module):
         self.rope_theta = float(rope_theta)
         self.scale = 1.0 / math.sqrt(head_dim)
 
-        # Load-bearing. `o_proj` starts at zero under an Adam-family
-        # optimizer, so |o_proj| ~ k*lr regardless of width and the branch's
-        # contribution would otherwise grow as sqrt(heads*head_dim) — wide
-        # branches reach a destructive scale while narrow ones reach a useful
-        # one. Same reasoning as GPT-2's 1/sqrt(2*n_layers) residual init.
+        # Keeps the branch's reachable contribution width-independent:
+        # `o_proj` grows as k*lr under Adam whatever the width, so without this
+        # the contribution would scale with sqrt(heads*head_dim).
         self.out_scale = 1.0 / math.sqrt(heads * head_dim)
 
         self.q_proj = nn.Linear(num_neurons, heads * head_dim, bias=False, device=device)
         self.k_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
         self.v_proj = nn.Linear(num_neurons, kv_heads * head_dim, bias=False, device=device)
-        # Zero-initialized: the branch contributes exactly nothing at step
-        # zero, so switching attention on leaves the core's initialization
-        # story intact.
+        # Zero-initialized: the branch contributes nothing at step zero.
         self.o_proj = nn.Linear(heads * head_dim, num_neurons, bias=False, device=device)
         nn.init.zeros_(self.o_proj.weight)
 
@@ -215,12 +206,9 @@ class TemporalAttention(nn.Module):
         """
         cos/sin for a single absolute position.
 
-        Computed on demand rather than from a table: positions grow with the
-        run (a stateful stream can reach millions of tokens) and a table would
-        have to grow with them. The angle is formed in float64 before the
-        trigonometry — at a position of 1e6 the fastest-rotating dimension is
-        already past float32's resolution, and a silently wrong phase is worse
-        than the microsecond this costs.
+        Computed on demand rather than from a table, since positions grow
+        with the run. The angle is formed in float64: past ~1e6 the
+        fastest-rotating dimension exceeds float32's resolution.
         """
         # One-entry memo: within a token group the query repeats its position
         # for every echo step, and the following write takes the same index.
@@ -271,11 +259,8 @@ class TemporalAttention(nn.Module):
                                   torch.cat(self._pend_v, dim=2))
             pending = self._pend_cat
 
-        # Eviction is by slicing, never by copying: a narrowed tensor shares
-        # storage with the one it came from, so holding the window to size
-        # costs nothing even though every step asks for it again. That is what
-        # lets this path evict as strictly as the ring does, instead of the
-        # window meaning "carried between calls" here and "total" there.
+        # Eviction by slicing, never copying: a narrowed tensor shares
+        # storage, so both representations enforce `window` as a total.
         segments = []
         room = self.window
         if pending is not None:
@@ -321,9 +306,8 @@ class TemporalAttention(nn.Module):
             q = self._apply_rope(q, pos)
         q = q * self.scale
 
-        # Grouped-query attention needs no key repetition: the `group` axis of
-        # the query plays the role a query-length axis would, and broadcasting
-        # over it is what sharing a KV head means.
+        # No key repetition for grouped-query: the query's `group` axis takes
+        # the place of a query-length axis and broadcasts over the shared head.
         blocks = [torch.matmul(q, k.transpose(-1, -2)) for k, _ in segments]
         scores = blocks[0] if len(blocks) == 1 else torch.cat(blocks, dim=-1)
         weights = self.attn_drop(torch.softmax(scores, dim=-1))
@@ -367,9 +351,9 @@ class TemporalAttention(nn.Module):
 
     def _write_segmented(self, k, v):
         if self._ring_k is not None:
-            # Leaving inference: adopt the ring's contents as the frozen carry.
-            # Its order is rotated, which costs nothing — softmax over keys is
-            # permutation-invariant and RoPE already sits inside each key.
+            # Leaving inference: adopt the ring as the frozen carry. Its
+            # rotated order is harmless — softmax is permutation-invariant and
+            # RoPE already sits inside each key.
             if self._ring_fill:
                 fill = min(self._ring_fill, self.window)
                 self._mem_k = self._ring_k[:, :, :fill].clone()
@@ -401,8 +385,7 @@ class TemporalAttention(nn.Module):
             self._allocate_ring(k.shape[0], k.dtype, k.device)
 
         # A narrowed view, not index_copy_: an index tensor would mean a
-        # host-to-device copy on every single decoded token, which is exactly
-        # the per-token allocation a KV cache exists to avoid.
+        # host-to-device copy per decoded token.
         at = self._ring_cursor
         self._ring_k.narrow(2, at, 1).copy_(k)
         self._ring_v.narrow(2, at, 1).copy_(v)
@@ -462,10 +445,9 @@ class TemporalAttention(nn.Module):
         """
         Forget the history of the batch rows selected by `mask` (a bool `(B,)`).
 
-        Zeroing is enough and is why the ring needs no per-row bookkeeping: a
-        row of all-zero keys spreads its softmax uniformly over all-zero
-        values, so the attention output for that row is exactly zero — the same
-        thing an empty cache gives it.
+        Zeroing suffices, so the ring needs no per-row bookkeeping: all-zero
+        keys spread the softmax uniformly over all-zero values, giving exactly
+        the zero an empty cache would.
         """
         if not mask.any():
             return
@@ -514,9 +496,7 @@ class TemporalAttention(nn.Module):
 
         The frozen carry is a single tensor however many steps read it; the
         growing segment is re-concatenated on every write and each version is
-        held until backward, which is the `writes²/2` term. This is the number
-        that decides whether a batch fits, so the LLM harness prints it rather
-        than making users rediscover it as an OOM.
+        held until backward, which is the `writes²/2` term.
         """
         per_entry = 2 * batch * self.kv_heads * self.head_dim * element_size
         frozen = self.window * per_entry

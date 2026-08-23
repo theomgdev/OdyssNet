@@ -142,17 +142,13 @@ class OdyssNet(nn.Module):
                 device=device,
             )
             with torch.no_grad():
-                # Query/key/value only — `o_proj` keeps its zeros, which is
-                # what makes the branch inert at step zero.
+                # Query/key/value only; `o_proj` keeps its zeros.
                 self._apply_init(self.attn.q_proj.weight, self.attn_weight_init)
                 self._apply_init(self.attn.k_proj.weight, self.attn_weight_init)
                 self._apply_init(self.attn.v_proj.weight, self.attn_weight_init)
 
-        # Hebbian plasticity (optional). `hebb_type` selects the mechanism
-        # (temporal = h_t against h_{t-1}, spatial = h_t against itself, both);
-        # `hebb_res` its resolution (scalar, per-neuron, per-synapse). Factors
-        # and decays are raw logits: sigmoid(-3.0) ~ 0.047 initial influence,
-        # sigmoid(2.2) ~ 0.900 initial retention.
+        # Hebbian plasticity (optional). Factors and decays are raw logits:
+        # sigmoid(-3.0) ~ 0.047 influence, sigmoid(2.2) ~ 0.900 retention.
         if hebb_type not in (None, "temporal", "spatial", "both"):
             raise ValueError(f"hebb_type must be None, 'temporal', 'spatial', or 'both', got {hebb_type!r}")
         if hebb_res not in ("global", "neuron", "synapse"):
@@ -163,8 +159,8 @@ class OdyssNet(nn.Module):
 
         # The plastic contribution is normalized and passed through a
         # zero-initialized gain before it reaches W: the factor selects which
-        # synapses are plastic, the gain sets how much. The zero start must
-        # hold — it is what keeps plasticity inert until training moves it.
+        # synapses are plastic, the gain sets how much. The zero start keeps
+        # plasticity inert until training moves it.
         self.hebb_norm = None
 
         self.t_hebb_factor = None
@@ -197,9 +193,8 @@ class OdyssNet(nn.Module):
 
             self.hebb_norm = nn.RMSNorm(num_neurons).to(device)
             nn.init.zeros_(self.hebb_norm.weight)
-            # Off-diagonal mask pre-divided by the fan-in: self-correlation
-            # belongs to memory_feedback and W's diagonal is structurally zero,
-            # so the mask and the 1/N scale ride in one buffer.
+            # Off-diagonal mask pre-divided by the fan-in. Self-correlation
+            # belongs to memory_feedback; W's diagonal is structurally zero.
             self.register_buffer('_offdiag',
                                  (1.0 - torch.eye(num_neurons, device=device)) / num_neurons,
                                  persistent=False)
@@ -216,9 +211,9 @@ class OdyssNet(nn.Module):
         self.state = torch.zeros(1, num_neurons, device=device)
         
     def _dbg(self, tensor, label):
-        # Guard must be at the call site (`if self.debug: self._dbg(...)`) not only here.
-        # Python evaluates f-string arguments before entering this function, so an internal
-        # check would still build every label string on every step when debug=False.
+        # Callers must guard with `if self.debug:` as well. Python builds the
+        # f-string label before the call, so an internal check alone would still
+        # pay for every label on every step when debug=False.
         if self.debug and not torch.isfinite(tensor).all():
             n_nan = tensor.isnan().sum().item()
             n_inf = tensor.isinf().sum().item()
@@ -269,9 +264,8 @@ class OdyssNet(nn.Module):
         raise TypeError(f"{name} must be None, str, list, or tuple")
 
     def _normalize_weight_init(self, weight_init):
-        # Five entries: [encoder/decoder, core, memory, gates, attention].
-        # The attention slot was appended rather than inserted so every
-        # four-entry list written against 2.x keeps meaning what it meant.
+        # [encoder/decoder, core, memory, gates, attention]. Attention is last
+        # so shorter lists keep their meaning.
         defaults = ['quiet', 'resonant', 'quiet', 'zero', 'quiet']
         if weight_init is None:
             return defaults.copy()
@@ -499,8 +493,8 @@ class OdyssNet(nn.Module):
 
         def _single_step(h_t_in, t_idx, x_input_info, hebb_W_contrib, hebb_mem_contrib,
                          attn_segments=(), attn_pos=0):
-            # hebb_W_contrib:   (N, N) tensor or None — added to W before recurrence.
-            # hebb_mem_contrib: (N,)   tensor or None — added to memory_feedback.
+            # hebb_W_contrib:   (B, N, N) or None — added to W per example.
+            # hebb_mem_contrib: (B, N)    or None — added to memory_feedback.
             # attn_segments:    KV cache view, passed in rather than read from
             #                   self.attn so gradient checkpointing recomputes
             #                   this step against the cache it originally saw.
@@ -528,9 +522,8 @@ class OdyssNet(nn.Module):
             signal = signal + feedback
             if self.debug: self._dbg(signal, f"signal+feedback (step {t_idx})")
 
-            # Temporal attention: the state asks its own past what is relevant
-            # now. Added to the pre-activation signal like any other input, so
-            # the step's activation and RMSNorm still bound what leaves it.
+            # Added to the pre-activation signal like any other input, so the
+            # step's activation and RMSNorm still bound what leaves it.
             if self.attn is not None and attn_segments:
                 attn_out = self.attn.attend(h_t_in, attn_segments, attn_pos)
                 if attn_out is not None:
@@ -741,9 +734,9 @@ class OdyssNet(nn.Module):
                 # one normalization and one gain.
                 cur_hebb_W   = (hebb_lr_W * local_hebb_W).sum(0)
                 cur_hebb_mem = (hebb_lr_m * local_hebb_mem).sum(0)
-                # RMSNorm rescales each row of the last dimension independently,
+                # RMSNorm treats each row of the last dimension independently,
                 # so norming W's rows and the memory vector together is exactly
-                # norming them apart, in one kernel chain instead of two.
+                # norming them apart, in one kernel chain.
                 normed = self.hebb_norm(
                     torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
                 cur_hebb_W   = normed[:, :-1]
@@ -763,10 +756,8 @@ class OdyssNet(nn.Module):
 
             # Gradient checkpointing
             if self.gradient_checkpointing and self.training:
-                # `t` is passed as a plain int: use_reentrant=False accepts
-                # non-tensor arguments, and wrapping it in torch.tensor(t)
-                # allocated a throwaway CPU tensor on every one of the
-                # (tokens x thinking-steps) iterations a long sequence takes.
+                # `t` stays a plain int: use_reentrant=False accepts non-tensor
+                # arguments, and torch.tensor(t) would allocate once per step.
                 h_t = checkpoint.checkpoint(
                     _single_step, h_t, t, x_step_info,
                     cur_hebb_W, cur_hebb_mem, attn_segments, attn_pos,
@@ -776,21 +767,18 @@ class OdyssNet(nn.Module):
                 h_t = _single_step(h_t, t, x_step_info, cur_hebb_W, cur_hebb_mem,
                                    attn_segments, attn_pos)
 
-            # Cache write happens *after* the step, from the state the step
-            # produced: the entry a future query finds is the summary of
-            # everything up to and including this step. Doing it here rather
-            # than inside `_single_step` also keeps the cache from being
-            # appended to twice under gradient checkpointing's recompute.
+            # Written after the step, so an entry summarizes everything up to
+            # and including it. Outside `_single_step` so gradient
+            # checkpointing's recompute cannot append twice.
             if self.attn is not None and (self.attn_write == 'step'
                                           or (t + 1) % ratio == 0):
                 self.attn.write(h_t)
 
             if self.hebb_type is not None:
                 # AMP would force these matmul-family ops back to float16
-                # whatever the explicit casts say; the correlation accumulates
-                # in float32.
+                # whatever the explicit casts say.
                 with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
-                    # The correlation carries gradient. Only the trace's own
+                    # The correlation carries gradient; only the trace's own
                     # history is truncated, by `local_*.detach()` below.
                     h_t_f    = h_t.float()
                     h_prev_f = h_prev.float()
@@ -831,9 +819,9 @@ class OdyssNet(nn.Module):
         with torch.no_grad():
             self.state = h_t.detach()
             if self.attn is not None:
-                # Same contract as the hidden state: what this call wrote stays
-                # differentiable inside it, what survives into the next call is
-                # a constant. Truncation to `attn_window` happens here.
+                # Same contract as the hidden state: this call's writes stay
+                # differentiable, the carry is a constant. Truncation to
+                # `attn_window` happens here.
                 self.attn.detach_cache()
             if self.hebb_type is not None:
                 # Back out of the stacked path axis into the per-mechanism
@@ -861,11 +849,9 @@ class OdyssNet(nn.Module):
             
         # Vocab Decoding
         if self.output_decoder is not None:
-            # Slice the output neurons *before* scaling. Mathematically
-            # identical (output_scale_vec is 1.0 outside output_pos), but it
-            # avoids a multiply over the full (B, T, N) activity tensor when
-            # only len(output_ids) columns are ever read — on long sequences
-            # that tensor is the largest allocation in the forward pass.
+            # Slice output neurons before scaling: identical result
+            # (output_scale_vec is 1.0 elsewhere) without a multiply over the
+            # full (B, T, N) tensor, the largest allocation on long sequences.
             out_activity = stacked_outputs[:, :, output_pos] * self._get_output_scale(stacked_outputs.dtype)
             # Project to Vocab
             # Shape: (Batch, Steps, OutNeurons) -> (Batch, Steps, Vocab)
@@ -892,11 +878,10 @@ class OdyssNet(nn.Module):
         Zero the hidden state — and the attention history — of selected batch
         rows, leaving the rest of the batch running.
 
-        `mask` is a boolean `(B,)` tensor. This is what staggered cold starts
-        need: with a stream carried indefinitely the network never sees a zero
-        state, so training puts no pressure on cold-start behaviour. Resetting
-        only the state while attention keeps a full cache would leave the row
-        neither warm nor cold, so both are dropped together.
+        `mask` is a boolean `(B,)` tensor. Staggered cold starts need this: a
+        stream carried indefinitely never shows the network a zero state.
+        State and cache are dropped together — resetting one without the other
+        leaves the row neither warm nor cold.
         """
         mask = torch.as_tensor(mask, device=self.state.device).reshape(-1).bool()
         if mask.shape[0] != self.state.shape[0]:
