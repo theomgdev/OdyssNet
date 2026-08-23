@@ -28,7 +28,7 @@ NEURONS = 128
 HOPS = 3                 # echo steps after the query lands
 STUDY_STEPS = 2          # symbol, then symbol: the whole of a bee's experience
 COLONIES = 8             # colonies per optimizer step (gradient accumulation)
-TRAIN_STEPS = 350
+TRAIN_STEPS = 1000
 EVAL_EPISODES = 40
 
 HEBB_STATE = ("t_hebb_state_W", "t_hebb_state_mem",

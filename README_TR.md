@@ -60,6 +60,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
 | **Dedektif**| Bellek Gerekir | **Bilişsel Sessizlik** (Akıl Yürütme) | **Mükemmel Tespit**| `convergence_detective_thinking.py` |
 | **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.6x Daha Hızlı** | `convergence_skill_transfer.py` |
+| **Kovan Zihni**| Paylaşmak İçin Baştan Eğitim Gerekir | **Havuzlanmış Plastik İz** (Kolektif Bellek) | **Bedenin Hiç Görmediği Bilginin %100 Hatırlanması** | `convergence_hive_mind.py` |
 
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
@@ -499,6 +500,38 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
 *   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Büyük modelin parametrelerinin yalnızca %6.7'si vericiden geliyor ve bu oran eğitimin nerede bittiğini değiştirmeye yetiyor. Bu, bileşimsel öğrenme yönünde somut bir adım.
+
+### M. Kovan Zihni (Tek Bellek, Çok Beden)
+*   **Hedef:** Sekiz beden tek bir 21.536 parametreli çekirdeği paylaşıyor. Her birine, her bölümde yeniden çizilen 8 sembollük bir halkanın **tek bir kenarı** gösteriliyor, başka hiçbir şey. Ardından her bedenin gizli durumu ve dikkat önbelleği siliniyor ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor — kenar başına bir yankı adımı.
+*   **Meydan Okuma:** Silme sonrasında hiçbir bedende özel olarak tutulan bir şey kalmıyor. Bedenler birbirine değmiyor: ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri, özel girdi ve çıktılar. Bir bedenin kendi kenarının ötesinde verdiği her cevap, kovanın paylaşılan çekirdek üzerinde bıraktığı plastik izden gelmek zorunda — kütüphane bu izi batch ortalaması olarak havuzlayıp bir sonraki çağrıda her bedene geri veriyor.
+*   **Sonuç:** **Hiçbir bedenin görmediği kenarların kusursuz hatırlanması ve iki farklı bedende duran kenarların kusursuz bileşimi.** Aynı ağırlıklarla, aynı girdilerle ama ayrı ayrı koşulduğunda hepsi şansa düşüyor.
+    <details>
+    <summary>Kovan ile Yalnız Arıyı Karşılaştır</summary>
+
+    ```text
+                                     hop 0     hop 1     hop 2     hop 3
+      birlikte (tek bellek)          1.000     1.000     1.000     0.516
+      ayrı (arı tek başına)          1.000     0.213     0.141     0.147
+      birlikte, bellek boş           1.000     0.103     0.153     0.091
+      (şans 0.125; hop 1 başka bir arının kenarı, hop 2 iki arının kenarını gerektirir)
+
+    Bir arının kenarı değiştirildiğinde:
+      başka bir arının cevabı değişimi izliyor      1.000
+      aynı arı tek başına koşunca cevap aynı        1.000
+    Başka bir kovanın belleği takıldığında:
+      cevaplar takılan halkayla uyuşuyor            1.000
+      cevaplar sorulan halkayla uyuşuyor            0.147
+    Foraging'den sonra inşa edilmiş, hiç koşmamış arı:
+      kovanın belleği üzerinde hop 1                1.000
+    hebb_type=None, birlikte, hop 1                 0.125 (şans)
+
+    halka           1 -> 6 -> 7 -> 3 -> 5 -> 2 -> 0 -> 4 -> 1
+    arı 7'ye yalnızca  4 -> 1 gösterildi, başka hiçbir şey
+    7'den yürümesi istendi: 7 -> 3 -> 5   (halka diyor ki 7 -> 3 -> 5)
+    ```
+    </details>
+*   **Script:** `examples/advanced/convergence_hive_mind.py`
+*   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini — gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde — diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için hop sayısı doğrudan zamansal derinliğin okunuşu: kovan, hiçbir üyesinde bulunmayan bilgiyi birleştiriyor.
 
 ## Vizyon: Silikonun Ruhu (OdyssNet-1B)
 OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.

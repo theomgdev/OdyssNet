@@ -101,10 +101,30 @@ model = OdyssNet(
 *   **Differentiable correlation.** The correlation carries gradient; only the trace's own history is truncated (`local.detach()` in the update).
 *   **Novelty gate.** The correlation is damped by `1 / (1 + |W_eff|)` — co-activation across an already-strong synapse says the weight fired the neuron, not that the pattern is new. Parameter-free and detached, so it opens no second-order path through `W`.
 *   **Per-example trace.** The live trace is `(B, N, N)`; every example writes its own associations, so a batched forward computes the same function as the same examples run singly. The persistent buffer stays `(N, N)` and holds the batch mean, leaving checkpoints, neurogenesis padding and weight transplants untouched.
+*   **Pooled across the batch, between calls.** The buffer is written at the end of a forward pass and read back at the start of the next one, expanded to every row. Within a call each example reads only what it wrote; across a call boundary all of them read the mean of what they all wrote.
 
 **Cost.** Every step retains a `(B, N, N)` trace for the backward pass, so memory grows as `steps x B x N²`. Affordable on small cores with short rollouts, not on a large one — run those with `hebb_type=None`. The step is also bound by kernel launches rather than arithmetic: `hebb_type='both'` adds 132% to it eager and 26% under `torch.compile`.
 
 **When to use it.** Plasticity earns its place where step *T* extends what step *T-1* built, and acts as overfit noise where each step handles an independent chunk. Temporal attention fills the same role on sequential classification and measured better there, so the two are alternatives more than complements. Ablate rather than assume — that is what the zero-initialized gain is for.
+
+#### One memory across many bodies
+
+Because the buffer pools the batch and is broadcast back, a batch can be read as a *colony*: independent bodies with private inputs, private outputs, their own hidden state and their own attention cache, sharing one core and one memory on it. Nothing else crosses between rows — the recurrence, the norm and the attention cache are per-row — so anything a body knows that its own inputs never contained came through the trace.
+
+`examples/advanced/convergence_hive_mind.py` measures that. Eight bodies are each shown one edge of an 8-symbol ring, drawn fresh every episode; every hidden state and attention cache is then wiped, and each body is asked to walk from a query symbol, one edge per echo step. Only the reading is trained — the study pass runs under `torch.no_grad()`, so the write is the plasticity rule itself.
+
+| 320 queries per column | hop 0 | hop 1 | hop 2 | hop 3 |
+|---|---|---|---|---|
+| together, one memory | 1.000 | **1.000** | **1.000** | 0.516 |
+| apart, one bee alone | 1.000 | 0.213 | 0.141 | 0.147 |
+| together, memory blank | 1.000 | 0.103 | 0.153 | 0.091 |
+
+Chance is 0.125. Hop 1 is an edge another body observed, hop 2 needs two edges from two different bodies, and the third hop is where retrieval starts to run out — 0.516, four times chance. Running the colony as one batch and running each body separately then averaging the memories afterwards agree to 6.0e-08 on a memory of scale 0.630, so the batch axis is only the vectorized form of pooling that could equally be done across machines.
+
+Two protocol properties transfer to any use of the buffer this way:
+
+*   **Keep the write short.** A cold start makes the first state a near-one-hot of the injected pattern, so the temporal correlation written on the next step lands on that pattern's row. Longer study passes add correlations between dense states, which are common to every body and bury the addressed row: three steps halves untrained retrieval on the ring task, six stops it training.
+*   **Pass `current_state` explicitly when reading.** `forward` calls `reset_state` when the batch size differs from the stored state, and `reset_state` zeroes the Hebbian buffers. An evaluation pass at a different batch size — one body instead of eight — silently wipes the memory it was about to read unless the state is handed in.
 
 *   `gate` (None, str, or list[str]): Optional parametric gating mechanism. Default is `None`, which resolves to `['none', 'none', 'identity']`.
     *   `None`: Default configuration with memory identity gate enabled, others disabled.

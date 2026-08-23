@@ -59,6 +59,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective_thinking.py` |
 | **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **1.7x Lower Final Loss** | `convergence_skill_transfer.py` |
+| **Hive Mind**| Needs Re-Training to Share | **Pooled Plastic Trace** (Collective Memory) | **100% Recall of Facts a Body Never Saw** | `convergence_hive_mind.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -498,6 +499,38 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
 *   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. Only 6.7% of the larger model's parameters come from the donor, and that fraction is enough to change where training ends up. This is a concrete step toward compositional learning.
+
+### M. The Hive Mind (One Memory, Many Bodies)
+*   **Target:** Eight bodies share one 21,536-parameter core. Each is shown **one edge** of an 8-symbol ring drawn fresh every episode, and nothing else. Every hidden state and attention cache is then wiped, and each body is asked to walk the ring from a query symbol — one echo step per edge.
+*   **Challenge:** After the wipe no body holds anything privately. Bodies never touch: separate states, separate caches, separate forward passes, private inputs and outputs. Anything a body answers beyond its own edge had to arrive through the plastic trace the colony leaves on the shared core — which the library pools as the batch mean and hands back to every body on the next call.
+*   **Result:** **Perfect recall of edges no body observed, and perfect composition of edges held by two different bodies.** Run apart, on the same weights with the same inputs, all of it collapses to chance.
+    <details>
+    <summary>See the Colony vs. the Lone Bee</summary>
+
+    ```text
+                                     hop 0     hop 1     hop 2     hop 3
+      together (one memory)          1.000     1.000     1.000     0.516
+      apart (one bee alone)          1.000     0.213     0.141     0.147
+      together, memory blank         1.000     0.103     0.153     0.091
+      (chance 0.125; hop 1 is another bee's edge, hop 2 needs two bees' edges)
+
+    One bee's edge is moved:
+      a different bee's answer follows the change   1.000
+      that bee, run alone, answers identically      1.000
+    Another colony's memory installed:
+      answers match the installed ring              1.000
+      answers match the ring we asked about         0.147
+    A bee built after the foraging, never run before:
+      hop 1 on the colony's memory                  1.000
+    hebb_type=None, together, hop 1                 0.125 (chance)
+
+    the ring        1 -> 6 -> 7 -> 3 -> 5 -> 2 -> 0 -> 4 -> 1
+    bee 7 was shown  4 -> 1, and nothing else
+    asked to walk from 7: 7 -> 3 -> 5   (the ring says 7 -> 3 -> 5)
+    ```
+    </details>
+*   **Script:** `examples/advanced/convergence_hive_mind.py`
+*   **Insight:** A **collective mind**, not a shared checkpoint. What one body learns at run time — no gradient step, no weight update, on a ring that exists only for this episode — every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, the hop count is a direct reading of temporal depth: the colony composes knowledge no member has.
 
 ## Vision: The Path to OdyssNet-1B
 OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.

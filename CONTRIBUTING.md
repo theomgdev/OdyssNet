@@ -50,7 +50,7 @@ We distinguish between **Core Validations** and **Feature Experiments**.
 
 ### 2. `examples/advanced/`
 *   **Purpose:** Contains complex tasks, task-specific logic, and demonstrations of advanced cognitive behaviors.
-*   **Examples:** `convergence_detective_thinking.py` (Reasoning), `convergence_latch.py` (Willpower).
+*   **Examples:** `convergence_detective_thinking.py` (Reasoning), `convergence_latch.py` (Willpower), `convergence_hive_mind.py` (Collective memory across bodies).
 *   **Rule:** If you are building a task (like adding numbers, generating waves, or playing a game), it goes here.
 
 ---

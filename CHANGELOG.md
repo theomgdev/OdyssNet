@@ -4,6 +4,27 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **A hive mind on the pooled plastic trace — `examples/advanced/convergence_hive_mind.py`.** Eight bodies run the same core and never touch: separate hidden states, separate attention caches, separate forward passes. What is between them is the persistent Hebbian buffer, which holds the *batch mean* of the live per-example traces and is handed back to every row at the start of the next call. That pooling exists so checkpoints, neurogenesis and transplants see one `(N, N)` matrix; run a colony as the batch and the same two lines are a shared memory — linear, superposable, gradient-free, and living on the shared core rather than beside it.
+
+  Each bee is shown one edge of a ring over 8 symbols, drawn fresh every episode so the answer cannot sit in the weights, and nothing else. Every private carrier is then wiped — hidden state zeroed, attention cache reset — so after the wipe no body holds anything of its own, and one query symbol is put to each. One echo step walks one edge, which makes the hop count a reading of temporal depth:
+
+  | 320 queries per column | hop 0 | hop 1 | hop 2 | hop 3 |
+  |---|---|---|---|---|
+  | together, one memory | 1.000 | **1.000** | **1.000** | 0.516 |
+  | apart, one bee alone | 1.000 | 0.213 | 0.141 | 0.147 |
+  | together, memory blank | 1.000 | 0.103 | 0.153 | 0.091 |
+
+  Hop 1 is an edge another body observed; hop 2 needs two edges held by two different bodies, so the colony is composing, not just recalling. Chance is 0.125, and the apart column is the same weights on the same inputs with the bees run one at a time instead of together — 0.213 at hop 1 rather than 0.125 because one query in eight happens to be the bee's own edge. Depth runs out gradually rather than at a wall: the third hop lands 0.516 of the time, four times chance and rising with training length (0.147 at 350 optimizer steps, 0.516 at 1000), which is also where the loss curve turns volatile.
+
+  The controls close the remaining doors. Move one bee's edge and a *different* bee's answer follows it (1.000), while that same bee run alone answers bit-identically (1.000) — separate forward passes have no channel to leak through, so the isolation needs no argument. Install another colony's memory and the answers follow the installed ring (1.000), not the ring that was asked about (0.147): what carries is the content of the trace, not its presence. Running the colony as one batch and running every bee separately then averaging the memories afterwards agree to 6.0e-08 against a memory scale of 0.630, so the batch axis is doing no secret work — the pooling is an average of independent bodies, and it could as well happen over a network. A body built after the foraging and never run before answers at 1.000 on the colony's memory: the knowledge is not in any bee.
+
+  **Only the reading is trained.** The study pass runs under `torch.no_grad()` in every epoch, so the write is the architecture's own plasticity and never receives a gradient; what training shapes is a query that resonates with whatever the fixed rule wrote. Two protocol properties are load-bearing and were measured, not chosen: the study pass is **two steps**, because a cold start makes the first state a near-one-hot of the injected symbol and the temporal correlation written on the next step therefore lands on that symbol's row — three steps halves untrained retrieval and six buries the edge under background correlations, at which point the task stops training at all; and every evaluation call passes `current_state` explicitly, because `forward` re-runs `reset_state` on a batch-size change and that would zero the very memory the call exists to read.
+
+  `hebb_type=None` on the same protocol sits at chance (0.125 at hop 1, to three digits), which is also the leak test for the whole setup: with plasticity off there is no channel at all, and nothing above chance may appear.
+
 ## [3.1.0] — 2026-08-23
 
 ### Fixed
