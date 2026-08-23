@@ -26,6 +26,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 - **New in 3.0:** optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **89.89% MNIST accuracy** with **634 parameters**, and **96.05%** on 7x7 MNIST with 4,669.
+- **New in 3.1.1:** a *hive*. Eight bodies run the same core with no contact between them — separate states, separate caches, separate forward passes — and share one pooled Hebbian trace. Each is shown one edge of a ring drawn fresh per episode; every body then recalls edges it never observed and composes chains up to four edges long, **1.000 against 0.125 chance**, with no gradient step at run time. Run apart, the same weights on the same inputs fall to chance.
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
 - Start with [examples](examples) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
@@ -38,6 +39,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 *   **Trainable Chaos:** Uses **StepNorm** and **Tanh** to tame chaotic signals.
 *   **Temporal Attention (3.0):** Optional multi-head attention over the core's *own state history* (`attn_heads=4`) — no layers to stack it between, so it attends along time. Modern KV caching throughout: grouped-query heads, RoPE, a sliding window, and a preallocated ring buffer for allocation-free decoding. Its output projection starts at zero, so switching it on changes nothing until training says otherwise.
 *   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — the network accumulates correlations *per example* and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.). The plastic contribution is scaled by a zero-initialized gain, so switching it on changes nothing until training decides otherwise — which makes `hebb_type` an exact control. Ablate it: measured, it helps on sequential tasks and hurts where attention already covers the same ground. Use `torch.compile`: the step is launch-bound, and plasticity costs 132% eager against 26% compiled.
+*   **Collective Memory Across Bodies:** The persistent Hebbian buffer holds the batch mean of the live traces and is handed back to every row on the next call, so a batch can be run as a *colony* — independent bodies with private inputs and outputs, one shared memory living on the core. What one body learns at run time (no gradient, no weight update) every other body can read, including a body built after the fact. Measured in `convergence_hive_mind.py`.
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
@@ -59,7 +61,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **Stopwatch**| Needs Clock | **Internal Rhythm** | **Error: 0** | `convergence_stopwatch.py` |
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective_thinking.py` |
 | **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **1.7x Lower Final Loss** | `convergence_skill_transfer.py` |
-| **Hive Mind**| Needs Re-Training to Share | **Pooled Plastic Trace** (Collective Memory) | **100% Recall of Facts a Body Never Saw** | `convergence_hive_mind.py` |
+| **Hive Mind**| Needs Re-Training to Share | **Pooled Plastic Trace** (Collective Memory) | **1.000 on Facts No Body Saw** (chance 0.125) | `convergence_hive_mind.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -71,6 +73,20 @@ OdyssNet solves full-scale MNIST (28x28) with **Zero Hidden Layers** (Direct Inp
 *   **Thinking Time:** 10 Steps
 
 The input layer "talks to itself" for 10 steps. The chaotic feedback loops extract features (edges, loops) dynamically over time, performing the work of spatial layers. This proves that **Temporal Depth can replace Spatial Depth**.
+
+### One Memory, Many Bodies
+
+Eight bodies share one 21,280-parameter core and touch nothing else: separate hidden states, separate attention caches, separate forward passes, private inputs and private outputs. Each is shown **one edge** of an 8-node ring drawn fresh every episode. Every private carrier is then wiped — state zeroed, attention cache reset — and each body is asked to walk the ring from a query symbol, one echo step per edge.
+
+| 320 queries per column | hop 1 | hop 2 | hop 3 |
+| :--- | :--- | :--- | :--- |
+| **together**, one shared memory | **1.000** | **1.000** | **1.000** |
+| apart, one body alone | 0.297 | 0.134 | 0.094 |
+| together, memory blank | 0.147 | 0.141 | 0.112 |
+
+Chance is 0.125. Hop 1 is an edge another body observed; hops 2 and 3 compose edges held by different bodies, which no body could answer from its own inputs. The ring exists only for that episode, so the answer cannot be in the weights, and nothing is trained at run time — the study pass runs under `torch.no_grad()`, leaving the write to the architecture's own plasticity.
+
+The only thing between the bodies is the plastic trace they leave on the shared core, which the library pools as the batch mean. The controls say so from every side: move one body's edge and a *different* body's answer follows it (1.000) while that body run alone answers bit-identically; install another colony's memory and the answers follow *that* ring (1.000); run the bodies apart and pool the memories afterwards and the result matches the batched one to 3.0e-08; with `hebb_type=None` the whole thing sits at chance. Trained to seven hops instead of three, the same colony holds 1.000 through four edges and then falls away (0.884, 0.775, 0.228) — one echo step per edge, so composition depth is temporal depth. Full protocol in **section M**.
 
 ---
 
@@ -501,17 +517,17 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 *   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. Only 6.7% of the larger model's parameters come from the donor, and that fraction is enough to change where training ends up. This is a concrete step toward compositional learning.
 
 ### M. The Hive Mind (One Memory, Many Bodies)
-*   **Target:** Eight bodies share one 21,536-parameter core. Each is shown **one edge** of an 8-symbol ring drawn fresh every episode, and nothing else. Every hidden state and attention cache is then wiped, and each body is asked to walk the ring from a query symbol — one echo step per edge.
+*   **Target:** Eight bodies share one 21,280-parameter core. Each is shown **one edge** of an 8-symbol ring drawn fresh every episode, and nothing else. Every hidden state and attention cache is then wiped, and each body is asked to walk the ring from a query symbol — one echo step per edge.
 *   **Challenge:** After the wipe no body holds anything privately. Bodies never touch: separate states, separate caches, separate forward passes, private inputs and outputs. Anything a body answers beyond its own edge had to arrive through the plastic trace the colony leaves on the shared core — which the library pools as the batch mean and hands back to every body on the next call.
-*   **Result:** **Perfect recall of edges no body observed, and perfect composition of edges held by two different bodies.** Run apart, on the same weights with the same inputs, all of it collapses to chance.
+*   **Result:** **Perfect recall of edges no body observed, and perfect composition of edges held by different bodies.** Run apart, on the same weights with the same inputs, all of it collapses to chance.
     <details>
     <summary>See the Colony vs. the Lone Bee</summary>
 
     ```text
                                      hop 0     hop 1     hop 2     hop 3
-      together (one memory)          1.000     1.000     1.000     0.516
-      apart (one bee alone)          1.000     0.213     0.141     0.147
-      together, memory blank         1.000     0.103     0.153     0.091
+      together (one memory)          1.000     1.000     1.000     1.000
+      apart (one bee alone)          1.000     0.297     0.134     0.094
+      together, memory blank         1.000     0.147     0.141     0.112
       (chance 0.125; hop 1 is another bee's edge, hop 2 needs two bees' edges)
 
     One bee's edge is moved:
@@ -520,17 +536,29 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     Another colony's memory installed:
       answers match the installed ring              1.000
       answers match the ring we asked about         0.147
+    Bees run together, or run apart and pooled afterwards:
+      largest difference in the memory              2.980e-08 (scale 3.173e-01)
     A bee built after the foraging, never run before:
       hop 1 on the colony's memory                  1.000
     hebb_type=None, together, hop 1                 0.125 (chance)
 
     the ring        1 -> 6 -> 7 -> 3 -> 5 -> 2 -> 0 -> 4 -> 1
     bee 7 was shown  4 -> 1, and nothing else
-    asked to walk from 7: 7 -> 3 -> 5   (the ring says 7 -> 3 -> 5)
+    asked to walk from 7: 7 -> 3 -> 5 -> 2   (the ring says 7 -> 3 -> 5 -> 2)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_hive_mind.py`
-*   **Insight:** A **collective mind**, not a shared checkpoint. What one body learns at run time — no gradient step, no weight update, on a ring that exists only for this episode — every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, the hop count is a direct reading of temporal depth: the colony composes knowledge no member has.
+*   **Mechanism:** `hebb_type='temporal'`, measured against the alternatives on the same protocol (1,000 steps, CPU). An edge is directed and so is `h_prev` paired with `h_t`; `h_t` paired with itself is not, and `hebb_type='spatial'` alone never leaves chance (0.169 at hop 1). Attention is not a channel here — the cache is per body and is wiped before the query — and the colony measures identically with it off.
+
+    | | hop 1 | hop 2 | hop 3 |
+    | :--- | :--- | :--- | :--- |
+    | `'temporal'` (shipped), seeds 42, 7 and 123 | 1.000 | 1.000 | 1.000 |
+    | `'temporal'`, attention off | 1.000 | 1.000 | 1.000 |
+    | `'both'`, seed 42 / seed 7 | 1.000 | 1.000 | 1.000 / 0.200 |
+    | `'spatial'` | 0.169 | 0.134 | 0.122 |
+    | `None` | 0.125 | — | — |
+
+*   **Insight:** A **collective mind, not a shared checkpoint**. What one body learns at run time — no gradient step, no weight update, on a ring that exists only for this episode — every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, composition depth is temporal depth: trained to seven hops the same colony holds 1.000 through four edges, then 0.884, 0.775, 0.228.
 
 ## Vision: The Path to OdyssNet-1B
 OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.

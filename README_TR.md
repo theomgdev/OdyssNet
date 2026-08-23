@@ -27,6 +27,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 - **3.0 ile gelen yenilik:** çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - **634 parametre** ile **%89.89 MNIST doğruluğu**, 4,669 parametre ile 7x7 MNIST'te **%96.05** elde eder.
+- **3.1.1 ile gelen yenilik:** bir *kovan*. Sekiz beden aynı çekirdeği koşuyor ve birbirine hiç değmiyor — ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri — tek bir havuzlanmış Hebbian izi paylaşıyorlar. Her bedene her bölümde yeniden çizilen bir halkanın tek bir kenarı gösteriliyor; sonrasında her beden hiç görmediği kenarları hatırlıyor ve dört kenara kadar uzanan zincirleri birleştiriyor: **0.125 şansa karşı 1.000**, üstelik çalışma anında tek bir gradyan adımı olmadan. Ayrı ayrı koşulduklarında aynı ağırlıklar aynı girdilerle şansa düşüyor.
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
 - Kanıtlar için [örnekler](examples), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
@@ -39,6 +40,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
 *   **Zamansal Dikkat (3.0):** Çekirdeğin *kendi durum geçmişi* üzerinde isteğe bağlı çok başlı dikkat (`attn_heads=4`) — arasına dikkat yerleştirilecek katman olmadığı için zaman ekseninde çalışır. Baştan sona modern KV önbellekleme: gruplanmış sorgu başlıkları, RoPE, kayan pencere ve tahsis yapmadan çözümleme (decoding) için önceden ayrılmış halka tampon. Çıkış izdüşümü sıfırdan başlar; yani açmak, eğitim aksine karar verene kadar hiçbir şeyi değiştirmez.
 *   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='synapse'|'neuron'|'global'`) — ağ korelasyonları *örnek başına* biriktirir ve global, nöron başına veya sinaps başına çözünürlükte tamamen türevlenebilir logit parametreleri (`t_hebb_factor`, `s_hebb_decay`, vb.) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir. Plastik katkı sıfırdan başlayan öğrenilebilir bir kazançla ölçeklenir; yani plastisiteyi açmak, eğitim aksine karar verene dek hiçbir şeyi değiştirmez — bu da `hebb_type`'ı tam bir kontrol hâline getirir. Ablasyonunu yapın: ölçümlerde ardışık görevlerde kazandırıyor, attention'ın zaten kapladığı yerde kaybettiriyor. `torch.compile` kullanın: adım kernel-launch sınırlıdır ve plastisite eager'da %132, derlenmiş halde %26 ek yük getirir.
+*   **Bedenler Arası Kolektif Bellek:** Kalıcı Hebbian tamponu, canlı izlerin batch ortalamasını tutar ve bir sonraki çağrıda her satıra geri verir; yani bir batch *koloni* olarak koşulabilir — özel girdi ve çıktıları olan bağımsız bedenler, çekirdeğin üzerinde duran tek bir ortak bellek. Bir bedenin çalışma anında öğrendiğini (gradyan yok, ağırlık güncellemesi yok) diğer bütün bedenler okuyabilir; sonradan inşa edilmiş bir beden dahil. `convergence_hive_mind.py` içinde ölçülüyor.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
@@ -60,7 +62,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **Kronometre**| Saat Gerekir | **İç Ritim** | **Hata: 0** | `convergence_stopwatch.py` |
 | **Dedektif**| Bellek Gerekir | **Bilişsel Sessizlik** (Akıl Yürütme) | **Mükemmel Tespit**| `convergence_detective_thinking.py` |
 | **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.6x Daha Hızlı** | `convergence_skill_transfer.py` |
-| **Kovan Zihni**| Paylaşmak İçin Baştan Eğitim Gerekir | **Havuzlanmış Plastik İz** (Kolektif Bellek) | **Bedenin Hiç Görmediği Bilginin %100 Hatırlanması** | `convergence_hive_mind.py` |
+| **Kovan Zihni**| Paylaşmak İçin Baştan Eğitim Gerekir | **Havuzlanmış Plastik İz** (Kolektif Bellek) | **Hiçbir Bedenin Görmediği Bilgide 1.000** (şans 0.125) | `convergence_hive_mind.py` |
 
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
@@ -72,6 +74,20 @@ OdyssNet, tam ölçekli MNIST'i (28x28) **Sıfır Gizli Katman** ile çözüyor 
 *   **Düşünme Süresi:** 10 Adım
 
 Giriş katmanı 10 adım boyunca "kendisiyle konuşur". Kaotik geri besleme döngüleri, uzamsal katmanların işini yaparak zamanla özellikleri (kenarlar, döngüler) dinamik olarak çıkarır. Bu, **Zamansal Derinliğin Uzamsal Derinliğin Yerini Alabileceğini** kanıtlar.
+
+### Tek Bellek, Çok Beden
+
+Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor ve başka hiçbir noktada temas etmiyor: ayrı gizli durumlar, ayrı dikkat önbellekleri, ayrı forward geçişleri, özel girdiler ve özel çıktılar. Her bedene, her bölümde yeniden çizilen 8 düğümlük bir halkanın **tek bir kenarı** gösteriliyor. Ardından her özel taşıyıcı siliniyor — durum sıfırlanıyor, dikkat önbelleği resetleniyor — ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor; kenar başına bir yankı adımı.
+
+| sütun başına 320 sorgu | hop 1 | hop 2 | hop 3 |
+| :--- | :--- | :--- | :--- |
+| **birlikte**, tek ortak bellek | **1.000** | **1.000** | **1.000** |
+| ayrı, tek başına bir beden | 0.297 | 0.134 | 0.094 |
+| birlikte, bellek boş | 0.147 | 0.141 | 0.112 |
+
+Şans 0.125. Hop 1, başka bir bedenin gözlediği bir kenar; hop 2 ve hop 3, farklı bedenlerde duran kenarları birleştiriyor — hiçbir beden bunları kendi girdilerinden cevaplayamaz. Halka yalnızca o bölüm için var olduğundan cevap ağırlıklarda olamaz; çalışma anında da hiçbir şey eğitilmiyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazmayı mimarinin kendi plastisitesi yapıyor.
+
+Bedenler arasındaki tek şey, paylaşılan çekirdeğe bıraktıkları plastik iz — kütüphane bunu batch ortalaması olarak havuzluyor. Kontroller bunu her yönden söylüyor: bir bedenin kenarı değiştirildiğinde *başka* bir bedenin cevabı bunu izliyor (1.000), aynı beden tek başına koşturulduğunda ise cevabı bit-bit aynı kalıyor; başka bir koloninin belleği takıldığında cevaplar *o* halkayı izliyor (1.000); bedenler ayrı koşulup bellekler sonradan havuzlandığında sonuç batch'li hâliyle 3.0e-08'e kadar örtüşüyor; `hebb_type=None` ile her şey şansa düşüyor. Üç yerine yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra düşüyor (0.884, 0.775, 0.228) — kenar başına bir yankı adımı, yani bileşim derinliği zamansal derinliktir. Tam protokol **M bölümünde**.
 
 ---
 
@@ -502,7 +518,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Büyük modelin parametrelerinin yalnızca %6.7'si vericiden geliyor ve bu oran eğitimin nerede bittiğini değiştirmeye yetiyor. Bu, bileşimsel öğrenme yönünde somut bir adım.
 
 ### M. Kovan Zihni (Tek Bellek, Çok Beden)
-*   **Hedef:** Sekiz beden tek bir 21.536 parametreli çekirdeği paylaşıyor. Her birine, her bölümde yeniden çizilen 8 sembollük bir halkanın **tek bir kenarı** gösteriliyor, başka hiçbir şey. Ardından her bedenin gizli durumu ve dikkat önbelleği siliniyor ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor — kenar başına bir yankı adımı.
+*   **Hedef:** Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor. Her birine, her bölümde yeniden çizilen 8 sembollük bir halkanın **tek bir kenarı** gösteriliyor, başka hiçbir şey. Ardından her bedenin gizli durumu ve dikkat önbelleği siliniyor ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor — kenar başına bir yankı adımı.
 *   **Meydan Okuma:** Silme sonrasında hiçbir bedende özel olarak tutulan bir şey kalmıyor. Bedenler birbirine değmiyor: ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri, özel girdi ve çıktılar. Bir bedenin kendi kenarının ötesinde verdiği her cevap, kovanın paylaşılan çekirdek üzerinde bıraktığı plastik izden gelmek zorunda — kütüphane bu izi batch ortalaması olarak havuzlayıp bir sonraki çağrıda her bedene geri veriyor.
 *   **Sonuç:** **Hiçbir bedenin görmediği kenarların kusursuz hatırlanması ve iki farklı bedende duran kenarların kusursuz bileşimi.** Aynı ağırlıklarla, aynı girdilerle ama ayrı ayrı koşulduğunda hepsi şansa düşüyor.
     <details>
@@ -510,9 +526,9 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     ```text
                                      hop 0     hop 1     hop 2     hop 3
-      birlikte (tek bellek)          1.000     1.000     1.000     0.516
-      ayrı (arı tek başına)          1.000     0.213     0.141     0.147
-      birlikte, bellek boş           1.000     0.103     0.153     0.091
+      birlikte (tek bellek)          1.000     1.000     1.000     1.000
+      ayrı (arı tek başına)          1.000     0.297     0.134     0.094
+      birlikte, bellek boş           1.000     0.147     0.141     0.112
       (şans 0.125; hop 1 başka bir arının kenarı, hop 2 iki arının kenarını gerektirir)
 
     Bir arının kenarı değiştirildiğinde:
@@ -521,17 +537,29 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     Başka bir kovanın belleği takıldığında:
       cevaplar takılan halkayla uyuşuyor            1.000
       cevaplar sorulan halkayla uyuşuyor            0.147
+    Arılar birlikte veya ayrı koşup sonradan havuzlandığında:
+      bellekteki en büyük fark                      2.980e-08 (ölçek 3.173e-01)
     Foraging'den sonra inşa edilmiş, hiç koşmamış arı:
       kovanın belleği üzerinde hop 1                1.000
     hebb_type=None, birlikte, hop 1                 0.125 (şans)
 
     halka           1 -> 6 -> 7 -> 3 -> 5 -> 2 -> 0 -> 4 -> 1
     arı 7'ye yalnızca  4 -> 1 gösterildi, başka hiçbir şey
-    7'den yürümesi istendi: 7 -> 3 -> 5   (halka diyor ki 7 -> 3 -> 5)
+    7'den yürümesi istendi: 7 -> 3 -> 5 -> 2   (halka diyor ki 7 -> 3 -> 5 -> 2)
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_hive_mind.py`
-*   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini — gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde — diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için hop sayısı doğrudan zamansal derinliğin okunuşu: kovan, hiçbir üyesinde bulunmayan bilgiyi birleştiriyor.
+*   **Mekanizma:** `hebb_type='temporal'`, aynı protokolde alternatiflerine karşı ölçüldü (1.000 adım, CPU). Bir kenar yönlüdür ve `h_prev` ile `h_t` eşleşmesi de yönlüdür; `h_t`'nin kendisiyle eşleşmesi değildir — `hebb_type='spatial'` tek başına şanstan hiç ayrılmıyor (hop 1'de 0.169). Attention burada bir kanal değil: önbellek beden başınadır ve sorgudan önce siliniyor, kovan attention kapalıyken birebir aynı ölçülüyor.
+
+    | | hop 1 | hop 2 | hop 3 |
+    | :--- | :--- | :--- | :--- |
+    | `'temporal'` (sevk edilen), seed 42, 7 ve 123 | 1.000 | 1.000 | 1.000 |
+    | `'temporal'`, attention kapalı | 1.000 | 1.000 | 1.000 |
+    | `'both'`, seed 42 / seed 7 | 1.000 | 1.000 | 1.000 / 0.200 |
+    | `'spatial'` | 0.169 | 0.134 | 0.122 |
+    | `None` | 0.125 | — | — |
+
+*   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini — gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde — diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için bileşim derinliği zamansal derinliktir: yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra 0.884, 0.775, 0.228.
 
 ## Vizyon: Silikonun Ruhu (OdyssNet-1B)
 OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.

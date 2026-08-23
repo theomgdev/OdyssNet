@@ -17,6 +17,10 @@ to each bee. One echo step walks one edge:
 
 Alone, a bee holds one edge and can go no further; that is the control, run on
 the same weights with the same inputs, apart instead of together.
+
+`hebb_type='temporal'` because the trace has to hold an edge: `h_prev` paired
+with `h_t` is directed, which is what an edge is. Spatial correlation pairs a
+state with itself, stores no direction, and on this task never leaves chance.
 """
 
 import torch
@@ -35,7 +39,7 @@ HEBB_STATE = ("t_hebb_state_W", "t_hebb_state_mem",
               "s_hebb_state_W", "s_hebb_state_mem")
 
 
-def build(device, hebb="both", attn=1):
+def build(device, hebb="temporal", attn=1):
     return OdyssNet(
         num_neurons=NEURONS,
         input_ids=list(range(SYMBOLS)),      # one neuron per symbol, in and out
@@ -320,8 +324,8 @@ def main():
     print("\nOne walk, in full:")
     print("  the ring        " + " -> ".join(str(s) for s in src) + f" -> {src[0]}")
     print(f"  bee {SYMBOLS - 1} was shown  {src[-1]} -> {dst[-1]}, and nothing else")
-    trail = " -> ".join(str(int(s)) for s in born_answer[SYMBOLS - 1, :3])
-    truth = " -> ".join(str(int(s)) for s in walk[SYMBOLS - 1, :3])
+    trail = " -> ".join(str(int(s)) for s in born_answer[SYMBOLS - 1])
+    truth = " -> ".join(str(int(s)) for s in walk[SYMBOLS - 1])
     print(f"  asked to walk from {queries[SYMBOLS - 1]}: {trail}   "
           f"(the ring says {truth})")
 
