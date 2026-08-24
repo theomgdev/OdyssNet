@@ -633,6 +633,56 @@ class TestHebbian:
         out.sum().backward()
         assert model.t_hebb_factor.grad is not None
 
+    def test_gradient_checkpointing_matches_plain(self):
+        # Recompute must be exact: same outputs, same gradients, same trace.
+        def run(ckpt):
+            torch.manual_seed(11)
+            model = _make(6, hebb_type="both", hebb_res="neuron",
+                          gradient_checkpointing=ckpt)
+            with torch.no_grad():          # the gain is zero-initialized
+                model.hebb_norm.weight.fill_(0.6)
+            model.train()
+            torch.manual_seed(3)
+            x = torch.randn(2, 6)
+            out, _ = model(x, steps=4)
+            out.pow(2).mean().backward()
+            grads = {n: p.grad.clone() for n, p in model.named_parameters()
+                     if p.grad is not None}
+            return out, grads, model.t_hebb_state_W.clone()
+
+        out_a, grads_a, trace_a = run(False)
+        out_b, grads_b, trace_b = run(True)
+        assert torch.equal(out_a, out_b)
+        assert torch.equal(trace_a, trace_b)
+        assert grads_a.keys() == grads_b.keys()
+        for name in grads_a:
+            assert torch.equal(grads_a[name], grads_b[name]), name
+
+    def test_gradient_checkpointing_retains_one_trace_per_step(self):
+        # The (B, N, N) trace dominates everything else the graph holds, so
+        # the checkpointed region has to span the trace read, the step and the
+        # trace write: only what crosses the step boundary may survive.
+        n, batch, steps = 8, 2, 5
+
+        def big_storages(ckpt):
+            model = _make(n, hebb_type="temporal", hebb_res="neuron",
+                          gradient_checkpointing=ckpt)
+            model.train()
+            seen = {}
+
+            def pack(t):
+                if t.numel() >= batch * n * n:
+                    seen[t.untyped_storage().data_ptr()] = True
+                return t
+
+            with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
+                out, _ = model(torch.randn(batch, n), steps=steps)
+                out.sum()
+            return len(seen)
+
+        assert big_storages(True) <= steps + 1
+        assert big_storages(False) >= 3 * steps
+
     def test_invalid_hebb_type_raises(self):
         with pytest.raises(ValueError):
             _make(4, hebb_type="invalid")

@@ -103,7 +103,14 @@ model = OdyssNet(
 *   **Per-example trace.** The live trace is `(B, N, N)`; every example writes its own associations, so a batched forward computes the same function as the same examples run singly. The persistent buffer stays `(N, N)` and holds the batch mean, leaving checkpoints, neurogenesis padding and weight transplants untouched.
 *   **Pooled across the batch, between calls.** The buffer is written at the end of a forward pass and read back at the start of the next one, expanded to every row. Within a call each example reads only what it wrote; across a call boundary all of them read the mean of what they all wrote.
 
-**Cost.** Every step retains a `(B, N, N)` trace for the backward pass, so memory grows as `steps x B x N²`. Affordable on small cores with short rollouts, not on a large one — run those with `hebb_type=None`. The step is also bound by kernel launches rather than arithmetic: `hebb_type='both'` adds 132% to it eager and 26% under `torch.compile`.
+**Cost.** Every step retains a `(B, N, N)` trace per path for the backward pass, so activation memory grows as `steps x B x N²` and nothing else in the graph comes close: 96 echo steps on a 1024-neuron core hold 0.4 GB *per batch row* per path. `gradient_checkpointing=True` is the lever — the checkpointed region spans the trace read, the step and the trace write, so only the trace that crosses the step boundary survives and the intermediates between are recomputed. Measured at 256 neurons, batch 8, 32 steps, in multiples of `B x N²`:
+
+| retained per step | `hebb_type='temporal'` | `hebb_type='both'` |
+|---|---|---|
+| default | 6.3 | 8.3 |
+| `gradient_checkpointing=True` | 1.2 | 2.4 |
+
+The ratio is the same at every neuron count, batch and `hebb_res`, and drifts a little below the table on long rollouts (6.1 and 1.1 at 128 steps). The recompute costs about 70% more time on the plastic step, which is the trade to make when memory is what binds — and it is one lever or the other, not both: Dynamo does not trace a checkpointed region, so under `torch.compile` that region runs eager. The step is also bound by kernel launches rather than arithmetic: `hebb_type='both'` adds 132% to it eager and 26% under `torch.compile`.
 
 **When to use it.** Plasticity earns its place where step *T* extends what step *T-1* built, and acts as overfit noise where each step handles an independent chunk. Temporal attention fills the same role on sequential classification and measured better there, so the two are alternatives more than complements. Ablate rather than assume — that is what the zero-initialized gain is for.
 

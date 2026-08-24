@@ -558,6 +558,70 @@ class OdyssNet(nn.Module):
             if self.debug: self._dbg(out, f"step_norm output (step {t_idx})")
             return out
 
+        def _step_and_learn(h_t_in, local_W, local_mem, t_idx, x_input_info,
+                            attn_segments=(), attn_pos=0):
+            # Trace read, step, trace write in one region, so gradient
+            # checkpointing keeps only the trace that crosses the step boundary
+            # and recomputes the (B, N, N) intermediates between them.
+
+            # The summed paths are what the recurrence sees, so they share one
+            # normalization and one gain.
+            cur_hebb_W   = (hebb_lr_W * local_W).sum(0)
+            cur_hebb_mem = (hebb_lr_m * local_mem).sum(0)
+            # RMSNorm treats each row of the last dimension independently, so
+            # norming W's rows and the memory vector together is exactly
+            # norming them apart, in one kernel chain.
+            normed = self.hebb_norm(
+                torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
+            cur_hebb_W   = normed[:, :-1]
+            cur_hebb_mem = normed[:, -1]
+            if self.debug:
+                self._dbg(cur_hebb_W,   f"cur_hebb_W (step {t_idx})")
+                self._dbg(cur_hebb_mem, f"cur_hebb_mem (step {t_idx})")
+
+            h_out = _single_step(h_t_in, t_idx, x_input_info,
+                                 cur_hebb_W, cur_hebb_mem,
+                                 attn_segments, attn_pos)
+
+            # AMP would force these matmul-family ops back to float16 whatever
+            # the explicit casts say.
+            with torch.amp.autocast(device_type=h_out.device.type, enabled=False):
+                # The correlation carries gradient; only the trace's own
+                # history is truncated, by `local_*.detach()` below.
+                h_t_f    = h_out.float()
+                h_prev_f = h_t_in.float()
+
+                # Novelty gate: damp the correlation where W is already large.
+                # Detached, so no second-order path opens through W.
+                # `_offdiag` carries the 1/N scale and the diagonal mask.
+                w_eff = self.W + cur_hebb_W
+                mem_eff = self.memory_feedback + cur_hebb_mem
+                gate_W   = self._offdiag / (1.0 + w_eff.detach().float().abs())
+                gate_mem = 1.0 / (1.0 + mem_eff.detach().float().abs())
+                if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t_idx})")
+                if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t_idx})")
+
+                # Temporal pairs the previous state with the current one;
+                # spatial pairs the current state with itself.
+                if self.hebb_type == "temporal":
+                    src = h_prev_f.unsqueeze(0)
+                elif self.hebb_type == "spatial":
+                    src = h_t_f.unsqueeze(0)
+                else:
+                    src = torch.stack((h_prev_f, h_t_f))
+
+                corr_W   = gate_W * torch.einsum('pbj,bi->pbji', src, h_t_f)
+                corr_mem = gate_mem * (src * h_t_f)
+                if self.debug: self._dbg(corr_W,   f"corr_W (step {t_idx})")
+                if self.debug: self._dbg(corr_mem, f"corr_mem (step {t_idx})")
+
+                new_W   = hebb_ret_W * local_W.detach()   + hebb_lr_W * corr_W
+                new_mem = hebb_ret_m * local_mem.detach() + hebb_lr_m * corr_mem
+                if self.debug: self._dbg(new_W,   f"local_hebb_W (step {t_idx})")
+                if self.debug: self._dbg(new_mem, f"local_hebb_mem (step {t_idx})")
+
+            return h_out, new_W, new_mem
+
         # Thinking Ratio (Temporal Stretching)
         ratio = 1
         max_outputs = steps
@@ -574,8 +638,10 @@ class OdyssNet(nn.Module):
         if self.hebb_type is not None:
             # The live trace is per-example; the persistent buffer holds the
             # batch mean and stays (N, N) for checkpoints and neurogenesis.
-            # Memory is steps x B x N^2. Temporal and spatial are stacked on a
-            # leading path axis so 'both' costs one set of kernels, not two.
+            # Memory is steps x B x N^2 per path: one trace crosses every step
+            # boundary, and `gradient_checkpointing` recomputes the rest.
+            # Temporal and spatial are stacked on a leading path axis so 'both'
+            # costs one set of kernels, not two.
             paths = []
             if self.hebb_type in ("temporal", "both"):
                 paths.append((self.t_hebb_factor, self.t_hebb_decay,
@@ -728,43 +794,34 @@ class OdyssNet(nn.Module):
                         x_step_info = self._cached_scaled_input
 
 
-            if self.hebb_type is not None:
-                h_prev = h_t
-                # The summed paths are what the recurrence sees, so they share
-                # one normalization and one gain.
-                cur_hebb_W   = (hebb_lr_W * local_hebb_W).sum(0)
-                cur_hebb_mem = (hebb_lr_m * local_hebb_mem).sum(0)
-                # RMSNorm treats each row of the last dimension independently,
-                # so norming W's rows and the memory vector together is exactly
-                # norming them apart, in one kernel chain.
-                normed = self.hebb_norm(
-                    torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
-                cur_hebb_W   = normed[:, :-1]
-                cur_hebb_mem = normed[:, -1]
-
-                if self.debug:
-                    self._dbg(cur_hebb_W,   f"cur_hebb_W (step {t})")
-                    self._dbg(cur_hebb_mem, f"cur_hebb_mem (step {t})")
-            else:
-                cur_hebb_W   = None
-                cur_hebb_mem = None
-
             if self.attn is not None and (self.attn_read == 'step' or t % ratio == 0):
                 attn_segments, attn_pos = self.attn.cache_view()
             else:
                 attn_segments, attn_pos = (), 0
 
-            # Gradient checkpointing
-            if self.gradient_checkpointing and self.training:
-                # `t` stays a plain int: use_reentrant=False accepts non-tensor
-                # arguments, and torch.tensor(t) would allocate once per step.
+            # Gradient checkpointing. `t` stays a plain int: use_reentrant=False
+            # accepts non-tensor arguments, and torch.tensor(t) would allocate
+            # once per step.
+            recompute = self.gradient_checkpointing and self.training
+
+            if self.hebb_type is not None:
+                if recompute:
+                    h_t, local_hebb_W, local_hebb_mem = checkpoint.checkpoint(
+                        _step_and_learn, h_t, local_hebb_W, local_hebb_mem,
+                        t, x_step_info, attn_segments, attn_pos,
+                        use_reentrant=False,
+                    )
+                else:
+                    h_t, local_hebb_W, local_hebb_mem = _step_and_learn(
+                        h_t, local_hebb_W, local_hebb_mem,
+                        t, x_step_info, attn_segments, attn_pos)
+            elif recompute:
                 h_t = checkpoint.checkpoint(
-                    _single_step, h_t, t, x_step_info,
-                    cur_hebb_W, cur_hebb_mem, attn_segments, attn_pos,
-                    use_reentrant=False,
+                    _single_step, h_t, t, x_step_info, None, None,
+                    attn_segments, attn_pos, use_reentrant=False,
                 )
             else:
-                h_t = _single_step(h_t, t, x_step_info, cur_hebb_W, cur_hebb_mem,
+                h_t = _single_step(h_t, t, x_step_info, None, None,
                                    attn_segments, attn_pos)
 
             # Written after the step, so an entry summarizes everything up to
@@ -773,44 +830,6 @@ class OdyssNet(nn.Module):
             if self.attn is not None and (self.attn_write == 'step'
                                           or (t + 1) % ratio == 0):
                 self.attn.write(h_t)
-
-            if self.hebb_type is not None:
-                # AMP would force these matmul-family ops back to float16
-                # whatever the explicit casts say.
-                with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
-                    # The correlation carries gradient; only the trace's own
-                    # history is truncated, by `local_*.detach()` below.
-                    h_t_f    = h_t.float()
-                    h_prev_f = h_prev.float()
-
-                    # Novelty gate: damp the correlation where W is already
-                    # large. Detached, so no second-order path opens through W.
-                    # `_offdiag` carries the 1/N scale and the diagonal mask.
-                    w_eff = self.W + cur_hebb_W
-                    mem_eff = self.memory_feedback + cur_hebb_mem
-                    gate_W   = self._offdiag / (1.0 + w_eff.detach().float().abs())
-                    gate_mem = 1.0 / (1.0 + mem_eff.detach().float().abs())
-                    if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t})")
-                    if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t})")
-
-                    # Temporal pairs the previous state with the current one;
-                    # spatial pairs the current state with itself.
-                    if self.hebb_type == "temporal":
-                        src = h_prev_f.unsqueeze(0)
-                    elif self.hebb_type == "spatial":
-                        src = h_t_f.unsqueeze(0)
-                    else:
-                        src = torch.stack((h_prev_f, h_t_f))
-
-                    corr_W   = gate_W * torch.einsum('pbj,bi->pbji', src, h_t_f)
-                    corr_mem = gate_mem * (src * h_t_f)
-                    if self.debug: self._dbg(corr_W,   f"corr_W (step {t})")
-                    if self.debug: self._dbg(corr_mem, f"corr_mem (step {t})")
-
-                    local_hebb_W   = hebb_ret_W * local_hebb_W.detach()   + hebb_lr_W * corr_W
-                    local_hebb_mem = hebb_ret_m * local_hebb_mem.detach() + hebb_lr_m * corr_mem
-                    if self.debug: self._dbg(local_hebb_W,   f"local_hebb_W (step {t})")
-                    if self.debug: self._dbg(local_hebb_mem, f"local_hebb_mem (step {t})")
 
             # Smart Output Collection
             if return_sequence and (t + 1) % ratio == 0 and len(outputs) < max_outputs:

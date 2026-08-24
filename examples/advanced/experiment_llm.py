@@ -609,6 +609,44 @@ def vocab_advisory(cfg, vocab):
               f"are defined against.")
 
 
+def plasticity_advisory(cfg, model):
+    """
+    What the plastic trace costs, before it costs it.
+
+    The trace is per example and spans the whole core, so the backward pass
+    holds a `(batch, N, N)` tensor for each of the `chunk x (think_gap+1)` echo
+    steps — nothing else in the graph is within an order of magnitude, and it
+    grows with the batch. `--grad-ckpt` keeps only the trace that crosses each
+    step boundary.
+    """
+    if model.hebb_type is None:
+        return
+    paths = 2 if model.hebb_type == "both" else 1
+    steps = cfg.chunk * (cfg.think_gap + 1)
+    budget_gb = 2.0
+    # Multiples of batch x N² per path, measured at 256 neurons over 32 steps
+    # and flat in neuron count, batch and --hebb-res. Long rollouts run a little
+    # under (6.1 and 1.1 at 128 steps), so the estimate errs high.
+    row_gb = lambda ckpt: ((1.2 if ckpt else 6.3) * paths * steps
+                           * cfg.neurons ** 2 * 4 / 1e9)
+    fits = lambda ckpt: max(1, int(budget_gb / row_gb(ckpt)))
+    trace_gb = row_gb(cfg.grad_ckpt) * cfg.batch
+    print(f"🧬 plasticity {model.hebb_type}/{model.hebb_res} | "
+          f"{steps} steps x batch {cfg.batch} x {cfg.neurons}² | "
+          f"trace kept for backward {trace_gb:.1f} GB"
+          + (" (--grad-ckpt on)" if cfg.grad_ckpt else ""))
+    if trace_gb > budget_gb:
+        if not cfg.grad_ckpt:
+            print(f"⚠️  that trace alone is {trace_gb:.1f} GB. Run plasticity "
+                  f"with --grad-ckpt (about 5x less, ~70% slower per step): "
+                  f"--batch {fits(True)} fits {budget_gb:.0f} GB with it, "
+                  f"--batch {fits(False)} without.")
+        else:
+            print(f"⚠️  that trace alone is {trace_gb:.1f} GB. It is linear in "
+                  f"the batch and in the step count — try --batch "
+                  f"{fits(True)} or a shorter --chunk.")
+
+
 def attention_advisory(cfg, model):
     """
     What the attention branch costs, before it costs it.
@@ -1463,6 +1501,7 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
     if not quiet:
         vocab_advisory(cfg, vocab_size)
         attention_advisory(cfg, model)
+        plasticity_advisory(cfg, model)
         print(f"\n🧠 {model.get_num_params():,} trainable params | "
               f"{cfg.neurons} neurons | in {cfg.n_in} / out {cfg.n_out} | "
               f"gap {cfg.think_gap} | chunk {cfg.chunk} | batch {cfg.batch} | "
@@ -2114,7 +2153,12 @@ def parse_args():
                         "(default: %(default)s)")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra sequential "
-                        "forward per step")
+                        "forward per step. The checkpointed region spans the "
+                        "plastic trace as well as the step, so it is the lever "
+                        "that makes --hebb affordable (~5x less, ~70% slower). "
+                        "Dynamo does not trace a checkpointed region, so with "
+                        "--compile that region runs eager: these two levers do "
+                        "not combine")
     g.add_argument("--compile", action="store_true",
                    help="torch.compile the forward pass. The echo loop issues "
                         "thousands of small kernels per step and is bound by "

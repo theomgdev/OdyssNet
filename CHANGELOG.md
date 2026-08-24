@@ -4,6 +4,25 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.1.2] — 2026-08-24
+
+### Fixed
+- **`gradient_checkpointing` now covers the plastic trace, which is the only thing in the graph big enough to matter.** The Hebbian update lived *outside* the checkpointed region: the flag recomputed the step and kept every `(B, N, N)` intermediate the trace produced, so on a plastic run it bought nothing at all — 6.16 units of `B x N²` per step with it on against 6.17 with it off. Reading the trace, taking the step and writing the trace back are now one checkpointed region (`_step_and_learn`), so what survives a step boundary is the trace that has to cross it and the rest is recomputed.
+
+  Measured at 256 neurons, batch 8, 32 steps, in multiples of `B x N²` retained per step:
+
+  | | default | `gradient_checkpointing=True` |
+  |---|---|---|
+  | `hebb_type='temporal'` | 6.3 | 1.2 |
+  | `hebb_type='both'` | 8.3 | 2.4 |
+
+  The recompute costs ~70% more time on the plastic step (512 neurons, batch 8, 96 steps: 260 ms against 450 ms), which is the trade to make when memory is what binds. Off the flag nothing changed: outputs, every gradient — `hebb_norm.weight`, the factor and decay logits included — and the persisted trace buffers are bit-identical to 3.1.1 across `temporal`/`spatial`/`both` x `global`/`neuron`/`synapse`, with and without attention. The retained-per-step ratio is the same at every neuron count, batch and `hebb_res`; it drifts a little below the table on long rollouts (6.1 and 1.1 at 128 steps). `torch.compile` behaves as it did before, which includes a standing limitation now worth stating where flags are chosen rather than only here: Dynamo does not trace a checkpointed region, so `--compile` and `--grad-ckpt` are alternatives, not a pair.
+
+  This was never a leak: allocation was flat across optimizer steps. It is the price of the 3.1.0 repair — the correlation carries gradient, so the whole per-example trace is an activation, and there are `steps x B` of them. What was wrong is that the one lever the library offers against it did not reach it.
+
+### Added
+- **A plasticity advisory in `experiment_llm.py`,** alongside the vocabulary and attention ones: what the trace will cost, printed before it costs it, and what batch fits with `--grad-ckpt` and without. Plasticity is the one term in this model that scales with the batch *and* the step count, and raising the batch for throughput is the natural move that makes it unaffordable — `--batch 128 --hebb both` on the default 1024-neuron core, 96 echo steps, needs 649 GB for the trace, or 124 GB with `--grad-ckpt`.
+
 ## [3.1.1] — 2026-08-23
 
 ### Added
