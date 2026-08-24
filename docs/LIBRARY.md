@@ -106,7 +106,7 @@ model = OdyssNet(
 
 Three properties keep it affordable. The history lives in a preallocated buffer and every contraction runs over all of it behind a mask, so every step has the same shapes and `torch.compile` can trace them. The read is recomputed in the backward pass rather than kept, which is sound because the history is immutable once written. And the novelty gate, being detached, is carried as running sums rather than read back out of the trace.
 
-**Cost.** The step is bound by kernel launches rather than arithmetic, and the trace issues more of them than a matrix would: on a small core it is several times the step time of a plain one, and `torch.compile` is what closes most of that (7.5x on the plastic path). On a large core it is the faster of the two as well as the smaller, because a matrix-held trace grows with `N²` where this one grows with the step count. Plasticity remains the one term that scales with the batch.
+**Cost.** The step is bound by kernel launches rather than arithmetic, and the trace issues more of them than a plain step does. `torch.compile` closes most of that — 7.5x on the plastic path at 64 neurons over 16 steps, 4.4x at 512 over 96 — but the loop unrolls, so warmup grows with the step count and is minutes rather than seconds at 96. Plasticity remains the one term that scales with the batch.
 
 **When to use it.** Plasticity earns its place where step *T* extends what step *T-1* built, and acts as overfit noise where each step handles an independent chunk. Temporal attention fills the same role on sequential classification and measured better there, so the two are alternatives more than complements. Ablate rather than assume — that is what the zero-initialized gain is for.
 

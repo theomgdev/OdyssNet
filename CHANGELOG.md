@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
   Per-element decay is what a streamed trace cannot carry: `r^t` has to scale rows for `(h * r^t) @ C` to remain a matrix product. `hebb_res` is therefore `'global'` or `'neuron'`, and the per-synapse resolution is removed. It cost 2N² parameters and 3.1.0's own A/B found it did not earn them — 1,044 parameters to draw level with attention-only's 634. Checkpoints holding `t_hebb_factor`/`s_hebb_factor` of shape `(N, N)` will not load; retrain at `'neuron'`.
 
+  3.1.2's lever goes with it: `gradient_checkpointing` was made to reach the plastic trace because the trace was a matrix, and it no longer is. The flag still covers the step, which is all it now has to cover.
+
   The form was verified against the matrix one before that one was removed: in float64 the forward pass agreed to 4e-16 and every gradient to 1e-14 — the gain, both factor logits and both decay logits included — across `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, under pulse and continuous injection, from a cold and from a populated buffer.
 
 - **The novelty gate damps a write by the presynaptic row it lands on, not by the individual synapse.** `1 / (1 + rms(W_eff[j,:]))` in place of `1 / (1 + |W_eff|)`. An elementwise gate is the one term in the update that does not factor through an outer product, so the two changes are one change. It is also the better gate: on the record task's shape — sequential patch classification, plasticity on and attention off, where 3.1.0's plasticity A/B was run — it leads on both seeds at 10 epochs.
