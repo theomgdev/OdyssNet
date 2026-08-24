@@ -32,7 +32,14 @@ exactly, at a cost that is worth paying exactly where the dense form cannot run.
 ### Changed
 - **`hebb_gate` — the novelty gate has a form, and the elementwise one is not the best of them.** `1/(1 + |W_eff|)` is the one term in the update that does not factor through an outer product; `row` damps a write by the RMS of the presynaptic row it lands on instead, which keeps the write an outer product and lets the streaming form carry it. It needs three numbers per row and none of them needs the matrix, so it costs 6 MB and 14% of the step there.
 
-  On the record task's shape — sequential patch classification, plasticity on and attention off, which is where 3.1.0's plasticity A/B was run — `row` is ahead of `element` at every epoch from the fifth, seed 123, 10 epochs: **86.22% / 1.0469 against 85.15% / 1.0616**. On a paired-associate probe at twelve seeds the two are indistinguishable (10/12 against 9/12 solved), and so is dropping the gate entirely; an earlier six-seed reading that put `none` far behind did not survive the wider sweep. `element` stays the default until a second seed and a second task agree.
+  On the record task's shape — sequential patch classification, plasticity on and attention off, which is where 3.1.0's plasticity A/B was run — `row` is ahead of `element` on both seeds, at 10 epochs:
+
+  | seed | `element` | `row` |
+  |---|---|---|
+  | 123 | 85.15% / 1.0616 | **86.22% / 1.0469** |
+  | 42 | 86.15% / 1.0364 | **87.02% / 1.0313** |
+
+  Both agree in sign, and on seed 123 `row` leads at every epoch from the fifth. That is the evidence 3.1.0 carried for its own plasticity A/Bs, so `row` is worth proposing for main on its own merits — it is cheaper than the gate it replaces and it does not need the streaming form to be useful. On a paired-associate probe at twelve seeds the gates are indistinguishable, and so is dropping the gate entirely; an earlier six-seed reading that put `none` far behind did not survive the wider sweep, and that probe should be treated as unable to rank them. `element` stays the default here: a switch on main wants a second task, not a second seed.
 
 ## [3.1.2] — 2026-08-24
 
