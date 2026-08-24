@@ -114,6 +114,12 @@ The ratio is the same at every neuron count, batch and `hebb_res`, and drifts a 
 
 **When to use it.** Plasticity earns its place where step *T* extends what step *T-1* built, and acts as overfit noise where each step handles an independent chunk. Temporal attention fills the same role on sequential classification and measured better there, so the two are alternatives more than complements. Ablate rather than assume — that is what the zero-initialized gain is for.
 
+#### The trace as a stream of writes (branch `feat/streaming-trace`)
+
+`hebb_form='stream'` keeps the trace as the `(B, N)` writes it is built from rather than as a matrix. Every write is an outer product and the recurrence only asks the trace for `h @ L`, so that product and the row norms RMSNorm needs both come out of contractions over the stored writes; the buffer is materialized once per call. It is the same architecture — outputs and every gradient agree with the dense path to 1e-14 in float64 — at `steps² x B x N` instead of `steps x B x N²`.
+
+It requires `hebb_gate='row'` (the elementwise gate is the one term that does not factor through an outer product) and `hebb_res` other than `'synapse'`. At 1024 neurons, batch 8, 96 steps it holds 895 MB against the checkpointed dense path's 3.37 GB, at the same step time; at batch 128 with `hebb_type='both'` the trace is 17.5 GB against 104 GB. It is also hostile to `torch.compile` — the history grows by one entry per step, so every step is a new shape — which is the trade: take it where memory is what stops the run, not where speed is.
+
 #### One memory across many bodies
 
 Because the buffer pools the batch and is broadcast back, a batch can be read as a *colony*: independent bodies with private inputs, private outputs, their own hidden state and their own attention cache, sharing one core and one memory on it. Nothing else crosses between rows — the recurrence, the norm and the attention cache are per-row — so anything a body knows that its own inputs never contained came through the trace.

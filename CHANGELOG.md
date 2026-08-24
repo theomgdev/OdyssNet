@@ -6,38 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — branch `feat/streaming-trace`
 
-Research branch. Not merged, and the switches it adds (`hebb_gate`, `hebb_form`)
-are here to settle a question, not to become knobs on main.
+Research branch, not merged. It answers one question — can the plastic trace be
+kept as the writes it is made of instead of as a matrix — and the answer is yes,
+exactly, at a cost that is worth paying exactly where the dense form cannot run.
 
 ### Added
-- **The plastic trace as a stream of writes rather than a matrix (`odyssnet/core/plastic_stream.py`).** Every Hebbian write is an outer product and what the recurrence asks of the trace is one vector-matrix product, so the trace can be kept as the `(B, N)` vectors it is built from and contracted on demand — `h_t @ L_t` and the row norms its RMSNorm needs both come out of contractions over the stored writes. The persistent buffer stays one `(N, N)` matrix for the whole call instead of one per step, and is materialized once at the end, already averaged over the batch.
+- **The plastic trace as a stream of writes (`odyssnet/core/plastic_stream.py`).** Every Hebbian write is an outer product and the recurrence only ever asks the trace for `h @ L`, so the trace can be kept as the `(B, N)` vectors it is built from: `h @ L` and the row norms its RMSNorm needs both fall out of contractions over those writes, and the persistent buffer is materialized once per call — already averaged over the batch — instead of once per step. `hebb_form='stream'` selects it.
 
-  Verified as the same architecture, not an approximation: against the dense path in float64, the forward pass agrees to 4e-16 and **every** gradient to 8e-15 — `hebb_norm.weight`, both factor logits and both decay logits included — across `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, from both a cold and a populated buffer. Matching the decay gradient took care: the dense trace decays a *detached* history once per step, so a gradient reaching the decay logit sees one factor, and differentiating the whole chain would have been a different architecture rather than a cheaper one.
+  **Exact, not approximate.** Against the dense path in float64: the forward pass agrees to 4e-16 and every gradient to 1e-14 — the gain, both factor logits and both decay logits included — over `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, under pulse and continuous injection, from a cold and from a populated buffer. Two details had to be got right for that. The dense trace decays a *detached* history once per step, so a gradient reaching the decay logit sees one factor and the rest are constants; differentiating the whole chain would have been a different architecture rather than a cheaper one. And the carry decays with the call: the running sums handle it, the term that reads the history had to be told.
 
-  Measured on a 3060 Ti, batch 8, 96 echo steps, `hebb_type='temporal'`:
+  **What it costs and buys**, 1024 neurons, batch 8, 96 echo steps, `temporal`:
 
-  | 1024 neurons | peak | step |
+  | | peak | step |
   |---|---|---|
-  | dense | 15.5 GB | 36.5 s (past the card, into shared memory) |
-  | dense + `gradient_checkpointing` | 3.37 GB | 898 ms |
-  | stream | **888 MB** | 901 ms |
+  | dense | 15.5 GB | 36.5 s (past an 8 GB card, into shared memory) |
+  | dense + `gradient_checkpointing` | 3.37 GB | 930 ms |
+  | stream | **895 MB** | 893 ms |
 
-  The advantage grows with the core, because the stream's cost is `steps² x B x N` against the dense `steps x B x N²`: 0.58 units of `B x N²` per step at 512 neurons, 0.29 at 1024. That `steps²` is the remaining term and it is not fundamental — it is the history being re-stacked and re-contracted per step, where freezing it in blocks and carrying the row norms incrementally would leave `steps x B x N`.
+  At the shape that started this — 1024 neurons, batch 128, 96 steps, `hebb_type='both'` — the trace needs 649 GB dense, 104 GB checkpointed, **17.5 GB** streamed.
+
+  **Where it loses.** `torch.compile` is this architecture's largest speedup and the streaming form is hostile to it: the history grows by one entry per step, so every step is a new shape. At 16 steps it compiles in 8 minutes and runs at 27.8 ms against the dense path's 1 minute and 8.5 ms; at 96 steps the warmup exceeds three quarters of an hour. Eager, it is about 2x the checkpointed dense step at 512 neurons. Both of those and the remaining `steps²` memory term have the same cause and the same fix: freeze the history in fixed-size blocks instead of re-stacking it, which leaves `steps x B x N` and constant shapes.
+
+  **Behaviour.** `convergence_hive_mind` reproduces on the streamed trace — every hop 1.000, pooling 2.98e-08 against a memory scale of 0.270, a bee built after the foraging at 1.000, ablation at chance. On a paired-associate probe where the write is trained, streamed and dense solve the same fraction of seeds (9/12 against 10/12). Individual seeds do diverge, and the reason is precision rather than semantics: under AMP the dense path rounds `W + cur` to half *together*, while the stream keeps the trace product in float32. With autocast off the two trajectories track.
 
 ### Changed
-- **`hebb_gate` — the novelty gate has a form, and the elementwise one is not the best of them.** `1/(1 + |W_eff|)` is the single term in the update that does not factor through an outer product, so the streaming form needs it either gone (`none`) or made per presynaptic row (`row`, which keeps the correlation a scaled outer product). Both were measured on two probes.
+- **`hebb_gate` — the novelty gate has a form, and the elementwise one is not the best of them.** `1/(1 + |W_eff|)` is the one term in the update that does not factor through an outer product; `row` damps a write by the RMS of the presynaptic row it lands on instead, which keeps the write an outer product and lets the streaming form carry it. It needs three numbers per row and none of them needs the matrix, so it costs 6 MB and 14% of the step there.
 
-  The hive mind reproduces on all three — every hop at 1.000, every control intact, ablation at chance — but its study pass runs under `no_grad`, so it cannot speak for the regime the gate was introduced for. The second probe can: three symbol pairs shown and one queried inside a *single* forward pass, so the gradient reaches the write. Six seeds, chance 0.167, `hebb_type=None` control at 0.312:
-
-  | `hebb_gate` | mean | median | min |
-  |---|---|---|---|
-  | `element` (shipped) | 0.960 | 0.997 | 0.781 |
-  | `row` | **0.991** | 0.995 | **0.972** |
-  | `none` | 0.770 | 0.959 | 0.314 |
-
-  So the gate is load-bearing after all — just not in its elementwise form. `none` collapses to the no-plasticity control on two seeds in six, and two seeds had said otherwise before the sweep was widened. `row` is both the best and the most stable of the three, and it is the form the streaming trace can carry.
-
-  **This leaves the streaming path where it is: exact, and built on the wrong gate.** It implements `none` today. Carrying `row` needs the same contraction machinery applied twice more — a gain-weighted row square for `||cur[j,:]||`, and `(W * gain) @ h_s` cached per write for the cross term — after which the gate costs `steps x B x N` like everything else here. Until that exists, the streaming form is a demonstration that the trace *can* be kept as its writes, not a replacement for the dense one.
+  On the record task's shape — sequential patch classification, plasticity on and attention off, which is where 3.1.0's plasticity A/B was run — `row` is ahead of `element` at every epoch from the fifth, seed 123, 10 epochs: **86.22% / 1.0469 against 85.15% / 1.0616**. On a paired-associate probe at twelve seeds the two are indistinguishable (10/12 against 9/12 solved), and so is dropping the gate entirely; an earlier six-seed reading that put `none` far behind did not survive the wider sweep. `element` stays the default until a second seed and a second task agree.
 
 ## [3.1.2] — 2026-08-24
 
