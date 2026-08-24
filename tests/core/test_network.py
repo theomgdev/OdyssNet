@@ -689,10 +689,10 @@ class TestHebbian:
         # persisted buffer. The second call is the one that matters: a fresh
         # model starts from a zero buffer, and the carry branch only carries
         # something once a call has written to it.
-        def run(form, hebb, res, steps):
+        def run(form, hebb, res, steps, gate):
             torch.manual_seed(11)
             model = _make(10, hebb_type=hebb, hebb_res=res,
-                          hebb_gate="none", hebb_form=form)
+                          hebb_gate=gate, hebb_form=form)
             with torch.no_grad():          # the gain is zero-initialized
                 model.hebb_norm.weight.fill_(0.7)
             model.train()
@@ -706,11 +706,12 @@ class TestHebbian:
                           if v.grad is not None},
                     model.t_hebb_state_W if hebb != "spatial" else model.s_hebb_state_W)
 
-        for hebb in ("temporal", "spatial", "both"):
+        for gate in ("row", "none"):
+          for hebb in ("temporal", "spatial", "both"):
             for res in ("neuron", "global"):
                 for steps in (1, 2, 5):
-                    oa, ga, ba = run("dense", hebb, res, steps)
-                    ob, gb, bb = run("stream", hebb, res, steps)
+                    oa, ga, ba = run("dense", hebb, res, steps, gate)
+                    ob, gb, bb = run("stream", hebb, res, steps, gate)
 
                     # Relative: these gradients run to a few hundred, and the
                     # two paths sum the same terms in a different order. In
@@ -719,10 +720,10 @@ class TestHebbian:
                         return ((a - b).abs().max()
                                 <= 1e-4 * max(a.abs().max().item(), 1e-6))
 
-                    assert agrees(oa, ob), (hebb, res, steps)
-                    assert agrees(ba, bb), (hebb, res, steps)
+                    assert agrees(oa, ob), (gate, hebb, res, steps)
+                    assert agrees(ba, bb), (gate, hebb, res, steps)
                     for name in ga:
-                        assert agrees(ga[name], gb[name]), (name, hebb, res, steps)
+                        assert agrees(ga[name], gb[name]), (name, gate, hebb, res, steps)
 
     def test_streaming_trace_holds_no_matrix(self):
         # The point of the streaming form: nothing (B, N, N) is kept per step.
@@ -730,7 +731,7 @@ class TestHebbian:
 
         def held(form):
             model = _make(n, hebb_type="both", hebb_res="neuron",
-                          hebb_gate="none", hebb_form=form)
+                          hebb_gate="row", hebb_form=form)
             model.train()
             sizes = []
 
@@ -747,6 +748,23 @@ class TestHebbian:
         _, all_dense = held("dense")
         assert big_stream < batch * n * n        # no matrix, anywhere
         assert all_stream < all_dense            # and less of everything else
+
+    def test_streaming_trace_survives_autocast(self):
+        # The trace is contractions, and autocast puts contractions in half
+        # whatever their inputs are. Its constants are built inside the forward
+        # pass, so they need the same float32 guard the step already has -- and
+        # the second call is what exercises it, once the buffer is non-zero.
+        model = _make(12, hebb_type="both", hebb_res="neuron",
+                      hebb_gate="row", hebb_form="stream")
+        model.train()
+        x = torch.randn(3, 12)
+        with torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16):
+            for _ in range(2):
+                out, _ = model(x, steps=4)
+        assert out.dtype == torch.float32
+        assert torch.isfinite(out).all()
+        assert torch.isfinite(model.t_hebb_state_W).all()
+        assert model.t_hebb_state_W.dtype == torch.float32
 
     def test_streaming_trace_rejects_what_it_cannot_do(self):
         for kwargs in (dict(hebb_gate="element"), dict(hebb_res="synapse")):

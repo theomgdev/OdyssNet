@@ -160,9 +160,10 @@ class OdyssNet(nn.Module):
         if hebb_form not in ("dense", "stream"):
             raise ValueError(f"hebb_form must be 'dense' or 'stream', got {hebb_form!r}")
         if hebb_form == "stream" and hebb_type is not None:
-            if hebb_gate != "none":
-                raise ValueError("hebb_form='stream' requires hebb_gate='none': an "
-                                 "elementwise gate does not factor through an outer product")
+            if hebb_gate == "element":
+                raise ValueError("hebb_form='stream' cannot carry hebb_gate='element': "
+                                 "an elementwise gate does not factor through an outer "
+                                 "product. Use 'row', which does.")
             if hebb_res == "synapse":
                 raise ValueError("hebb_form='stream' requires hebb_res 'global' or 'neuron': "
                                  "'synapse' gives every element its own decay")
@@ -593,7 +594,7 @@ class OdyssNet(nn.Module):
             cur_hebb_mem = F.rms_norm(cur_mem_raw, (self.num_neurons,), gain,
                                       self.hebb_norm.eps)
             with torch.amp.autocast(device_type=h_t_in.device.type, enabled=False):
-                hebb_signal = stream.read(h_t_in.float(), gain.float())
+                hebb_signal = stream.read(h_t_in.float())
 
             # The trace is written as this runs, so the region around it is not
             # replayable -- but the step itself is, and that is what the flag
@@ -747,10 +748,15 @@ class OdyssNet(nn.Module):
             stream = None
             if self.hebb_form == "stream":
                 as_rows = lambda v: v.reshape(n_paths, -1).expand(n_paths, self.num_neurons)
-                stream = StreamingTrace(
-                    lr=as_rows(hebb_lr), ret=as_rows(hebb_ret),
-                    carry=torch.stack([p[2] for p in paths]).detach().float(),
-                    dtype=torch.float32)
+                # The trace's constants are contractions, and AMP would put
+                # those in half whatever their inputs are. `read` and `write`
+                # are already covered where they are called.
+                with torch.amp.autocast(device_type=self.device.type, enabled=False):
+                    stream = StreamingTrace(
+                        lr=as_rows(hebb_lr).float(), ret=as_rows(hebb_ret).float(),
+                        carry=torch.stack([p[2] for p in paths]).detach().float(),
+                        gain=self.hebb_norm.weight, core=self.W.detach().float(),
+                        gate=self.hebb_gate, batch=batch_sz, dtype=torch.float32)
 
             hebb_lr_W,  hebb_ret_W  = hebb_lr.reshape(w_view), hebb_ret.reshape(w_view)
             hebb_lr_m,  hebb_ret_m  = lr_m.reshape(m_view),    ret_m.reshape(m_view)
@@ -930,8 +936,11 @@ class OdyssNet(nn.Module):
             if self.hebb_type is not None:
                 # Back out of the stacked path axis into the per-mechanism
                 # buffers; the batch mean is what survives the call.
-                carry_W   = (stream.finish() if self.hebb_form == "stream"
-                             else local_hebb_W.detach().mean(dim=1))
+                if self.hebb_form == "stream":
+                    with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
+                        carry_W = stream.finish()
+                else:
+                    carry_W = local_hebb_W.detach().mean(dim=1)
                 carry_mem = local_hebb_mem.detach().mean(dim=1)
                 path = 0
                 if self.hebb_type in ("temporal", "both"):
