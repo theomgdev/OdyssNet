@@ -658,80 +658,72 @@ class TestHebbian:
         for name in grads_a:
             assert torch.equal(grads_a[name], grads_b[name]), name
 
-    def test_gradient_checkpointing_retains_one_trace_per_step(self):
-        # The (B, N, N) trace dominates everything else the graph holds, so
-        # the checkpointed region has to span the trace read, the step and the
-        # trace write: only what crosses the step boundary may survive.
-        n, batch, steps = 8, 2, 5
+    def test_trace_read_is_replay_safe(self):
+        # The read is recomputed in the backward pass, by which time the history
+        # holds every later write too. It must mask itself back to what it saw:
+        # counting the then-live write both as live and as history is the whole
+        # difference between a correct gradient and a plausible one.
+        from odyssnet.core.plasticity import PlasticTrace
 
-        def big_storages(ckpt):
-            model = _make(n, hebb_type="temporal", hebb_res="neuron",
-                          gradient_checkpointing=ckpt)
-            model.train()
-            seen = {}
+        torch.manual_seed(4)
+        paths, batch, n, steps = 1, 2, 6, 5
+        lr = torch.rand(paths, n) * 0.3 + 0.1
+        ret = torch.rand(paths, n) * 0.4 + 0.5
+        carry = torch.randn(paths, n, n) * 0.1
+        carry -= torch.diag_embed(carry.diagonal(dim1=-2, dim2=-1))
+        gain, core = torch.rand(n) + 0.5, torch.randn(n, n) * 0.1
+        core.fill_diagonal_(0.0)
+        states = [torch.randn(batch, n) for _ in range(steps + 1)]
 
-            def pack(t):
-                if t.numel() >= batch * n * n:
-                    seen[t.untyped_storage().data_ptr()] = True
-                return t
+        trace = PlasticTrace(lr=lr, ret=ret, carry=carry, gain=gain, core=core,
+                             steps=steps, batch=batch, dtype=torch.float32)
+        seen = []
+        for t in range(steps):
+            pos, kept = trace.retired + (trace.live_c is not None), trace.retired
+            live_c = (trace.live_c if trace.live_c is not None
+                      else states[t].new_zeros(paths, batch, n))
+            live_h = (trace.live_h if trace.live_h is not None
+                      else torch.zeros_like(states[t]))
+            out, rms = trace._read(states[t], live_c, live_h, lr, ret, gain,
+                                   pos, kept)
+            seen.append((states[t], live_c.clone(), live_h.clone(), pos, kept,
+                         out.clone()))
+            trace.live_gate = trace._gate(rms)
+            trace.write(states[t].unsqueeze(0), states[t + 1])
 
-            with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
-                out, _ = model(torch.randn(batch, n), steps=steps)
-                out.sum()
-            return len(seen)
+        trace.finish()                       # every slot is written by now
+        for h, live_c, live_h, pos, kept, before in seen:
+            again, _ = trace._read(h, live_c, live_h, lr, ret, gain, pos, kept)
+            assert torch.equal(again, before)
 
-        assert big_storages(True) <= steps + 1
-        assert big_storages(False) >= 3 * steps
-
-    def test_streaming_trace_matches_the_dense_one(self):
-        # The streaming form is the same architecture written differently, so
-        # it has to agree on the forward pass, on every gradient and on the
-        # persisted buffer. The second call is the one that matters: a fresh
-        # model starts from a zero buffer, and the carry branch only carries
-        # something once a call has written to it.
-        def run(form, hebb, res, steps, gate):
-            torch.manual_seed(11)
-            model = _make(10, hebb_type=hebb, hebb_res=res,
-                          hebb_gate=gate, hebb_form=form)
-            with torch.no_grad():          # the gain is zero-initialized
-                model.hebb_norm.weight.fill_(0.7)
-            model.train()
-            torch.manual_seed(3)
-            warm, x = torch.randn(3, 10), torch.randn(3, 10)
+    def test_trace_pools_the_batch(self):
+        # The buffer holds the batch mean of the per-example traces, which is
+        # what lets a batch be read as a colony. Running rows together and
+        # running them apart then averaging must agree.
+        def buffer_of(x):
+            torch.manual_seed(6)
+            model = _make(8, hebb_type="temporal", hebb_res="neuron")
             with torch.no_grad():
-                model(warm, steps=3, current_state=torch.zeros(3, 10))
-            out, _ = model(x, steps=steps, current_state=torch.zeros(3, 10))
-            (out * torch.ones_like(out).cumsum(1)).sum().backward()
-            return (out, {k: v.grad.clone() for k, v in model.named_parameters()
-                          if v.grad is not None},
-                    model.t_hebb_state_W if hebb != "spatial" else model.s_hebb_state_W)
+                model.hebb_norm.weight.fill_(0.6)
+            model.reset_state(x.shape[0])
+            with torch.no_grad():
+                model(x, steps=4, current_state=torch.zeros(x.shape[0], 8))
+            return model.t_hebb_state_W.clone()
 
-        for gate in ("row", "none"):
-          for hebb in ("temporal", "spatial", "both"):
-            for res in ("neuron", "global"):
-                for steps in (1, 2, 5):
-                    oa, ga, ba = run("dense", hebb, res, steps, gate)
-                    ob, gb, bb = run("stream", hebb, res, steps, gate)
+        torch.manual_seed(7)
+        rows = torch.randn(4, 8)
+        together = buffer_of(rows)
+        apart = torch.stack([buffer_of(rows[i:i + 1]) for i in range(4)]).mean(0)
+        assert torch.allclose(together, apart, atol=1e-6)
+        assert torch.equal(together.diagonal(), torch.zeros(8))
 
-                    # Relative: these gradients run to a few hundred, and the
-                    # two paths sum the same terms in a different order. In
-                    # float64 the agreement is 1e-15; this is the float32 floor.
-                    def agrees(a, b):
-                        return ((a - b).abs().max()
-                                <= 1e-4 * max(a.abs().max().item(), 1e-6))
+    def test_trace_holds_no_matrix(self):
+        # The point of the form: the graph never holds a (B, N, N) tensor, and
+        # what it does hold grows with the step count, not with its square.
+        n, batch = 16, 2
 
-                    assert agrees(oa, ob), (gate, hebb, res, steps)
-                    assert agrees(ba, bb), (gate, hebb, res, steps)
-                    for name in ga:
-                        assert agrees(ga[name], gb[name]), (name, gate, hebb, res, steps)
-
-    def test_streaming_trace_holds_no_matrix(self):
-        # The point of the streaming form: nothing (B, N, N) is kept per step.
-        n, batch, steps = 24, 2, 8
-
-        def held(form):
-            model = _make(n, hebb_type="both", hebb_res="neuron",
-                          hebb_gate="row", hebb_form=form)
+        def held(steps):
+            model = _make(n, hebb_type="both", hebb_res="neuron")
             model.train()
             sizes = []
 
@@ -744,18 +736,17 @@ class TestHebbian:
                 out.sum()
             return max(sizes), sum(sizes)
 
-        big_stream, all_stream = held("stream")
-        _, all_dense = held("dense")
-        assert big_stream < batch * n * n        # no matrix, anywhere
-        assert all_stream < all_dense            # and less of everything else
+        biggest, short = held(4)
+        _, long = held(8)
+        assert biggest < batch * n * n
+        assert long < 3 * short          # linear in steps, not quadratic
 
-    def test_streaming_trace_survives_autocast(self):
+    def test_trace_survives_autocast(self):
         # The trace is contractions, and autocast puts contractions in half
         # whatever their inputs are. Its constants are built inside the forward
-        # pass, so they need the same float32 guard the step already has -- and
-        # the second call is what exercises it, once the buffer is non-zero.
-        model = _make(12, hebb_type="both", hebb_res="neuron",
-                      hebb_gate="row", hebb_form="stream")
+        # pass, so they need the float32 guard the step already has -- and the
+        # second call is what exercises it, once the buffer is non-zero.
+        model = _make(12, hebb_type="both", hebb_res="neuron")
         model.train()
         x = torch.randn(3, 12)
         with torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16):
@@ -765,11 +756,6 @@ class TestHebbian:
         assert torch.isfinite(out).all()
         assert torch.isfinite(model.t_hebb_state_W).all()
         assert model.t_hebb_state_W.dtype == torch.float32
-
-    def test_streaming_trace_rejects_what_it_cannot_do(self):
-        for kwargs in (dict(hebb_gate="element"), dict(hebb_res="synapse")):
-            with pytest.raises(ValueError):
-                _make(6, hebb_type="temporal", hebb_form="stream", **kwargs)
 
     def test_invalid_hebb_type_raises(self):
         with pytest.raises(ValueError):
@@ -800,29 +786,6 @@ class TestHebbianTypes:
         model = _make(n, hebb_type="both", hebb_res="neuron")
         assert model.t_hebb_factor.shape == (n,)
         assert model.s_hebb_decay.shape  == (n,)
-
-    def test_synapse_matrix_shape(self):
-        n = 6
-        model = _make(n, hebb_type="both", hebb_res="synapse")
-        assert model.t_hebb_factor.shape == (n, n)
-        assert model.s_hebb_decay.shape  == (n, n)
-
-    def test_synapse_forward_finite(self):
-        model = _make(5, hebb_type="both", hebb_res="synapse")
-        x = torch.randn(2, 5)
-        out, _ = model(x, steps=4)
-        assert out.shape == (2, 4, 5)
-        assert torch.isfinite(out).all()
-
-    def test_synapse_gradient_flows_to_factor_matrix(self):
-        model = _make(4, hebb_type="both", hebb_res="synapse")
-        model.train()
-        x = torch.randn(2, 4)
-        out, _ = model(x, steps=3)
-        out.sum().backward()
-        assert model.s_hebb_factor.grad is not None
-        assert model.s_hebb_factor.grad.shape == (4, 4)
-        assert torch.isfinite(model.s_hebb_factor.grad).all()
 
     def test_neuron_gradient_flows_to_factor_vector(self):
         model = _make(4, hebb_type="temporal", hebb_res="neuron")
@@ -891,7 +854,7 @@ class TestHebbianRepair:
         assert model.t_hebb_state_W.abs().sum().item() > 0.0
         assert model.s_hebb_state_W.abs().sum().item() > 0.0
 
-    @pytest.mark.parametrize("res", ["global", "neuron", "synapse"])
+    @pytest.mark.parametrize("res", ["global", "neuron"])
     @pytest.mark.parametrize("htype", ["temporal", "spatial", "both"])
     def test_every_type_and_resolution_trains(self, res, htype):
         """The path axis carries one entry per active mechanism, and each

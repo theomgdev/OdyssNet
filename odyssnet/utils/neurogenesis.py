@@ -46,9 +46,9 @@ class Neurogenesis:
         old_memory_gate_param = getattr(model, 'memory_gate', None)
         gate_init_strategy = getattr(model, 'gate_weight_init', 'zero')
 
-        # Preserve Hebbian parameters for optimizer state transfer.
-        # For "neuron" and "synapse" types the params are vectors/matrices and are
-        # zero-padded to the new size; "global" scalars are shape-invariant.
+        # Preserve Hebbian parameters for optimizer state transfer. "neuron"
+        # params are vectors and are padded to the new size; "global" scalars
+        # are shape-invariant.
         hebb_type = getattr(model, 'hebb_type', None)
         hebb_res = getattr(model, 'hebb_res', None)
         def _get_hebb(name): return getattr(model, name, None)
@@ -238,14 +238,10 @@ class Neurogenesis:
 
             def _resize_param(old_param, default_val):
                 if old_param is None: return None
-                if hebb_res == "neuron":
-                    new_p = torch.full((new_n,), default_val, device=device)
-                    new_p[:old_n] = old_param.data
-                elif hebb_res == "synapse":
-                    new_p = torch.full((new_n, new_n), default_val, device=device)
-                    new_p[:old_n, :old_n] = old_param.data
-                else: # global
+                if hebb_res == "global":
                     return nn.Parameter(old_param.data.clone())
+                new_p = torch.full((new_n,), default_val, device=device)
+                new_p[:old_n] = old_param.data
                 return nn.Parameter(new_p)
 
             # The plastic gain and the off-diagonal mask are neuron-shaped
@@ -256,9 +252,6 @@ class Neurogenesis:
                     new_hebb_norm.weight.zero_()
                     new_hebb_norm.weight[:old_n] = old_hebb_norm_w.data
                 model.hebb_norm = new_hebb_norm
-                model.register_buffer('_offdiag',
-                                      (1.0 - torch.eye(new_n, device=device)) / new_n,
-                                      persistent=False)
 
             if old_t_hebb_factor is not None:
                 model.t_hebb_factor = _resize_param(old_t_hebb_factor, -3.0)
@@ -391,13 +384,13 @@ class Neurogenesis:
                 transfer_state(old_memory_gate_param, model.memory_gate, is_matrix=False)
 
             # Transfer Hebbian parameter optimizer state.
-            # "global" scalars are shape-invariant; "neuron"/"synapse" params were
-            # padded above so the old state is copied into the overlapping region.
+            # "global" scalars are shape-invariant; "neuron" params were padded
+            # above, so the old state is copied into the overlapping region.
             if hebb_type is not None:
                 def _transfer_hebb(old_p, new_p_name):
                     new_p = getattr(model, new_p_name, None)
                     if isinstance(old_p, nn.Parameter) and isinstance(new_p, nn.Parameter):
-                        transfer_state(old_p, new_p, is_matrix=(hebb_res == "synapse"))
+                        transfer_state(old_p, new_p, is_matrix=False)
                 
                 if old_hebb_norm_w is not None and getattr(model, 'hebb_norm', None) is not None:
                     transfer_state(old_hebb_norm_w, model.hebb_norm.weight, is_matrix=False)

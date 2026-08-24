@@ -4,42 +4,33 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — branch `feat/streaming-trace`
-
-Research branch, not merged. It answers one question — can the plastic trace be
-kept as the writes it is made of instead of as a matrix — and the answer is yes,
-exactly, at a cost that is worth paying exactly where the dense form cannot run.
-
-### Added
-- **The plastic trace as a stream of writes (`odyssnet/core/plastic_stream.py`).** Every Hebbian write is an outer product and the recurrence only ever asks the trace for `h @ L`, so the trace can be kept as the `(B, N)` vectors it is built from: `h @ L` and the row norms its RMSNorm needs both fall out of contractions over those writes, and the persistent buffer is materialized once per call — already averaged over the batch — instead of once per step. `hebb_form='stream'` selects it.
-
-  **Exact, not approximate.** Against the dense path in float64: the forward pass agrees to 4e-16 and every gradient to 1e-14 — the gain, both factor logits and both decay logits included — over `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, under pulse and continuous injection, from a cold and from a populated buffer. Two details had to be got right for that. The dense trace decays a *detached* history once per step, so a gradient reaching the decay logit sees one factor and the rest are constants; differentiating the whole chain would have been a different architecture rather than a cheaper one. And the carry decays with the call: the running sums handle it, the term that reads the history had to be told.
-
-  **What it costs and buys**, 1024 neurons, batch 8, 96 echo steps, `temporal`:
-
-  | | peak | step |
-  |---|---|---|
-  | dense | 15.5 GB | 36.5 s (past an 8 GB card, into shared memory) |
-  | dense + `gradient_checkpointing` | 3.37 GB | 930 ms |
-  | stream | **895 MB** | 893 ms |
-
-  At the shape that started this — 1024 neurons, batch 128, 96 steps, `hebb_type='both'` — the trace needs 649 GB dense, 104 GB checkpointed, **21 GB** streamed. Which is still more than an 8 GB card, and the point: on that card the checkpointed dense path runs out at about batch 8, and the streamed one at about batch 32. The streaming law is `steps² x B x N` and its two paths share the state history, so `both` costs 1.6x `temporal` rather than twice.
-
-  **Where it loses.** `torch.compile` is this architecture's largest speedup and the streaming form is expensive to compile: `steps` is a Python int so the loop unrolls, and the history grows by one entry per step, so every step is a distinct shape in one enormous graph. It does compile, and correctly — 512 neurons, 96 steps: **306.9 ms and 433 MB against the compiled dense path's 121.5 ms and 890 MB**, same outputs — but the warmup is **59.6 minutes against 3.5**. Dynamo's recompile limit is never reached, so this is a long build rather than the silent drop back to eager that `experiment_llm.py` warns about. Eager, the step is about 2x the checkpointed dense one. That warmup, the eager step time and the remaining `steps²` memory term have one cause and one fix: freeze the history in fixed-size blocks instead of re-stacking it, which leaves `steps x B x N` and constant shapes.
-
-  **Behaviour.** `convergence_hive_mind` reproduces on the streamed trace — every hop 1.000, pooling 2.98e-08 against a memory scale of 0.270, a bee built after the foraging at 1.000, ablation at chance. On a paired-associate probe where the write is trained, streamed and dense solve the same fraction of seeds (9/12 against 10/12). Individual seeds do diverge, and the reason is precision rather than semantics: under AMP the dense path rounds `W + cur` to half *together*, while the stream keeps the trace product in float32. With autocast off the two trajectories track.
+## [3.2.0] — 2026-08-24
 
 ### Changed
-- **`hebb_gate` — the novelty gate has a form, and the elementwise one is not the best of them.** `1/(1 + |W_eff|)` is the one term in the update that does not factor through an outer product; `row` damps a write by the RMS of the presynaptic row it lands on instead, which keeps the write an outer product and lets the streaming form carry it. It needs three numbers per row and none of them needs the matrix, so it costs 6 MB and 14% of the step there.
+- **BREAKING: the plastic trace is never assembled as a matrix, and `hebb_res='synapse'` is gone with it.** Every Hebbian write is an outer product and the recurrence only ever asks the trace for `h @ L`, so the trace is now kept as the `(B, N)` writes it is made of and contracted on demand — both that product and the row norms its RMSNorm needs. The persistent buffer is materialized once per call, already averaged over the batch, so checkpoints, neurogenesis and transplants see exactly what they saw before. Memory is `steps x B x N` instead of `steps x B x N²`.
 
-  On the record task's shape — sequential patch classification, plasticity on and attention off, which is where 3.1.0's plasticity A/B was run — `row` is ahead of `element` on both seeds, at 10 epochs:
+  At 1024 neurons, batch 8 and 96 echo steps the plastic path holds **109 MB** where a matrix-held trace held 15.5 GB, or 3.4 GB with `gradient_checkpointing`, and the step is faster than either. The shape that started this — 1024 neurons, batch 128, 96 steps, `hebb_type='both'` — asked for 649 GB and now asks for 1.8 GB.
 
-  | seed | `element` | `row` |
+  Per-element decay is what a streamed trace cannot carry: `r^t` has to scale rows for `(h * r^t) @ C` to remain a matrix product. `hebb_res` is therefore `'global'` or `'neuron'`, and the per-synapse resolution is removed. It cost 2N² parameters and 3.1.0's own A/B found it did not earn them — 1,044 parameters to draw level with attention-only's 634. Checkpoints holding `t_hebb_factor`/`s_hebb_factor` of shape `(N, N)` will not load; retrain at `'neuron'`.
+
+  The form was verified against the matrix one before that one was removed: in float64 the forward pass agreed to 4e-16 and every gradient to 1e-14 — the gain, both factor logits and both decay logits included — across `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, under pulse and continuous injection, from a cold and from a populated buffer.
+
+- **The novelty gate damps a write by the presynaptic row it lands on, not by the individual synapse.** `1 / (1 + rms(W_eff[j,:]))` in place of `1 / (1 + |W_eff|)`. An elementwise gate is the one term in the update that does not factor through an outer product, so the two changes are one change. It is also the better gate: on the record task's shape — sequential patch classification, plasticity on and attention off, where 3.1.0's plasticity A/B was run — it leads on both seeds at 10 epochs.
+
+  | seed | per synapse | per row |
   |---|---|---|
   | 123 | 85.15% / 1.0616 | **86.22% / 1.0469** |
   | 42 | 86.15% / 1.0364 | **87.02% / 1.0313** |
 
-  Both agree in sign, and on seed 123 `row` leads at every epoch from the fifth. That is the evidence 3.1.0 carried for its own plasticity A/Bs, so `row` is worth proposing for main on its own merits — it is cheaper than the gate it replaces and it does not need the streaming form to be useful. On a paired-associate probe at twelve seeds the gates are indistinguishable, and so is dropping the gate entirely; an earlier six-seed reading that put `none` far behind did not survive the wider sweep, and that probe should be treated as unable to rank them. `element` stays the default here: a switch on main wants a second task, not a second seed.
+  It is carried as running sums updated once per write rather than read back out of the trace, which costs `O(B * N)` and adds nothing to the graph, because the gate is detached.
+
+- **`convergence_hive_mind` and `convergence_skill_transfer` reproduce unchanged.** Every hop at 1.000, the pooling contract at 2.98e-08 against a memory scale of 0.270, a bee built after the foraging at 1.000, the `hebb_type=None` ablation at chance.
+
+### Fixed
+- **Plasticity no longer breaks under AMP on the second call.** `einsum` is on autocast's half list whatever its inputs are, so the trace's constants were being built in half inside an AMP forward pass — which took down the LLM shape (vocab projection, attention, plasticity, batches through the trainer) as soon as the persistent buffer was no longer zero. The constants and the buffer write-back now carry the float32 guard the step already had.
+
+### Internal
+- Three properties keep the streamed trace affordable, and a refactor should keep all three. The history lives in a preallocated buffer and every contraction runs over all of it behind a mask, so every step has the same shapes and `torch.compile` can trace them; the buffer is written functionally rather than in place, which is what autograd and Inductor both require of a tensor a graph has read. The read is recomputed in the backward pass rather than held — sound because the history is immutable once written, and the mask must count *retired* writes rather than the decay position, or the then-live write is counted twice on replay. And only the newest write carries gradient, the decay logit seeing one live factor, which is the same truncation a matrix-held trace applied to its own history.
 
 ## [3.1.2] — 2026-08-24
 

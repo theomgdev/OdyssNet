@@ -33,7 +33,7 @@ model = OdyssNet(
     vocab_size=None,     # Optional: Decouples input/output size from neurons
     vocab_mode='hybrid', # 'hybrid', 'discrete', or 'continuous'
     hebb_type=None,      # Toggle: None, 'temporal', 'spatial', or 'both'
-    hebb_res='neuron',   # Plasticity resolution: 'global', 'neuron', or 'synapse'
+    hebb_res='neuron',   # Plasticity resolution: 'global' or 'neuron'
     attn_heads=None,     # Temporal attention: None/0 builds nothing at all
     attn_kv_heads=1,     # Shared KV heads (1 = multi-query)
     attn_head_dim=None,  # None derives it from num_neurons / attn_heads
@@ -86,7 +86,6 @@ model = OdyssNet(
     |---|---|---|---|
     | `"global"` | scalar `()` | +2 | Uniform plasticity — the whole network is equally plastic. |
     | `"neuron"` | vector `(N,)` | +2N | Per-neuron plasticity — each neuron learns its own adaptation rate. |
-    | `"synapse"` | matrix `(N, N)` | +2N² | Per-synapse plasticity — each connection has its own factor and decay. |
 
     *   For each active path (`t_` for temporal, `s_` for spatial), two learnable logit parameters are created according to the resolution:
         *   `t_hebb_factor` / `s_hebb_factor` (raw logit → `sigmoid` → learning rate ≈ 0.047 initially)
@@ -99,26 +98,17 @@ model = OdyssNet(
 
 *   **Normalized, zero-initialized gain (`hebb_norm`, +N parameters).** The trace is RMS-normalized and scaled by a learnable gain before it is added to `W`. The factor decides *which* synapses are plastic, the gain decides *how much*. The gain starts at zero, so `hebb_type` is a one-variable switch: a plastic model and a plain one at the same seed share a core and agree exactly until training moves the gain.
 *   **Differentiable correlation.** The correlation carries gradient; only the trace's own history is truncated (`local.detach()` in the update).
-*   **Novelty gate.** The correlation is damped by `1 / (1 + |W_eff|)` — co-activation across an already-strong synapse says the weight fired the neuron, not that the pattern is new. Parameter-free and detached, so it opens no second-order path through `W`.
+*   **Novelty gate.** A write is damped by `1 / (1 + rms(W_eff[j,:]))`, the presynaptic row it lands on — co-activation into an already-strong row says the weights fired the neuron, not that the pattern is new. Parameter-free and detached, so it opens no second-order path through `W`.
 *   **Per-example trace.** The live trace is `(B, N, N)`; every example writes its own associations, so a batched forward computes the same function as the same examples run singly. The persistent buffer stays `(N, N)` and holds the batch mean, leaving checkpoints, neurogenesis padding and weight transplants untouched.
 *   **Pooled across the batch, between calls.** The buffer is written at the end of a forward pass and read back at the start of the next one, expanded to every row. Within a call each example reads only what it wrote; across a call boundary all of them read the mean of what they all wrote.
 
-**Cost.** Every step retains a `(B, N, N)` trace per path for the backward pass, so activation memory grows as `steps x B x N²` and nothing else in the graph comes close: 96 echo steps on a 1024-neuron core hold 0.4 GB *per batch row* per path. `gradient_checkpointing=True` is the lever — the checkpointed region spans the trace read, the step and the trace write, so only the trace that crosses the step boundary survives and the intermediates between are recomputed. Measured at 256 neurons, batch 8, 32 steps, in multiples of `B x N²`:
+**The trace is never assembled.** Every write is an outer product and the recurrence only ever asks the trace for `h @ L`, so the trace is kept as the `(B, N)` writes it is made of and contracted on demand — both the product and the row norms its RMSNorm needs. The persistent buffer is materialized once per call, already averaged over the batch. Memory is therefore `steps x B x N`, not `steps x B x N²`: at 1024 neurons, batch 8 and 96 echo steps the whole plastic path holds 109 MB.
 
-| retained per step | `hebb_type='temporal'` | `hebb_type='both'` |
-|---|---|---|
-| default | 6.3 | 8.3 |
-| `gradient_checkpointing=True` | 1.2 | 2.4 |
+Three properties keep it affordable. The history lives in a preallocated buffer and every contraction runs over all of it behind a mask, so every step has the same shapes and `torch.compile` can trace them. The read is recomputed in the backward pass rather than kept, which is sound because the history is immutable once written. And the novelty gate, being detached, is carried as running sums rather than read back out of the trace.
 
-The ratio is the same at every neuron count, batch and `hebb_res`, and drifts a little below the table on long rollouts (6.1 and 1.1 at 128 steps). The recompute costs about 70% more time on the plastic step, which is the trade to make when memory is what binds — and it is one lever or the other, not both: Dynamo does not trace a checkpointed region, so under `torch.compile` that region runs eager. The step is also bound by kernel launches rather than arithmetic: `hebb_type='both'` adds 132% to it eager and 26% under `torch.compile`.
+**Cost.** The step is bound by kernel launches rather than arithmetic, and the trace issues more of them than a matrix would: on a small core it is several times the step time of a plain one, and `torch.compile` is what closes most of that (7.5x on the plastic path). On a large core it is the faster of the two as well as the smaller, because a matrix-held trace grows with `N²` where this one grows with the step count. Plasticity remains the one term that scales with the batch.
 
 **When to use it.** Plasticity earns its place where step *T* extends what step *T-1* built, and acts as overfit noise where each step handles an independent chunk. Temporal attention fills the same role on sequential classification and measured better there, so the two are alternatives more than complements. Ablate rather than assume — that is what the zero-initialized gain is for.
-
-#### The trace as a stream of writes (branch `feat/streaming-trace`)
-
-`hebb_form='stream'` keeps the trace as the `(B, N)` writes it is built from rather than as a matrix. Every write is an outer product and the recurrence only asks the trace for `h @ L`, so that product and the row norms RMSNorm needs both come out of contractions over the stored writes; the buffer is materialized once per call. It is the same architecture — outputs and every gradient agree with the dense path to 1e-14 in float64 — at `steps² x B x N` instead of `steps x B x N²`.
-
-It requires `hebb_gate='row'` (the elementwise gate is the one term that does not factor through an outer product) and `hebb_res` other than `'synapse'`. At 1024 neurons, batch 8, 96 steps it holds 895 MB against the checkpointed dense path's 3.37 GB, at the same step time; at batch 128 with `hebb_type='both'` the trace is 17.5 GB against 104 GB. It is also expensive to compile — the history grows by one entry per step, so every step is a distinct shape in one unrolled graph: at 512 neurons and 96 steps it compiles correctly to 306.9 ms and 433 MB against the dense path's 121.5 ms and 890 MB, after a 59.6-minute warmup. That is the trade: take it where memory is what stops the run, not where speed is.
 
 #### One memory across many bodies
 

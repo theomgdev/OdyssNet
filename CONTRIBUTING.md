@@ -172,18 +172,18 @@ For tasks where **online synaptic plasticity** may help — e.g., fast-adaptatio
 *   **Compatibility:** Fully compatible with `gradient_checkpointing=True`.
 *   **Combined with gating:** Hebbian and gate parameters are independent groups; both can be active simultaneously.
 *   **Free to try:** the plastic contribution is scaled by a zero-initialized gain (`hebb_norm`, +N parameters) and the module draws no RNG, so a plastic model and a plain one at the same seed share a core and agree exactly until training moves the gain. Ablations of `hebb_type` have one variable in them.
-*   **Cost:** the live trace is per-example `(B, N, N)` and every step retains one for the backward pass, so memory grows as `steps x B x N²`. Affordable on small cores with short rollouts; prefer `hebb_type=None` on a large one. The step is launch-bound, so `hebb_type='both'` adds 132% to it eager and 26% compiled — reach for `torch.compile` before blaming plasticity for a slow run.
+*   **Cost:** the trace is per example and is kept as the writes it is made of rather than as a matrix, so memory grows as `steps x B x N` and no `(B, N, N)` tensor is ever assembled. It is still the one term that scales with the batch. The step is launch-bound and the trace issues more launches than a plain one, so reach for `torch.compile` before blaming plasticity for a slow run.
 *   **Ablate it; do not assume it.** Temporal attention fills the same role on sequential classification and measured better there. The two are alternatives more often than complements.
 
 ```python
-# NLP / Logic / Reasoning — synapse-level plasticity for dynamic variable binding
+# NLP / Logic / Reasoning — both mechanisms, for dynamic variable binding
 model = OdyssNet(
     num_neurons=32,
     input_ids=[0, 1],
     output_ids=[31],
     activation='tanh',
     hebb_type='both',
-    hebb_res='synapse',    # Per-synapse plasticity
+    hebb_res='neuron',     # Per-neuron plasticity
     device='cuda',
 )
 

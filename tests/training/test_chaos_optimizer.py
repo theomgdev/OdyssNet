@@ -765,7 +765,7 @@ class TestPlasticGainIsNeverDecayed:
 
     def test_plasticity_family_is_logits_only(self):
         model = OdyssNet(num_neurons=8, input_ids=[0], output_ids=[7],
-                         device="cpu", hebb_type="both", hebb_res="synapse")
+                         device="cpu", hebb_type="both", hebb_res="neuron")
         groups = {g["group_name"]: g for g in ChaosGrad.classify_params(model)}
         named = dict(model.named_parameters())
         plastic = groups["plasticity"]["params"]

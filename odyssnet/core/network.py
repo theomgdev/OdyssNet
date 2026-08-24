@@ -5,10 +5,10 @@ import torch.utils.checkpoint as checkpoint
 from typing import cast
 
 from .attention import TemporalAttention
-from .plastic_stream import StreamingTrace
+from .plasticity import PlasticTrace
 
 class OdyssNet(nn.Module):
-    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', hebb_gate='element', hebb_form='dense', attn_heads=None, attn_head_dim=None, attn_kv_heads=1, attn_window=256, attn_rope=True, attn_qk_norm=True, attn_dropout=0.0, attn_write='token', attn_read='step', debug=False):
+    def __init__(self, num_neurons, input_ids, output_ids, pulse_mode=True, dropout_rate=0.0, device='cpu', weight_init=None, activation=None, gradient_checkpointing=False, vocab_size=None, vocab_mode='hybrid', tie_embeddings=False, gate=None, hebb_type=None, hebb_res='neuron', attn_heads=None, attn_head_dim=None, attn_kv_heads=1, attn_window=256, attn_rope=True, attn_qk_norm=True, attn_dropout=0.0, attn_write='token', attn_read='step', debug=False):
         super(OdyssNet, self).__init__()
         
         # Auto-size to unique input+output IDs
@@ -153,31 +153,11 @@ class OdyssNet(nn.Module):
         # sigmoid(-3.0) ~ 0.047 influence, sigmoid(2.2) ~ 0.900 retention.
         if hebb_type not in (None, "temporal", "spatial", "both"):
             raise ValueError(f"hebb_type must be None, 'temporal', 'spatial', or 'both', got {hebb_type!r}")
-        if hebb_res not in ("global", "neuron", "synapse"):
-            raise ValueError(f"hebb_res must be 'global', 'neuron', or 'synapse', got {hebb_res!r}")
-        if hebb_gate not in ("element", "row", "none"):
-            raise ValueError(f"hebb_gate must be 'element', 'row', or 'none', got {hebb_gate!r}")
-        if hebb_form not in ("dense", "stream"):
-            raise ValueError(f"hebb_form must be 'dense' or 'stream', got {hebb_form!r}")
-        if hebb_form == "stream" and hebb_type is not None:
-            if hebb_gate == "element":
-                raise ValueError("hebb_form='stream' cannot carry hebb_gate='element': "
-                                 "an elementwise gate does not factor through an outer "
-                                 "product. Use 'row', which does.")
-            if hebb_res == "synapse":
-                raise ValueError("hebb_form='stream' requires hebb_res 'global' or 'neuron': "
-                                 "'synapse' gives every element its own decay")
+        if hebb_res not in ("global", "neuron"):
+            raise ValueError(f"hebb_res must be 'global' or 'neuron', got {hebb_res!r}")
 
         self.hebb_type = hebb_type
         self.hebb_res = hebb_res
-        # How the novelty gate reads W_eff. 'element' damps each synapse by its
-        # own magnitude; 'row' damps a presynaptic row by that row's RMS, which
-        # keeps the correlation a scaled outer product; 'none' leaves the 1/N
-        # scale and the diagonal mask alone.
-        self.hebb_gate = hebb_gate
-        # 'dense' keeps the (B, N, N) trace; 'stream' keeps the writes it is
-        # made of and contracts them, which is the same trace at 1/N the memory.
-        self.hebb_form = hebb_form
 
         # The plastic contribution is normalized and passed through a
         # zero-initialized gain before it reaches W: the factor selects which
@@ -195,12 +175,9 @@ class OdyssNet(nn.Module):
                 if hebb_res == "global":
                     factor = nn.Parameter(torch.full((), -3.0, device=device))
                     decay  = nn.Parameter(torch.full((),  2.2, device=device))
-                elif hebb_res == "neuron":
+                else:
                     factor = nn.Parameter(torch.full((num_neurons,), -3.0, device=device))
                     decay  = nn.Parameter(torch.full((num_neurons,),  2.2, device=device))
-                elif hebb_res == "synapse":
-                    factor = nn.Parameter(torch.full((num_neurons, num_neurons), -3.0, device=device))
-                    decay  = nn.Parameter(torch.full((num_neurons, num_neurons),  2.2, device=device))
                 return factor, decay
 
             if hebb_type in ("temporal", "both"):
@@ -215,11 +192,6 @@ class OdyssNet(nn.Module):
 
             self.hebb_norm = nn.RMSNorm(num_neurons).to(device)
             nn.init.zeros_(self.hebb_norm.weight)
-            # Off-diagonal mask pre-divided by the fan-in. Self-correlation
-            # belongs to memory_feedback; W's diagonal is structurally zero.
-            self.register_buffer('_offdiag',
-                                 (1.0 - torch.eye(num_neurons, device=device)) / num_neurons,
-                                 persistent=False)
 
         # Bias Vector
         self.B = nn.Parameter(torch.zeros(num_neurons, device=device))
@@ -441,14 +413,8 @@ class OdyssNet(nn.Module):
                 if self.hebb_type is not None:
                     if self.hebb_type in ("temporal", "both"):
                         self.t_hebb_state_W[weak_mask] = 0.0
-                        if self.hebb_res == "synapse":
-                            self.t_hebb_factor.data[weak_mask] = -3.0
-                            self.t_hebb_decay.data[weak_mask]  =  2.2
                     if self.hebb_type in ("spatial", "both"):
                         self.s_hebb_state_W[weak_mask] = 0.0
-                        if self.hebb_res == "synapse":
-                            self.s_hebb_factor.data[weak_mask] = -3.0
-                            self.s_hebb_decay.data[weak_mask]  =  2.2
 
             total_revived = count
             total_params = self.get_num_params()
@@ -513,23 +479,17 @@ class OdyssNet(nn.Module):
         input_pos = cast(torch.Tensor, self.input_pos)
         output_pos = cast(torch.Tensor, self.output_pos)
 
-        def _single_step(h_t_in, t_idx, x_input_info, hebb_W_contrib, hebb_mem_contrib,
-                         attn_segments=(), attn_pos=0, hebb_signal=None):
-            # hebb_W_contrib:   (B, N, N) or None — added to W per example.
-            # hebb_mem_contrib: (B, N)    or None — added to memory_feedback.
+        def _single_step(h_t_in, t_idx, x_input_info, attn_segments=(), attn_pos=0,
+                         hebb_signal=None, hebb_mem_contrib=None):
+            # hebb_signal:      (B, N) or None — `h @ trace`, handed over by the
+            #                   trace rather than added to W as a matrix.
+            # hebb_mem_contrib: (B, N) or None — added to memory_feedback.
             # attn_segments:    KV cache view, passed in rather than read from
             #                   self.attn so gradient checkpointing recomputes
             #                   this step against the cache it originally saw.
-            if hebb_W_contrib is None:
-                signal = h_t_in @ self.W + self.B
-                if hebb_signal is not None:
-                    # The streaming trace hands over `h @ trace` directly; there
-                    # is no per-example matrix to add to W.
-                    signal = signal + hebb_signal.to(signal.dtype)
-            else:
-                # One effective matrix per example, so this is a bmm.
-                W_eff = self.W + hebb_W_contrib
-                signal = torch.bmm(h_t_in.unsqueeze(1), W_eff).squeeze(1) + self.B
+            signal = h_t_in @ self.W + self.B
+            if hebb_signal is not None:
+                signal = signal + hebb_signal.to(signal.dtype)
             if self.debug: self._dbg(signal, f"signal/linear (step {t_idx})")
 
             if self.core_gate_act is not None and self.core_gate is not None:
@@ -584,28 +544,27 @@ class OdyssNet(nn.Module):
             if self.debug: self._dbg(out, f"step_norm output (step {t_idx})")
             return out
 
-        def _stream_step(h_t_in, local_mem, t_idx, x_input_info,
-                         attn_segments=(), attn_pos=0):
-            # Same step as `_step_and_learn`, with the trace contracted out of
-            # its writes instead of assembled into a matrix. The memory path is
-            # (B, N) either way and stays as it is.
+        def _plastic_step(h_t_in, local_mem, t_idx, x_input_info,
+                          attn_segments=(), attn_pos=0):
+            # The step, with the plastic trace read before it and written after.
+            # The trace lives in `PlasticTrace`; the memory path is (B, N) and
+            # stays here.
             gain = self.hebb_norm.weight
             cur_mem_raw = (hebb_lr_m * local_mem).sum(0)
             cur_hebb_mem = F.rms_norm(cur_mem_raw, (self.num_neurons,), gain,
                                       self.hebb_norm.eps)
             with torch.amp.autocast(device_type=h_t_in.device.type, enabled=False):
-                hebb_signal = stream.read(h_t_in.float())
+                hebb_signal = trace.read(h_t_in.float())
 
-            # The trace is written as this runs, so the region around it is not
-            # replayable -- but the step itself is, and that is what the flag
-            # asks for. The trace needs no checkpoint: it holds no matrix.
+            # The step is replayable; the trace around it is not, and needs no
+            # checkpoint of its own -- its read is already recomputed.
             if self.gradient_checkpointing and self.training:
                 h_out = checkpoint.checkpoint(
-                    _single_step, h_t_in, t_idx, x_input_info, None, cur_hebb_mem,
-                    attn_segments, attn_pos, hebb_signal, use_reentrant=False)
+                    _single_step, h_t_in, t_idx, x_input_info, attn_segments,
+                    attn_pos, hebb_signal, cur_hebb_mem, use_reentrant=False)
             else:
-                h_out = _single_step(h_t_in, t_idx, x_input_info, None, cur_hebb_mem,
-                                     attn_segments, attn_pos, hebb_signal=hebb_signal)
+                h_out = _single_step(h_t_in, t_idx, x_input_info, attn_segments,
+                                     attn_pos, hebb_signal, cur_hebb_mem)
 
             with torch.amp.autocast(device_type=h_out.device.type, enabled=False):
                 h_t_f, h_prev_f = h_out.float(), h_t_in.float()
@@ -615,84 +574,13 @@ class OdyssNet(nn.Module):
                     src = h_t_f.unsqueeze(0)
                 else:
                     src = torch.stack((h_prev_f, h_t_f))
-                stream.write(src, h_t_f)
+                trace.write(src, h_t_f)
 
                 mem_eff = self.memory_feedback + cur_hebb_mem
                 gate_mem = 1.0 / (1.0 + mem_eff.detach().float().abs())
                 corr_mem = gate_mem * (src * h_t_f)
                 new_mem = hebb_ret_m * local_mem.detach() + hebb_lr_m * corr_mem
             return h_out, new_mem
-
-        def _step_and_learn(h_t_in, local_W, local_mem, t_idx, x_input_info,
-                            attn_segments=(), attn_pos=0):
-            # Trace read, step, trace write in one region, so gradient
-            # checkpointing keeps only the trace that crosses the step boundary
-            # and recomputes the (B, N, N) intermediates between them.
-
-            # The summed paths are what the recurrence sees, so they share one
-            # normalization and one gain.
-            cur_hebb_W   = (hebb_lr_W * local_W).sum(0)
-            cur_hebb_mem = (hebb_lr_m * local_mem).sum(0)
-            # RMSNorm treats each row of the last dimension independently, so
-            # norming W's rows and the memory vector together is exactly
-            # norming them apart, in one kernel chain.
-            normed = self.hebb_norm(
-                torch.cat((cur_hebb_W, cur_hebb_mem.unsqueeze(1)), dim=1))
-            cur_hebb_W   = normed[:, :-1]
-            cur_hebb_mem = normed[:, -1]
-            if self.debug:
-                self._dbg(cur_hebb_W,   f"cur_hebb_W (step {t_idx})")
-                self._dbg(cur_hebb_mem, f"cur_hebb_mem (step {t_idx})")
-
-            h_out = _single_step(h_t_in, t_idx, x_input_info,
-                                 cur_hebb_W, cur_hebb_mem,
-                                 attn_segments, attn_pos)
-
-            # AMP would force these matmul-family ops back to float16 whatever
-            # the explicit casts say.
-            with torch.amp.autocast(device_type=h_out.device.type, enabled=False):
-                # The correlation carries gradient; only the trace's own
-                # history is truncated, by `local_*.detach()` below.
-                h_t_f    = h_out.float()
-                h_prev_f = h_t_in.float()
-
-                # Novelty gate: damp the correlation where W is already large.
-                # Detached, so no second-order path opens through W.
-                # `_offdiag` carries the 1/N scale and the diagonal mask.
-                mem_eff = self.memory_feedback + cur_hebb_mem
-                gate_mem = 1.0 / (1.0 + mem_eff.detach().float().abs())
-                if self.hebb_gate == "none":
-                    gate_W = self._offdiag
-                else:
-                    w_eff = (self.W + cur_hebb_W).detach().float().abs()
-                    if self.hebb_gate == "row":
-                        # One damping per presynaptic row, so the correlation
-                        # stays src ⊗ h with src rescaled.
-                        w_eff = w_eff.pow(2).mean(-1, keepdim=True).sqrt()
-                    gate_W = self._offdiag / (1.0 + w_eff)
-                if self.debug: self._dbg(h_t_f,    f"h_t pre-corr (step {t_idx})")
-                if self.debug: self._dbg(h_prev_f, f"h_prev pre-corr (step {t_idx})")
-
-                # Temporal pairs the previous state with the current one;
-                # spatial pairs the current state with itself.
-                if self.hebb_type == "temporal":
-                    src = h_prev_f.unsqueeze(0)
-                elif self.hebb_type == "spatial":
-                    src = h_t_f.unsqueeze(0)
-                else:
-                    src = torch.stack((h_prev_f, h_t_f))
-
-                corr_W   = gate_W * torch.einsum('pbj,bi->pbji', src, h_t_f)
-                corr_mem = gate_mem * (src * h_t_f)
-                if self.debug: self._dbg(corr_W,   f"corr_W (step {t_idx})")
-                if self.debug: self._dbg(corr_mem, f"corr_mem (step {t_idx})")
-
-                new_W   = hebb_ret_W * local_W.detach()   + hebb_lr_W * corr_W
-                new_mem = hebb_ret_m * local_mem.detach() + hebb_lr_m * corr_mem
-                if self.debug: self._dbg(new_W,   f"local_hebb_W (step {t_idx})")
-                if self.debug: self._dbg(new_mem, f"local_hebb_mem (step {t_idx})")
-
-            return h_out, new_W, new_mem
 
         # Thinking Ratio (Temporal Stretching)
         ratio = 1
@@ -725,41 +613,24 @@ class OdyssNet(nn.Module):
 
             hebb_lr  = torch.sigmoid(torch.stack([p[0] for p in paths]))
             hebb_ret = torch.sigmoid(torch.stack([p[1] for p in paths]))
-            local_hebb_W = None if self.hebb_form == "stream" else (
-                torch.stack([p[2] for p in paths]).detach()
-                .unsqueeze(1).expand(-1, batch_sz, -1, -1).clone())
             local_hebb_mem = (torch.stack([p[3] for p in paths]).detach()
                               .unsqueeze(1).expand(-1, batch_sz, -1).clone())
 
-            # Broadcast shapes resolved once rather than per step. 'neuron'
-            # indexes W's presynaptic row; 'synapse' hands its diagonal to the
-            # self-connections memory_feedback owns.
-            n = self.num_neurons
-            if self.hebb_res == "global":
-                w_view, m_view = (n_paths, 1, 1, 1), (n_paths, 1, 1)
-                lr_m, ret_m = hebb_lr, hebb_ret
-            elif self.hebb_res == "neuron":
-                w_view, m_view = (n_paths, 1, n, 1), (n_paths, 1, n)
-                lr_m, ret_m = hebb_lr, hebb_ret
-            else:  # "synapse"
-                w_view, m_view = (n_paths, 1, n, n), (n_paths, 1, n)
-                lr_m  = hebb_lr.diagonal(dim1=-2, dim2=-1)
-                ret_m = hebb_ret.diagonal(dim1=-2, dim2=-1)
-            stream = None
-            if self.hebb_form == "stream":
-                as_rows = lambda v: v.reshape(n_paths, -1).expand(n_paths, self.num_neurons)
-                # The trace's constants are contractions, and AMP would put
-                # those in half whatever their inputs are. `read` and `write`
-                # are already covered where they are called.
-                with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                    stream = StreamingTrace(
-                        lr=as_rows(hebb_lr).float(), ret=as_rows(hebb_ret).float(),
-                        carry=torch.stack([p[2] for p in paths]).detach().float(),
-                        gain=self.hebb_norm.weight, core=self.W.detach().float(),
-                        gate=self.hebb_gate, batch=batch_sz, dtype=torch.float32)
+            # Broadcast shape resolved once rather than per step: the factors
+            # index W's presynaptic row, and 'global' is that row broadcast.
+            m_view = (n_paths, 1, self.num_neurons if self.hebb_res == "neuron" else 1)
+            hebb_lr_m, hebb_ret_m = hebb_lr.reshape(m_view), hebb_ret.reshape(m_view)
 
-            hebb_lr_W,  hebb_ret_W  = hebb_lr.reshape(w_view), hebb_ret.reshape(w_view)
-            hebb_lr_m,  hebb_ret_m  = lr_m.reshape(m_view),    ret_m.reshape(m_view)
+            as_rows = lambda v: v.reshape(n_paths, -1).expand(n_paths, self.num_neurons)
+            # The trace's constants are contractions, and AMP would put those in
+            # half whatever their inputs are. `read` and `write` are covered
+            # where they are called.
+            with torch.amp.autocast(device_type=self.device.type, enabled=False):
+                trace = PlasticTrace(
+                    lr=as_rows(hebb_lr).float(), ret=as_rows(hebb_ret).float(),
+                    carry=torch.stack([p[2] for p in paths]).detach().float(),
+                    gain=self.hebb_norm.weight, core=self.W.detach().float(),
+                    steps=steps, batch=batch_sz, dtype=torch.float32)
 
         # Precompute Dense Input/Output Scale Vectors
         input_scale_vec = torch.ones(self.num_neurons, dtype=h_t.dtype, device=self.device)
@@ -885,35 +756,18 @@ class OdyssNet(nn.Module):
             else:
                 attn_segments, attn_pos = (), 0
 
-            # Gradient checkpointing. `t` stays a plain int: use_reentrant=False
-            # accepts non-tensor arguments, and torch.tensor(t) would allocate
-            # once per step.
-            recompute = self.gradient_checkpointing and self.training
-
-            if self.hebb_type is not None and self.hebb_form == "stream":
-                # The trace mutates as it is written, so this region is not
-                # replayable: recompute would append every write twice.
-                h_t, local_hebb_mem = _stream_step(
+            if self.hebb_type is not None:
+                h_t, local_hebb_mem = _plastic_step(
                     h_t, local_hebb_mem, t, x_step_info, attn_segments, attn_pos)
-            elif self.hebb_type is not None:
-                if recompute:
-                    h_t, local_hebb_W, local_hebb_mem = checkpoint.checkpoint(
-                        _step_and_learn, h_t, local_hebb_W, local_hebb_mem,
-                        t, x_step_info, attn_segments, attn_pos,
-                        use_reentrant=False,
-                    )
-                else:
-                    h_t, local_hebb_W, local_hebb_mem = _step_and_learn(
-                        h_t, local_hebb_W, local_hebb_mem,
-                        t, x_step_info, attn_segments, attn_pos)
-            elif recompute:
+            elif self.gradient_checkpointing and self.training:
+                # `t` stays a plain int: use_reentrant=False accepts non-tensor
+                # arguments, and torch.tensor(t) would allocate once per step.
                 h_t = checkpoint.checkpoint(
-                    _single_step, h_t, t, x_step_info, None, None,
-                    attn_segments, attn_pos, use_reentrant=False,
+                    _single_step, h_t, t, x_step_info, attn_segments, attn_pos,
+                    use_reentrant=False,
                 )
             else:
-                h_t = _single_step(h_t, t, x_step_info, None, None,
-                                   attn_segments, attn_pos)
+                h_t = _single_step(h_t, t, x_step_info, attn_segments, attn_pos)
 
             # Written after the step, so an entry summarizes everything up to
             # and including it. Outside `_single_step` so gradient
@@ -936,11 +790,8 @@ class OdyssNet(nn.Module):
             if self.hebb_type is not None:
                 # Back out of the stacked path axis into the per-mechanism
                 # buffers; the batch mean is what survives the call.
-                if self.hebb_form == "stream":
-                    with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
-                        carry_W = stream.finish()
-                else:
-                    carry_W = local_hebb_W.detach().mean(dim=1)
+                with torch.amp.autocast(device_type=h_t.device.type, enabled=False):
+                    carry_W = trace.finish()
                 carry_mem = local_hebb_mem.detach().mean(dim=1)
                 path = 0
                 if self.hebb_type in ("temporal", "both"):
