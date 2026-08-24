@@ -296,6 +296,10 @@ class Cfg:
     gates: tuple = ("none", "none", "identity")
     hebb_type: str | None = None
     hebb_res: str = "neuron"
+    hebb_gate: str = "element"       # novelty gate: per synapse, or per
+                                     # presynaptic row ('row'), or off
+    hebb_form: str = "dense"         # 'stream' keeps the trace as the writes
+                                     # it is made of; needs hebb_gate != element
     dropout: float = 0.0
     tie_embeddings: bool = False
 
@@ -624,27 +628,42 @@ def plasticity_advisory(cfg, model):
     paths = 2 if model.hebb_type == "both" else 1
     steps = cfg.chunk * (cfg.think_gap + 1)
     budget_gb = 2.0
-    # Multiples of batch x N² per path, measured at 256 neurons over 32 steps
-    # and flat in neuron count, batch and --hebb-res. Long rollouts run a little
-    # under (6.1 and 1.1 at 128 steps), so the estimate errs high.
-    row_gb = lambda ckpt: ((1.2 if ckpt else 6.3) * paths * steps
-                           * cfg.neurons ** 2 * 4 / 1e9)
+    stream = cfg.hebb_form == "stream"
+
+    # Two laws, not two constants. The dense trace is a matrix per step; the
+    # streaming one is the writes it is made of, so it grows with the step
+    # count rather than the neuron count -- and its two paths share the state
+    # history, which is why 'both' is not twice 'temporal' there. Measured at
+    # 96 steps over a populated buffer, which is what training runs on.
+    def row_gb(ckpt):
+        if stream:
+            return ((2.9 if paths == 1 else 4.7)
+                    * steps ** 2 * cfg.neurons * 4 / 1e9)
+        return (1.2 if ckpt else 6.3) * paths * steps * cfg.neurons ** 2 * 4 / 1e9
+
     fits = lambda ckpt: max(1, int(budget_gb / row_gb(ckpt)))
     trace_gb = row_gb(cfg.grad_ckpt) * cfg.batch
-    print(f"🧬 plasticity {model.hebb_type}/{model.hebb_res} | "
-          f"{steps} steps x batch {cfg.batch} x {cfg.neurons}² | "
+    print(f"🧬 plasticity {model.hebb_type}/{model.hebb_res}/{model.hebb_gate}"
+          f"{' streamed' if stream else ''} | "
+          f"{steps} steps x batch {cfg.batch} x {cfg.neurons}"
+          f"{'' if stream else '²'} | "
           f"trace kept for backward {trace_gb:.1f} GB"
-          + (" (--grad-ckpt on)" if cfg.grad_ckpt else ""))
+          + ("" if stream or not cfg.grad_ckpt else " (--grad-ckpt on)"))
     if trace_gb > budget_gb:
-        if not cfg.grad_ckpt:
-            print(f"⚠️  that trace alone is {trace_gb:.1f} GB. Run plasticity "
-                  f"with --grad-ckpt (about 5x less, ~70% slower per step): "
-                  f"--batch {fits(True)} fits {budget_gb:.0f} GB with it, "
-                  f"--batch {fits(False)} without.")
+        if stream:
+            print(f"⚠️  that trace alone is {trace_gb:.1f} GB. It is linear in "
+                  f"the batch and quadratic in the step count — try --batch "
+                  f"{fits(False)} or a shorter --chunk.")
+        elif not cfg.grad_ckpt:
+            print(f"⚠️  that trace alone is {trace_gb:.1f} GB. --grad-ckpt cuts "
+                  f"it ~5x for ~70% more time per step, and --hebb-form stream "
+                  f"cuts it further still: --batch {fits(True)} fits "
+                  f"{budget_gb:.0f} GB checkpointed, --batch {fits(False)} "
+                  f"as is.")
         else:
             print(f"⚠️  that trace alone is {trace_gb:.1f} GB. It is linear in "
                   f"the batch and in the step count — try --batch "
-                  f"{fits(True)} or a shorter --chunk.")
+                  f"{fits(True)}, a shorter --chunk, or --hebb-form stream.")
 
 
 def attention_advisory(cfg, model):
@@ -999,6 +1018,8 @@ def build(cfg, vocab_size):
         gate=list(cfg.gates),
         hebb_type=cfg.hebb_type,
         hebb_res=cfg.hebb_res,
+        hebb_gate=cfg.hebb_gate,
+        hebb_form=cfg.hebb_form,
         attn_heads=cfg.attn_heads or None,
         attn_kv_heads=cfg.attn_kv_heads,
         attn_head_dim=cfg.attn_head_dim or None,
@@ -1307,6 +1328,7 @@ def _empty_cache(device):
 #: with the wrong one yields fluent-looking garbage and no error.
 ARCH_FIELDS = ("neurons", "n_in", "n_out", "tokenizer", "vocab_size",
                "activation", "weight_init", "gates", "hebb_type", "hebb_res",
+               "hebb_gate", "hebb_form",
                "tie_embeddings", "think_gap", "pulse_mode",
                "attn_heads", "attn_kv_heads", "attn_head_dim", "attn_window",
                "attn_write", "attn_read", "attn_rope", "attn_qk_norm")
@@ -1506,7 +1528,9 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
               f"{cfg.neurons} neurons | in {cfg.n_in} / out {cfg.n_out} | "
               f"gap {cfg.think_gap} | chunk {cfg.chunk} | batch {cfg.batch} | "
               f"lr {'auto' if live_lr is None else live_lr}"
-              + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else ""))
+              + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}/{cfg.hebb_gate}"
+                 f"{'/stream' if cfg.hebb_form == 'stream' else ''}"
+                 if cfg.hebb_type else ""))
         if (live_lr is None) != (cfg.lr is None):
             print(f"ℹ️  Resumed optimizer keeps the checkpoint's "
                   f"{'auto' if live_lr is None else f'fixed-rate ({live_lr})'} "
@@ -2046,6 +2070,20 @@ def parse_args():
                    choices=["global", "neuron", "synapse"],
                    help="plasticity resolution; 'synapse' adds two NxN tensors "
                         "(default: %(default)s)")
+    g.add_argument("--hebb-gate", default=d.hebb_gate,
+                   choices=["element", "row", "none"],
+                   help="novelty gate: damp a write by the synapse it lands on "
+                        "('element'), by that presynaptic row ('row'), or not at "
+                        "all. --hebb-form stream needs 'row' or 'none' "
+                        "(default: %(default)s)")
+    g.add_argument("--hebb-form", default=d.hebb_form,
+                   choices=["dense", "stream"],
+                   help="'stream' keeps the trace as the writes it is made of "
+                        "rather than a matrix per step: same architecture, "
+                        "steps^2 x batch x N instead of steps x batch x N^2, "
+                        "and the only way to run --hebb at a large batch. "
+                        "Slower per step and hostile to --compile "
+                        "(default: %(default)s)")
     g.add_argument("--tie-embeddings", action="store_true",
                    help="share embed/decoder weights; requires n_in == n_out")
     g.add_argument("--dropout", type=float, default=d.dropout, metavar="P",
@@ -2359,7 +2397,8 @@ def cfg_from_args(a):
         dropout=a.dropout, label_smoothing=a.label_smoothing,
         grad_persistence=a.grad_persistence,
         hebb_type=None if a.hebb == "none" else a.hebb,
-        hebb_res=a.hebb_res, grad_ckpt=a.grad_ckpt, compile=a.compile,
+        hebb_res=a.hebb_res, hebb_gate=a.hebb_gate, hebb_form=a.hebb_form,
+        grad_ckpt=a.grad_ckpt, compile=a.compile,
         attn_heads=a.attn_heads, attn_kv_heads=a.attn_kv_heads,
         attn_head_dim=a.attn_head_dim, attn_window=a.attn_window,
         attn_write=a.attn_write, attn_read=a.attn_read,

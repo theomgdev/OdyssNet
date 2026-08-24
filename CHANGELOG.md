@@ -23,7 +23,7 @@ exactly, at a cost that is worth paying exactly where the dense form cannot run.
   | dense + `gradient_checkpointing` | 3.37 GB | 930 ms |
   | stream | **895 MB** | 893 ms |
 
-  At the shape that started this — 1024 neurons, batch 128, 96 steps, `hebb_type='both'` — the trace needs 649 GB dense, 104 GB checkpointed, **17.5 GB** streamed.
+  At the shape that started this — 1024 neurons, batch 128, 96 steps, `hebb_type='both'` — the trace needs 649 GB dense, 104 GB checkpointed, **21 GB** streamed. Which is still more than an 8 GB card, and the point: on that card the checkpointed dense path runs out at about batch 8, and the streamed one at about batch 32. The streaming law is `steps² x B x N` and its two paths share the state history, so `both` costs 1.6x `temporal` rather than twice.
 
   **Where it loses.** `torch.compile` is this architecture's largest speedup and the streaming form is hostile to it: the history grows by one entry per step, so every step is a new shape. At 16 steps it compiles in 8 minutes and runs at 27.8 ms against the dense path's 1 minute and 8.5 ms; at 96 steps the warmup exceeds three quarters of an hour. Eager, it is about 2x the checkpointed dense step at 512 neurons. Both of those and the remaining `steps²` memory term have the same cause and the same fix: freeze the history in fixed-size blocks instead of re-stacking it, which leaves `steps x B x N` and constant shapes.
 
