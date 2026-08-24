@@ -4,6 +4,41 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — branch `feat/streaming-trace`
+
+Research branch. Not merged, and the switches it adds (`hebb_gate`, `hebb_form`)
+are here to settle a question, not to become knobs on main.
+
+### Added
+- **The plastic trace as a stream of writes rather than a matrix (`odyssnet/core/plastic_stream.py`).** Every Hebbian write is an outer product and what the recurrence asks of the trace is one vector-matrix product, so the trace can be kept as the `(B, N)` vectors it is built from and contracted on demand — `h_t @ L_t` and the row norms its RMSNorm needs both come out of contractions over the stored writes. The persistent buffer stays one `(N, N)` matrix for the whole call instead of one per step, and is materialized once at the end, already averaged over the batch.
+
+  Verified as the same architecture, not an approximation: against the dense path in float64, the forward pass agrees to 4e-16 and **every** gradient to 8e-15 — `hebb_norm.weight`, both factor logits and both decay logits included — across `temporal`/`spatial`/`both` x `global`/`neuron` x 1, 2 and 5 steps, from both a cold and a populated buffer. Matching the decay gradient took care: the dense trace decays a *detached* history once per step, so a gradient reaching the decay logit sees one factor, and differentiating the whole chain would have been a different architecture rather than a cheaper one.
+
+  Measured on a 3060 Ti, batch 8, 96 echo steps, `hebb_type='temporal'`:
+
+  | 1024 neurons | peak | step |
+  |---|---|---|
+  | dense | 15.5 GB | 36.5 s (past the card, into shared memory) |
+  | dense + `gradient_checkpointing` | 3.37 GB | 898 ms |
+  | stream | **888 MB** | 901 ms |
+
+  The advantage grows with the core, because the stream's cost is `steps² x B x N` against the dense `steps x B x N²`: 0.58 units of `B x N²` per step at 512 neurons, 0.29 at 1024. That `steps²` is the remaining term and it is not fundamental — it is the history being re-stacked and re-contracted per step, where freezing it in blocks and carrying the row norms incrementally would leave `steps x B x N`.
+
+### Changed
+- **`hebb_gate` — the novelty gate has a form, and the elementwise one is not the best of them.** `1/(1 + |W_eff|)` is the single term in the update that does not factor through an outer product, so the streaming form needs it either gone (`none`) or made per presynaptic row (`row`, which keeps the correlation a scaled outer product). Both were measured on two probes.
+
+  The hive mind reproduces on all three — every hop at 1.000, every control intact, ablation at chance — but its study pass runs under `no_grad`, so it cannot speak for the regime the gate was introduced for. The second probe can: three symbol pairs shown and one queried inside a *single* forward pass, so the gradient reaches the write. Six seeds, chance 0.167, `hebb_type=None` control at 0.312:
+
+  | `hebb_gate` | mean | median | min |
+  |---|---|---|---|
+  | `element` (shipped) | 0.960 | 0.997 | 0.781 |
+  | `row` | **0.991** | 0.995 | **0.972** |
+  | `none` | 0.770 | 0.959 | 0.314 |
+
+  So the gate is load-bearing after all — just not in its elementwise form. `none` collapses to the no-plasticity control on two seeds in six, and two seeds had said otherwise before the sweep was widened. `row` is both the best and the most stable of the three, and it is the form the streaming trace can carry.
+
+  **This leaves the streaming path where it is: exact, and built on the wrong gate.** It implements `none` today. Carrying `row` needs the same contraction machinery applied twice more — a gain-weighted row square for `||cur[j,:]||`, and `(W * gain) @ h_s` cached per write for the cross term — after which the gate costs `steps x B x N` like everything else here. Until that exists, the streaming form is a demonstration that the trace *can* be kept as its writes, not a replacement for the dense one.
+
 ## [3.1.2] — 2026-08-24
 
 ### Fixed

@@ -683,6 +683,76 @@ class TestHebbian:
         assert big_storages(True) <= steps + 1
         assert big_storages(False) >= 3 * steps
 
+    def test_streaming_trace_matches_the_dense_one(self):
+        # The streaming form is the same architecture written differently, so
+        # it has to agree on the forward pass, on every gradient and on the
+        # persisted buffer. The second call is the one that matters: a fresh
+        # model starts from a zero buffer, and the carry branch only carries
+        # something once a call has written to it.
+        def run(form, hebb, res, steps):
+            torch.manual_seed(11)
+            model = _make(10, hebb_type=hebb, hebb_res=res,
+                          hebb_gate="none", hebb_form=form)
+            with torch.no_grad():          # the gain is zero-initialized
+                model.hebb_norm.weight.fill_(0.7)
+            model.train()
+            torch.manual_seed(3)
+            warm, x = torch.randn(3, 10), torch.randn(3, 10)
+            with torch.no_grad():
+                model(warm, steps=3, current_state=torch.zeros(3, 10))
+            out, _ = model(x, steps=steps, current_state=torch.zeros(3, 10))
+            (out * torch.ones_like(out).cumsum(1)).sum().backward()
+            return (out, {k: v.grad.clone() for k, v in model.named_parameters()
+                          if v.grad is not None},
+                    model.t_hebb_state_W if hebb != "spatial" else model.s_hebb_state_W)
+
+        for hebb in ("temporal", "spatial", "both"):
+            for res in ("neuron", "global"):
+                for steps in (1, 2, 5):
+                    oa, ga, ba = run("dense", hebb, res, steps)
+                    ob, gb, bb = run("stream", hebb, res, steps)
+
+                    # Relative: these gradients run to a few hundred, and the
+                    # two paths sum the same terms in a different order. In
+                    # float64 the agreement is 1e-15; this is the float32 floor.
+                    def agrees(a, b):
+                        return ((a - b).abs().max()
+                                <= 1e-4 * max(a.abs().max().item(), 1e-6))
+
+                    assert agrees(oa, ob), (hebb, res, steps)
+                    assert agrees(ba, bb), (hebb, res, steps)
+                    for name in ga:
+                        assert agrees(ga[name], gb[name]), (name, hebb, res, steps)
+
+    def test_streaming_trace_holds_no_matrix(self):
+        # The point of the streaming form: nothing (B, N, N) is kept per step.
+        n, batch, steps = 24, 2, 8
+
+        def held(form):
+            model = _make(n, hebb_type="both", hebb_res="neuron",
+                          hebb_gate="none", hebb_form=form)
+            model.train()
+            sizes = []
+
+            def pack(t):
+                sizes.append(t.numel())
+                return t
+
+            with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
+                out, _ = model(torch.randn(batch, n), steps=steps)
+                out.sum()
+            return max(sizes), sum(sizes)
+
+        big_stream, all_stream = held("stream")
+        _, all_dense = held("dense")
+        assert big_stream < batch * n * n        # no matrix, anywhere
+        assert all_stream < all_dense            # and less of everything else
+
+    def test_streaming_trace_rejects_what_it_cannot_do(self):
+        for kwargs in (dict(hebb_gate="element"), dict(hebb_res="synapse")):
+            with pytest.raises(ValueError):
+                _make(6, hebb_type="temporal", hebb_form="stream", **kwargs)
+
     def test_invalid_hebb_type_raises(self):
         with pytest.raises(ValueError):
             _make(4, hebb_type="invalid")
