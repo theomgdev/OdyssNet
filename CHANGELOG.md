@@ -4,6 +4,60 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.3.0] — 2026-08-28
+
+### Added
+- **Image diffusion on the chaos core — `examples/advanced/experiment_diffusion.py`.** A class-conditional denoising diffusion model whose denoiser is one OdyssNet, with no UNet and no VAE. The mapping is native rather than bolted on: with `pulse_mode=False` and a `(B, K, F)` input run for `K*E` steps, `forward` resolves `ratio = E` by itself, so one denoising timestep is one injected frame, the `E` echo steps between frames are the depth a UNet would spend on layers, and the hidden state, the attention cache and the plastic trace all cross every frame boundary. The whole reverse trajectory is a single differentiable forward pass, which makes `train_batch(..., full_sequence=True)` against the trainer's default `MSELoss` the entire training call.
+
+  `vocab_size=[F_in, P]` with `vocab_mode='continuous'` makes the model's own `proj` and `output_decoder` the encoder and decoder, and conditioning is fixed-basis — a sinusoidal clock and a class one-hot with a null slot for classifier-free guidance — so every learned parameter is inside OdyssNet. DDPM and DDIM samplers, classifier-free guidance, four ablation grids, a `--mode smoke` self-test and checkpointing through the library's own functions.
+
+  The example ships a scoring instrument as well as a model: a small fixed convnet gives conditioning fidelity and a Frechet distance in its feature space. That distance is **not FID** — FID is defined against InceptionV3 — so it is named for what it is and compared only between arms of the same sweep. Its parameters are excluded from every count.
+
+- **`--predict x0` is the default, because on this architecture the output rank decides what can be denoised at all.** The answer is read off `n_out` neurons, so whatever the network emits is a rank-`n_out` view of a `P`-dimensional image. Epsilon is white noise — isotropic, full rank, incompressible — so a rank-192 view keeps `192/784` of its variance and pins the achievable MSE at **0.755** however long training runs. A 573k-parameter run measured **0.767**: saturated, not undertrained, and no amount of training or width-at-fixed-`n_out` would have moved it. Natural images are low rank, and the same 192 directions carry all but **3.4%** of MNIST's variance.
+
+  Measured at 700 steps, each target against its own do-nothing predictor, with the per-frame loss at the noisy and clean ends of the schedule:
+
+  | target | val MSE / trivial | pure noise | nearly clean |
+  |---|---|---|---|
+  | **x_0** | **13.3%** | 0.237 | **0.096** |
+  | v | 59.7% | 0.236 | 0.998 |
+  | eps | 80.5% | 0.787 | 0.896 |
+
+  `v` is x_0-like at high `t` and epsilon-like at low `t`, so it inherits the problem over half the range — visible above as a loss that is fine at pure noise and at the bound when nearly clean. `--sweep size` carries epsilon arms at four widths, and they behave as the rank argument requires: always above the bound, monotone in `n_out`, closing on it with training, and sampling at chance throughout.
+
+| `n_out` | bound `1 - n_out/P` | measured, 1200 steps |
+|---|---|---|
+| 96 | 0.878 | 0.900 |
+| 144 | 0.816 | 0.852 |
+| 192 | 0.755 | 0.806 (0.767 by 8.5k steps) |
+| 288 | 0.633 | 0.710 |
+
+- **The trajectory memory was measured against a matched memoryless control, and it holds.** `independent` runs the same frames with the same targets and the same gradient budget, issued as K separate calls so the denoiser starts each frame with nothing — which is what a UNet sampler does. 600 steps per arm, MNIST, seed 42, guidance 2.0, RTX 3060 Ti:
+
+  | arm | val MSE | conditioning fidelity | Frechet | params |
+  |---|---|---|---|---|
+  | 4 attention heads | 0.1575 | 71.8% | **38.97** | 901,184 |
+  | **trajectory (default)** | 0.1550 | **78.4%** | 40.82 | **573,376** |
+  | attention + plasticity | 0.1518 | 73.2% | 47.69 | 902,720 |
+  | plasticity, temporal | 0.1564 | 70.4% | 65.79 | 574,912 |
+  | shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
+  | `independent` (memoryless) | 0.2010 | 39.4% | 83.10 | 573,376 |
+
+  Carrying the trajectory doubles conditioning fidelity and halves the Frechet distance at an identical parameter count.
+
+  The same claim falls out of a single checkpoint with no second training run. `--mode eval` samples one model twice, carried and wiped between denoising steps — identical weights, identical guidance, one line of difference at inference:
+
+  | same checkpoint, sampling only | conditioning fidelity | Frechet |
+  |---|---|---|
+  | trajectory carried | **85.6%** | **11.0** |
+  | wiped each step | 58.6% | 22.7 |
+
+  That run also probes sampling-batch sensitivity, since the plastic buffer is a batch mean and a batch generated together would share one memory. With plasticity off — the default — there is nothing to share, and fidelity holds between 84.6% and 87.4% from batch 10 to batch 100.
+
+- **`--traj-noise iid` is the default because the coherent trajectory is a shortcut.** Deriving all K frames from one epsilon is the path a perfect DDIM sampler walks, which is why it looks like the right training distribution, and it is not: two frames of such a trajectory determine `x_0` by linear algebra, so the model can learn an inversion instead of a denoiser. That arm holds the best held-out loss in the table above and the second-worst samples, because the inversion cannot follow it into sampling, where the frames come from its own predictions. A validation loss that improves while the Frechet distance worsens is the signature, and `--sweep memory` reports both columns so it stays visible.
+
+- **Attention is available on this task and is not the default.** It leads on Frechet by 4.5% while behind on conditioning fidelity and on held-out loss for 57% more parameters; on one seed at 500 samples that is not a separation, and per parameter it is a loss. Plasticity is behind on every column. Both are also slow here: at equal wall clock rather than equal gradients the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
+
 ## [3.2.0] — 2026-08-24
 
 ### Changed

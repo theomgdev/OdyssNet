@@ -62,6 +62,7 @@ In these tests, the Input Layer is directly connected to the Output Layer (and i
 | **Detective**| Needs Memory | **Cognitive Silence** (Reasoning) | **Perfect Detect**| `convergence_detective_thinking.py` |
 | **Skill Transfer**| Needs Re-Training | **Add -> Multiply Transplant** | **1.7x Lower Final Loss** | `convergence_skill_transfer.py` |
 | **Hive Mind**| Needs Re-Training to Share | **Pooled Plastic Trace** (Collective Memory) | **1.000 on Facts No Body Saw** (chance 0.125) | `convergence_hive_mind.py` |
+| **Image Diffusion** | Needs a UNet + VAE | **573k-Param Denoiser** (trajectory memory) | **~86% Class Fidelity in 15 min** | `experiment_diffusion.py` |
 
 ### The MNIST Zero-Hidden Miracle
 Standard Neural Networks require **Hidden Layers** to solve MNIST or XOR. A direct connection (Linear Model) cannot capture the complexity and fails (stuck at ~92%).
@@ -227,7 +228,6 @@ With temporal attention enabled, one more term joins the same sum — a query ov
 
 $$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
----
 
 ## Experimental Findings
 
@@ -559,6 +559,36 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     | `None` | 0.125 | — | — |
 
 *   **Insight:** A **collective mind, not a shared checkpoint**. What one body learns at run time — no gradient step, no weight update, on a ring that exists only for this episode — every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, composition depth is temporal depth: trained to seven hops the same colony holds 1.000 through four edges, then 0.884, 0.775, 0.228.
+
+### N. Image Diffusion (573k Params, No UNet, No VAE)
+*   **Target:** Class-conditional MNIST generation by denoising diffusion.
+*   **Direction:** Noise + class + clock -> 28x28 image, over 16 denoising steps.
+*   **The Setup:**
+    *   **Architecture:** OdyssNet with 512 neurons (192 in, 192 out, 128 hidden).
+    *   **Strategy:** 16 denoising frames x 4 echo steps = 64 thinking steps, run as **one differentiable forward pass** — so hidden state, attention cache and plastic trace all cross every denoising step.
+    *   **No VAE:** `vocab_mode='continuous'` makes the model's own projections the encoder and decoder. Every learned parameter is inside OdyssNet.
+    *   **Total Parameters:** **573,376** — against Stable Diffusion's ~860M-parameter UNet.
+*   **Result:** **86.0% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti (15,627 steps), val x0-MSE 0.0977 — 10.5% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 84.6%–87.4% across sampling batch sizes 10 to 100.
+    <details>
+    <summary>See Generated Images (10 samples per class)</summary>
+
+    ![OdyssNet Diffusion samples](img/experiment_diffusion_summary.png)
+
+    Each column is one class, each row an independent sample. Guidance scale 2.0, DDIM, 16 steps.
+    </details>
+*   **Mechanism:** measured against a matched memoryless control — the same frames, targets and gradient budget, issued as separate calls so the denoiser starts each frame with nothing, which is what a UNet sampler does.
+
+    | 600 steps per arm | val MSE | fidelity | Frechet | params |
+    | :--- | :--- | :--- | :--- | :--- |
+    | **trajectory (default)** | 0.1550 | **78.4%** | 40.82 | **573,376** |
+    | 4 attention heads | 0.1575 | 71.8% | **38.97** | 901,184 |
+    | shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
+    | memoryless control | 0.2010 | 39.4% | 83.10 | 573,376 |
+
+*   **Script:** `examples/advanced/experiment_diffusion.py`
+*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it doubles conditioning fidelity against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.767 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss sixfold. Note too that the shared-epsilon arm has the *best* held-out loss and nearly the worst samples: two frames of one epsilon determine x0 by linear algebra, so the model learns an inversion that cannot follow it into sampling.
+
+---
 
 ## Vision: The Path to OdyssNet-1B
 OdyssNet is a rebellion against the factory model of AI. We believe intelligence is not a mechanical stacking of layers, but an **organic reverberation of signals**.

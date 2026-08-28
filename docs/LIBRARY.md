@@ -528,6 +528,79 @@ The two questions have opposite answers, and both are worth knowing. 1024 neuron
 
 ---
 
+## Image Diffusion (`examples/advanced/experiment_diffusion.py`)
+
+Diffusion is a loop over time, and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory can be the same object. With `pulse_mode=False` and a `(B, K, F)` input run for `K*E` steps, `forward` resolves `ratio = E` on its own:
+
+| | |
+|---|---|
+| frame *k* injected at step `k*E` | one denoising timestep |
+| `E` echo steps through the `N x N` core | temporal depth in place of UNet layers |
+| output collected at step `(k+1)*E - 1` | the prediction for that timestep |
+| `h_t` crosses every frame boundary | the denoiser remembers its own trajectory |
+| `attn_write='token'` | one cache entry per denoising step |
+
+The whole reverse trajectory is a single differentiable forward pass, so `train_batch(..., full_sequence=True)` against the trainer's default `MSELoss` is the entire training call. `vocab_size=[F_in, P]` with `vocab_mode='continuous'` makes the model's own `proj` and `output_decoder` the encoder and decoder — there is no VAE, and every learned parameter is inside OdyssNet.
+
+### Why `--predict x0` is the default
+
+The answer is read off `n_out` neurons, so whatever the network emits is a **rank-`n_out` view** of a `P`-dimensional image, and the parameterisation decides whether that rank is enough.
+
+Epsilon is white noise: isotropic, full rank, incompressible. A rank-192 view of it keeps `192/784` of the variance, which pins the achievable MSE at **0.755** however long training runs — and a 573k-parameter run measured **0.767**, saturated rather than undertrained. Natural images are low rank: the same 192 directions carry all but **3.4%** of MNIST's variance.
+
+Measured at 700 steps, each target against its own do-nothing predictor:
+
+| target | val MSE / trivial | at pure noise | at nearly clean |
+|---|---|---|---|
+| **x_0** | **13.3%** | 0.237 | **0.096** |
+| v | 59.7% | 0.236 | 0.998 |
+| eps | 80.5% | 0.787 | 0.896 |
+
+`v` is x_0-like at high `t` and epsilon-like at low `t`, so it inherits the rank problem over half the range. `--sweep size` carries epsilon arms at four widths, and they behave as the rank argument requires: always above the bound, monotone in `n_out`, closing on it with training, and sampling at chance throughout.
+
+| `n_out` | bound `1 - n_out/P` | measured, 1200 steps |
+|---|---|---|
+| 96 | 0.878 | 0.900 |
+| 144 | 0.816 | 0.852 |
+| 192 | 0.755 | 0.806 (0.767 by 8.5k steps) |
+| 288 | 0.633 | 0.710 |
+
+### Does the trajectory memory help? Measured, on MNIST
+
+```bash
+python -u experiment_diffusion.py --mode sweep --sweep memory --minutes 4                     # equal wall-clock
+python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25    # equal gradients
+python -u experiment_diffusion.py --mode train --tag attn --attn-heads 4 --minutes 20
+```
+
+`independent` is the control: the same frames, the same targets and the same gradient budget, issued as K separate calls so the denoiser starts each frame with nothing — which is what a UNet sampler does. 512 neurons, 573k parameters, 16 frames x 4 echo, guidance 2.0, seed 42, 600 steps per arm, RTX 3060 Ti:
+
+| arm | val MSE | conditioning fidelity | Frechet | params |
+|---|---|---|---|---|
+| 4 attention heads | 0.1575 | 71.8% | **38.97** | 901,184 |
+| **trajectory (default)** | 0.1550 | **78.4%** | 40.82 | **573,376** |
+| attention + plasticity | 0.1518 | 73.2% | 47.69 | 902,720 |
+| plasticity, temporal | 0.1564 | 70.4% | 65.79 | 574,912 |
+| shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
+| `independent` (memoryless) | 0.2010 | 39.4% | 83.10 | 573,376 |
+
+**Carrying the trajectory doubles conditioning fidelity and halves the Frechet distance against a memoryless denoiser at an identical parameter count.** That is the claim this example exists to test, and it survived its control.
+
+The same claim, without a second training run: `--mode eval` samples one checkpoint twice, carried and wiped between denoising steps — identical weights, identical guidance, one line of difference at inference time.
+
+| same checkpoint, sampling only | conditioning fidelity | Frechet |
+|---|---|---|
+| trajectory carried | **85.6%** | **11.0** |
+| wiped each step | 58.6% | 22.7 |
+
+Two of the other rows are cautionary. The **shared-epsilon** arm holds the best held-out loss in the table and the second-worst samples: one epsilon per trajectory leaves two frames enough to recover `x_0` by linear algebra, so the model learns an inversion rather than a denoiser, and the inversion cannot follow it into sampling. A validation loss that improves while the Frechet distance worsens is that shortcut's signature, which is why both columns are reported and why `--traj-noise iid` is the default.
+
+**Attention** leads on Frechet by 4.5% while behind on conditioning fidelity and held-out loss for 57% more parameters — on one seed at 500 samples that is not a separation, and per parameter it is a loss. It is available (`--attn-heads 4`) and is not the default. **Plasticity** is behind on every column, and it is slow: at equal wall clock the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
+
+Frechet distances here are taken in a small fixed classifier's feature space, not InceptionV3's, so they are **not FID** and are comparable only between arms of the same sweep.
+
+---
+
 ## Advanced Capabilities
 
 ### 1. Temporal Depth (Space-Time Tradeoff)

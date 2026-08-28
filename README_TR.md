@@ -63,6 +63,7 @@ Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağl
 | **Dedektif**| Bellek Gerekir | **Bilişsel Sessizlik** (Akıl Yürütme) | **Mükemmel Tespit**| `convergence_detective_thinking.py` |
 | **Beceri Transferi**| Baştan Eğitim Gerekir | **Toplama -> Çarpma Transplantı** | **3.6x Daha Hızlı** | `convergence_skill_transfer.py` |
 | **Kovan Zihni**| Paylaşmak İçin Baştan Eğitim Gerekir | **Havuzlanmış Plastik İz** (Kolektif Bellek) | **Hiçbir Bedenin Görmediği Bilgide 1.000** (şans 0.125) | `convergence_hive_mind.py` |
+| **Görüntü Difüzyonu** | UNet + VAE Gerekir | **573k-Param Gürültü Giderici** (yörünge belleği) | **15 dakikada ~%86 Sınıf Sadakati** | `experiment_diffusion.py` |
 
 ### MNIST Sıfır-Gizli Mucizesi
 Standart Sinir Ağları MNIST veya XOR'u çözmek için **Gizli Katmanlara** ihtiyaç duyar. Doğrudan bağlantı (Doğrusal Model) karmaşıklığı yakalayamaz ve başarısız olur (~%92'de takılır).
@@ -228,7 +229,6 @@ Zamansal dikkat açıkken aynı toplama bir terim daha katılır — daha önce 
 
 $$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
----
 
 ## Deneysel Bulgular
 
@@ -560,6 +560,36 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     | `None` | 0.125 | — | — |
 
 *   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini — gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde — diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için bileşim derinliği zamansal derinliktir: yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra 0.884, 0.775, 0.228.
+
+### N. Görüntü Difüzyonu (573k Parametre, UNet Yok, VAE Yok)
+*   **Hedef:** Difüzyonla sınıf-koşullu MNIST üretimi.
+*   **Yön:** Gürültü + sınıf + saat → 28×28 görüntü, 16 gürültü giderme adımında.
+*   **Kurulum:**
+    *   **Mimari:** 512 nöronlu OdyssNet (192 giriş, 192 çıkış, 128 gizli).
+    *   **Strateji:** 16 difüzyon karesi × 4 yankı adımı = 64 düşünme adımı, **tek türevlenebilir ileri geçiş** olarak — böylece gizli durum, attention önbelleği ve plastik iz her difüzyon adımını aşar.
+    *   **VAE yok:** `vocab_mode='continuous'` ile modelin kendi projeksiyonları kodlayıcı ve kod çözücü olur. Öğrenilen her parametre OdyssNet'in içindedir.
+    *   **Toplam Parametre:** **573,376** — Stable Diffusion'ın ~860M parametreli UNet'ine karşı.
+*   **Sonuç:** RTX 3060 Ti'de 15 dakikada (15,627 adım), `--mode eval` ile yeniden puanlanan **%86.0 koşullama sadakati**, doğrulama x₀-MSE 0.0977 — hiçbir şey yapmayan tahmin edicinin %10.5'i. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %84.6–%87.4.
+    <details>
+    <summary>Üretilmiş Görselleri Gör (sınıf başına 10 örnek)</summary>
+
+    ![OdyssNet Difüzyon örnekleri](img/experiment_diffusion_summary.png)
+
+    Her sütun bir sınıf, her satır bağımsız bir örnek. Yönlendirme ölçeği 2.0, DDIM, 16 adım.
+    </details>
+*   **Mekanizma:** eşleştirilmiş, belleği olmayan bir kontrole karşı ölçüldü — aynı kareler, aynı hedefler, aynı gradyan bütçesi, ancak ayrı çağrılar hâlinde verilerek gürültü gidericinin her kareye sıfırdan başladığı durum; bir UNet örnekleyicisinin yaptığı tam olarak budur.
+
+    | Kol başına 600 adım | doğrulama MSE | sadakat | Fréchet | parametre |
+    | :--- | :--- | :--- | :--- | :--- |
+    | **yörünge (varsayılan)** | 0.1550 | **%78.4** | 40.82 | **573,376** |
+    | 4 attention kafası | 0.1575 | %71.8 | **38.97** | 901,184 |
+    | paylaşımlı-epsilon yörünge | **0.1351** | %54.2 | 76.85 | 573,376 |
+    | belleksiz kontrol | 0.2010 | %39.4 | 83.10 | 573,376 |
+
+*   **Script:** `examples/advanced/experiment_diffusion.py`
+*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini ikiye katlar. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.767, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı altı katı azaltır. Ayrıca paylaşımlı-epsilon kolunun *en iyi* doğrulama kaybına ve neredeyse en kötü örneklere sahip olduğuna dikkat edin: tek bir epsilonun iki karesi x₀'ı lineer cebirle belirler, böylece model örnekleme sırasında peşinden gelemeyeceği bir ters çevirme öğrenir.
+
+---
 
 ## Vizyon: Silikonun Ruhu (OdyssNet-1B)
 OdyssNet, yapay zekanın fabrika modeline karşı bir isyandır. Zekanın mekanik bir katman yığını değil, **sinyallerin organik bir rezonansı** olduğuna inanıyoruz.
