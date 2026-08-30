@@ -54,7 +54,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
   That run also probes sampling-batch sensitivity, since the plastic buffer is a batch mean and a batch generated together would share one memory. With plasticity off — the default — there is nothing to share, and fidelity holds between 84.6% and 87.4% from batch 10 to batch 100.
 
-- **`--traj-noise iid` is the default because the coherent trajectory is a shortcut.** Deriving all K frames from one epsilon is the path a perfect DDIM sampler walks, which is why it looks like the right training distribution, and it is not: two frames of such a trajectory determine `x_0` by linear algebra, so the model can learn an inversion instead of a denoiser. That arm holds the best held-out loss in the table above and the second-worst samples, because the inversion cannot follow it into sampling, where the frames come from its own predictions. A validation loss that improves while the Frechet distance worsens is the signature, and `--sweep memory` reports both columns so it stays visible.
+- **`--traj-noise iid` is the default, on weaker evidence than the theory suggests.** Deriving all K frames from one epsilon is the path a perfect DDIM sampler walks, which is why it looks like the right training distribution, and it is a shortcut: two frames of such a trajectory determine `x_0` by linear algebra, so the model can learn an inversion instead of a denoiser, and an inversion cannot follow it into sampling. The held-out loss behaves exactly as that predicts — the shared arm wins it at every budget measured. The sample penalty did not replicate: 54.2% conditioning fidelity against `trajectory`'s 78.4% at seed 42, but 83.4% against 83.6% at seed 54321, both at equal wall clock. So `iid` is the default because it has never been worse, not because the gap is settled, and `--sweep memory` reports loss and Frechet separately so an arm that trades one for the other stays visible.
+
+- **Temporal depth beats denoising resolution at fixed compute.** `--sweep depth` holds `K*E = 64` and varies the split, which is a question only this architecture can ask — on a UNet the denoising step count and the depth spent inside one step are different resources. MNIST, seed 54321, 3 min per arm, 573,376 parameters throughout:
+
+  | arm | frames | echo | val MSE | conditioning fidelity | Frechet |
+  |---|---|---|---|---|---|
+  | k32_e2 | 32 | 2 | 0.1104 | 73.0% | 13.06 |
+  | k16_e4 | 16 | 4 | 0.1058 | 83.6% | 15.97 |
+  | k8_e8 | 8 | 8 | 0.0986 | 88.0% | 13.96 |
+  | **k4_e16** | **4** | **16** | 0.1001 | **95.0%** | 15.66 |
+
+  Fidelity climbs monotonically with echo depth while Frechet stays flat in no order, so what improves is the conditioning rather than the sample distribution collapsing. The deepest arm also samples in four denoising steps instead of thirty-two. The default stays 16 x 4: this is one seed at equal wall clock, with step counts spread 11% in the deepest arm's favour, and the ranked table crowns `k32_e2` because `RANK_KEY` is Frechet and Frechet is the column that does not separate here.
+
+- **The x_0 width curve, for the per-parameter question.** `--sweep size`, same budget and seed: 221,152 params / 75.6% fidelity, 380,880 / 83.0%, 573,376 / 85.8%, 1,056,672 / 87.6%. Returns are positive and shallow — 4.8x the parameters buys twelve points. `n_out` scales with the width in this grid, so the curve mixes capacity with output rank; the epsilon arms alongside it move rank alone and stay at chance whatever the width.
 
 - **Attention is available on this task and is not the default.** It leads on Frechet by 4.5% while behind on conditioning fidelity and on held-out loss for 57% more parameters; on one seed at 500 samples that is not a separation, and per parameter it is a loss. Plasticity is behind on every column. Both are also slow here: at equal wall clock rather than equal gradients the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
 

@@ -586,8 +586,10 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     | paylaşımlı-epsilon yörünge | **0.1351** | %54.2 | 76.85 | 573,376 |
     | belleksiz kontrol | 0.2010 | %39.4 | 83.10 | 573,376 |
 
+    Paylaşımlı-epsilon satırı yerleşmiş bir sonuç değil, bir uyarıdır: ölçülen her bütçede doğrulama kaybını kazanır, ancak örnek kalitesindeki cezası bu tohumda görülüp ikinci bir tohumda kayboldu (%83.4'e karşı %83.6). `--traj-noise iid` varsayılandır çünkü hiçbir zaman daha kötü olmadı.
+
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini ikiye katlar. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.767, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı altı katı azaltır. Ayrıca paylaşımlı-epsilon kolunun *en iyi* doğrulama kaybına ve neredeyse en kötü örneklere sahip olduğuna dikkat edin: tek bir epsilonun iki karesi x₀'ı lineer cebirle belirler, böylece model örnekleme sırasında peşinden gelemeyeceği bir ters çevirme öğrenir.
+*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini ikiye katlar. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.767, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı altı katı azaltır. Ayrıca sabit `K*E` hesap bütçesinde, bu bütçeyi gürültü giderme adımları yerine yankı derinliğine harcamak sadakati %73.0'ten **%95.0**'e çıkarır — bunu ancak derinliği zaman olan bir mimari sorabilir.
 
 ---
 

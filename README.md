@@ -586,8 +586,10 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     | shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
     | memoryless control | 0.2010 | 39.4% | 83.10 | 573,376 |
 
+    The shared-epsilon row is a caution, not a settled result: it wins held-out loss at every budget measured, but its sample penalty appeared at this seed and vanished at a second one (83.4% against 83.6%). `--traj-noise iid` is the default because it has never been worse.
+
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it doubles conditioning fidelity against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.767 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss sixfold. Note too that the shared-epsilon arm has the *best* held-out loss and nearly the worst samples: two frames of one epsilon determine x0 by linear algebra, so the model learns an inversion that cannot follow it into sampling.
+*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it doubles conditioning fidelity against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.767 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss sixfold. And at fixed compute `K*E`, spending it on echo depth rather than denoising steps takes fidelity from 73.0% to **95.0%** — a question only an architecture whose depth is time can ask.
 
 ---
 

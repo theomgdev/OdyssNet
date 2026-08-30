@@ -60,6 +60,7 @@ Usage
     python -u experiment_diffusion.py --mode train --minutes 15
     python -u experiment_diffusion.py --mode sweep --sweep memory --minutes 4
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
+    python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
     python -u experiment_diffusion.py --mode sample --tag base --cfg 2.0
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
@@ -101,13 +102,16 @@ argued.
 
 The rest is worth reading for what it costs.
 
-`traj_noise_shared` holds the best held-out loss in the table and the second
-worst samples. One epsilon per trajectory leaves two frames enough to recover
-x_0 by linear algebra, so the model can learn an inversion instead of a
-denoiser, and an inversion cannot follow it into sampling, where the frames come
-from its own predictions. A validation loss that improves while the Frechet
-distance worsens is the signature; both columns are reported so it stays visible.
-`--traj-noise iid` is the default because it breaks that shortcut.
+`traj_noise_shared` holds the best held-out loss at every budget measured. One
+epsilon per trajectory leaves two frames enough to recover x_0 by linear
+algebra, so the model can learn an inversion instead of a denoiser, and an
+inversion cannot follow it into sampling, where the frames come from its own
+predictions. That is the theory, and the sample half of it did not replicate: on
+the table above it scores 54.2% fidelity against `trajectory`'s 78.4%, while a
+second seed at equal wall clock put the two at 83.4% and 83.6%. `--traj-noise
+iid` is the default on the weaker ground that it has never been worse, not on a
+settled gap; both columns are reported so an arm that trades one for the other
+stays visible.
 
 `traj_attn` is the one arm ahead on Frechet, by 4.5%, while behind on
 conditioning fidelity and on held-out loss for 57% more parameters. On one seed
@@ -126,6 +130,50 @@ A note on what the batch means here: the plastic buffer is a batch mean, so a
 batch of images generated together share one plastic memory -- the hive mind
 applied to generation. Sample quality can therefore depend on the sampling batch
 size, which is why `--sample-batch` exists and why eval reports it.
+
+What temporal depth is worth
+----------------------------
+The K frames and the E echo steps between them multiply into the same compute,
+so `--sweep depth` holds K*E = 64 fixed and asks which of the two the budget
+should buy. Only this architecture can ask it: on a UNet the number of denoising
+steps and the depth spent inside one are different resources, and here they are
+the same one. MNIST, seed 54321, x_0, guidance 2.0, 3 minutes per arm:
+
+    arm      frames  echo   val MSE   fidelity   frechet    steps
+    k32_e2       32     2    0.1104      73.0%    13.059    3,593
+    k16_e4       16     4    0.1058      83.6%    15.968    3,800
+    k8_e8         8     8    0.0986      88.0%    13.963    3,932
+    k4_e16        4    16    0.1001      95.0%    15.657    4,004
+
+Conditioning fidelity climbs monotonically with echo depth at identical compute,
+while the Frechet distance stays flat across all four -- 13.1 to 16.0, in no
+order -- so what improves is the conditioning rather than the sample
+distribution narrowing onto a few modes. The deepest arm also samples in four
+denoising steps instead of thirty-two, which is the cheapest inference in the
+table by a factor of eight.
+
+Two things to hold against it. The arms are equal wall clock rather than equal
+gradients, and the step counts spread 11% in the deepest arm's favour. And the
+ranked table crowns k32_e2, because `RANK_KEY` is Frechet and Frechet is the one
+column that does not separate here -- read the fidelity column for this sweep.
+The default stays 16 x 4 on one seed of evidence; trading denoising resolution
+for echo depth is a change worth a second seed first.
+
+What width is worth
+-------------------
+`--sweep size` at the same budget, the x_0 arms:
+
+    arm    neurons  n_out     params   val MSE   fidelity   frechet
+    n256       256     96    221,152    0.1234      75.6%    27.633
+    n384       384    144    380,880    0.1098      83.0%    21.165
+    n512       512    192    573,376    0.1067      85.8%    14.732
+    n768       768    288  1,056,672    0.1007      87.6%    11.523
+
+Returns are still positive at a million parameters and already shallow: 4.8x the
+parameters of n256 buys twelve points of fidelity. `n_out` scales with the width
+in this grid, so the curve mixes capacity with output rank -- which is the pair
+the epsilon arms above separate, since those move only rank and stay at chance
+whatever the width.
 """
 
 import sys
@@ -453,16 +501,19 @@ def trajectory_batch(x0, labels, sched, cfg, gen=None):
 
     `'shared'` draws one epsilon per image and derives every frame from it in
     closed form. That is the trajectory a perfect DDIM sampler walks, which is
-    why it looks like the right choice, and it is not: two frames of a shared
-    epsilon trajectory determine x_0 by linear algebra, so the model can learn
-    an inversion instead of a denoiser. It wins on held-out MSE and loses badly
-    on the samples, which is the one place the shortcut cannot follow.
+    why it looks like the right choice, and it carries a risk: two frames of a
+    shared epsilon trajectory determine x_0 by linear algebra, so the model can
+    learn an inversion instead of a denoiser. It wins on held-out MSE at every
+    budget measured. Whether that costs it samples did not replicate:
 
-        shared   val 0.0750   fidelity 62.8%   frechet 27.2
-        iid      val 0.1084   fidelity 86.0%   frechet 14.6
+        seed 42     shared val 0.0750 fid 62.8%   iid val 0.1084 fid 86.0%
+        seed 54321  shared val 0.0834 fid 83.4%   iid val 0.1087 fid 83.6%
 
-    A run whose validation loss improves while its Frechet distance worsens is
-    the signature; `--sweep memory` reports both columns so it stays visible.
+    Both rows are equal wall clock, so what disagrees is the seed and not the
+    budget. `iid` is the default on the weaker ground that it has never been
+    worse, not on a settled gap. `--sweep memory` reports loss and Frechet in
+    separate columns, because an arm that improves on one while worsening on the
+    other is the signature to watch for.
     """
     B, P = x0.shape
     K = cfg.frames

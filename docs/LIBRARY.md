@@ -593,11 +593,39 @@ The same claim, without a second training run: `--mode eval` samples one checkpo
 | trajectory carried | **85.6%** | **11.0** |
 | wiped each step | 58.6% | 22.7 |
 
-Two of the other rows are cautionary. The **shared-epsilon** arm holds the best held-out loss in the table and the second-worst samples: one epsilon per trajectory leaves two frames enough to recover `x_0` by linear algebra, so the model learns an inversion rather than a denoiser, and the inversion cannot follow it into sampling. A validation loss that improves while the Frechet distance worsens is that shortcut's signature, which is why both columns are reported and why `--traj-noise iid` is the default.
+Two of the other rows are cautionary. The **shared-epsilon** arm holds the best held-out loss at every budget measured: one epsilon per trajectory leaves two frames enough to recover `x_0` by linear algebra, so the model can learn an inversion rather than a denoiser, and an inversion cannot follow it into sampling. Whether that costs it samples did not replicate — 54.2% conditioning fidelity against `trajectory`'s 78.4% at seed 42, but 83.4% against 83.6% at seed 54321, both at equal wall clock. `--traj-noise iid` is the default because it has never been worse, not because the gap is settled, and both columns are reported so an arm that trades one for the other stays visible.
 
 **Attention** leads on Frechet by 4.5% while behind on conditioning fidelity and held-out loss for 57% more parameters — on one seed at 500 samples that is not a separation, and per parameter it is a loss. It is available (`--attn-heads 4`) and is not the default. **Plasticity** is behind on every column, and it is slow: at equal wall clock the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
 
 Frechet distances here are taken in a small fixed classifier's feature space, not InceptionV3's, so they are **not FID** and are comparable only between arms of the same sweep.
+
+### Is temporal depth worth more than denoising steps?
+
+`K` frames and `E` echo steps between them multiply into the same compute, so `--sweep depth` holds `K*E = 64` fixed and varies the split. On a UNet this question does not exist — the number of denoising steps and the depth spent inside one are different resources. MNIST, seed 54321, x_0, guidance 2.0, 3 minutes per arm, 573,376 parameters throughout:
+
+| arm | frames | echo | val MSE | conditioning fidelity | Frechet | steps |
+|---|---|---|---|---|---|---|
+| k32_e2 | 32 | 2 | 0.1104 | 73.0% | **13.06** | 3,593 |
+| k16_e4 | 16 | 4 | 0.1058 | 83.6% | 15.97 | 3,800 |
+| k8_e8 | 8 | 8 | 0.0986 | 88.0% | 13.96 | 3,932 |
+| **k4_e16** | **4** | **16** | 0.1001 | **95.0%** | 15.66 | 4,004 |
+
+**Fidelity climbs monotonically with echo depth at identical compute**, and the deepest arm samples in four denoising steps rather than thirty-two — the cheapest inference in the table by a factor of eight. Frechet stays flat across all four in no order, which is what rules out the climb being the sample distribution narrowing onto a few modes.
+
+The default stays `16 x 4`. This is one seed at equal wall clock, the step counts spread 11% in the deepest arm's favour, and the ranked table crowns `k32_e2` because `RANK_KEY` is Frechet and Frechet is the one column that does not separate here — read the fidelity column for this sweep.
+
+### The width curve
+
+`--sweep size`, same budget and seed, the x_0 arms:
+
+| arm | neurons | `n_out` | params | val MSE | conditioning fidelity | Frechet |
+|---|---|---|---|---|---|---|
+| n256 | 256 | 96 | 221,152 | 0.1234 | 75.6% | 27.63 |
+| n384 | 384 | 144 | 380,880 | 0.1098 | 83.0% | 21.17 |
+| n512 | 512 | 192 | 573,376 | 0.1067 | 85.8% | 14.73 |
+| n768 | 768 | 288 | 1,056,672 | 0.1007 | **87.6%** | **11.52** |
+
+Returns are still positive at a million parameters and already shallow: 4.8x the parameters of `n256` buys twelve points of fidelity. `n_out` scales with the width in this grid, so the curve mixes capacity with output rank — and the epsilon arms carried alongside it move rank alone, staying at chance fidelity whatever the width.
 
 ---
 
