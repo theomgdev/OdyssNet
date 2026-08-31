@@ -89,6 +89,14 @@ would have done it differently. Clean up the imports and helpers your own change
 orphaned, and leave pre-existing dead code alone — mention it instead. A diff
 full of unrelated tidying is the fastest way to make a reviewer stop reading.
 
+Before writing something new, find where the project already does the same shape
+of work, and start from that. Most features are a variation on one that exists —
+a different filter over the same walk, a different destination for the same move
+— and the one that exists already survives the cases you have not thought of
+yet. Inventing a second mechanism beside a working one means rediscovering those
+cases the hard way, in production, one at a time. Read the neighbour first, and
+if you end up not using it, be able to say why.
+
 Write the least code that solves the problem. No speculative abstraction, no
 error handling for situations that cannot occur. If two hundred lines could have been fifty, it should have been fifty.
 
@@ -113,6 +121,14 @@ description of where something lives.
 Passing tests are not proof of correctness. They prove nothing you already
 thought of is broken. Read the change again for the case nobody wrote a test
 for.
+
+Neither is reading the source. Code that looks right against the source is a
+guess about the running system, and the guess fails on the things the source
+does not show you: the container that turned out to be nested, the field set
+somewhere you did not look, the collection that is empty for a reason three
+files away. Run the thing the way the person who asked for it will run it, and
+let that decide. If you cannot run it, say so rather than reporting confidence
+you have not earned.
 
 Assume the happy path is right and go looking at the edges, because that is
 where generated code fails. Worth checking specifically: a brand new dependency
@@ -153,6 +169,11 @@ to execute: keep the points that survive contact with the evidence, say plainly
 which ones you dropped and why. And keep the limit in view. Independent evidence
 is what turns a guess into a finding; a second model agreeing with the first is
 still a guess, just a more confident one.
+
+Finish what you started before you start again. When an approach stalls, find
+the cause before you change approach: a restart throws away the part that was
+working, and it usually arrives back at the same wall from further away. Half a
+rewrite is worse than either version.
 
 Finish one thing before starting the next. Volume is why this became a crisis:
 projects have closed bug bounties, gone zero-tolerance, started auto-closing
