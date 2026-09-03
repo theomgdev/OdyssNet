@@ -569,7 +569,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     *   **Strategy:** 16 denoising frames x 4 echo steps = 64 thinking steps, run as **one differentiable forward pass** — so hidden state, attention cache and plastic trace all cross every denoising step.
     *   **No VAE:** `vocab_mode='continuous'` makes the model's own projections the encoder and decoder. Every learned parameter is inside OdyssNet.
     *   **Total Parameters:** **573,376** — against Stable Diffusion's ~860M-parameter UNet.
-*   **Result:** **86.0% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti (15,627 steps), val x0-MSE 0.0977 — 10.5% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 84.6%–87.4% across sampling batch sizes 10 to 100.
+*   **Result:** **86.0% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti, val x0-MSE 0.0800 — 8.6% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 84.6%–87.4% across sampling batch sizes 10 to 100.
     <details>
     <summary>See Generated Images (10 samples per class)</summary>
 
@@ -579,17 +579,17 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     </details>
 *   **Mechanism:** measured against a matched memoryless control — the same frames, targets and gradient budget, issued as separate calls so the denoiser starts each frame with nothing, which is what a UNet sampler does.
 
-    | 600 steps per arm | val MSE | fidelity | Frechet | params |
+    | 3 min per arm, seed 54321 | val MSE | fidelity | Frechet | params |
     | :--- | :--- | :--- | :--- | :--- |
-    | **trajectory (default)** | 0.1550 | **78.4%** | 40.82 | **573,376** |
-    | 4 attention heads | 0.1575 | 71.8% | **38.97** | 901,184 |
-    | shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
-    | memoryless control | 0.2010 | 39.4% | 83.10 | 573,376 |
+    | **trajectory (default)** | **0.0967** | **83.6%** | 19.92 | **573,376** |
+    | 4 attention heads | 0.1250 | 83.0% | 30.42 | 901,184 |
+    | shared-epsilon trajectory | 0.1762 | 83.4% | **18.91** | 573,376 |
+    | memoryless control | 0.3054 | 10.4% | 152.32 | 573,376 |
 
-    The shared-epsilon row is a caution, not a settled result: it wins held-out loss at every budget measured, but its sample penalty appeared at this seed and vanished at a second one (83.4% against 83.6%). `--traj-noise iid` is the default because it has never been worse.
+    The shared-epsilon row is a caution, not a settled result: deriving every frame from one epsilon lets the model learn an inversion rather than a denoiser, which the iid grid catches (0.1762 against 0.0967), but its sample penalty appeared at seed 42 and vanished at this one (83.4% against 83.6%). `--traj-noise iid` is the default because it has never been worse on the sample columns.
 
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it doubles conditioning fidelity against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.767 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss sixfold. And at fixed compute `K*E`, spending it on echo depth rather than denoising steps takes fidelity from 73.0% to **95.0%** — a question only an architecture whose depth is time can ask.
+*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it takes conditioning fidelity from chance to 83.6% against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.791 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss eightfold. And at fixed compute `K*E`, spending it on echo depth rather than denoising steps takes fidelity from 73.0% to **95.0%** — a question only an architecture whose depth is time can ask.
 
 ---
 

@@ -569,7 +569,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     *   **Strateji:** 16 difüzyon karesi × 4 yankı adımı = 64 düşünme adımı, **tek türevlenebilir ileri geçiş** olarak — böylece gizli durum, attention önbelleği ve plastik iz her difüzyon adımını aşar.
     *   **VAE yok:** `vocab_mode='continuous'` ile modelin kendi projeksiyonları kodlayıcı ve kod çözücü olur. Öğrenilen her parametre OdyssNet'in içindedir.
     *   **Toplam Parametre:** **573,376** — Stable Diffusion'ın ~860M parametreli UNet'ine karşı.
-*   **Sonuç:** RTX 3060 Ti'de 15 dakikada (15,627 adım), `--mode eval` ile yeniden puanlanan **%86.0 koşullama sadakati**, doğrulama x₀-MSE 0.0977 — hiçbir şey yapmayan tahmin edicinin %10.5'i. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %84.6–%87.4.
+*   **Sonuç:** RTX 3060 Ti'de 15 dakikada, `--mode eval` ile yeniden puanlanan **%86.0 koşullama sadakati**, doğrulama x₀-MSE 0.0800 — hiçbir şey yapmayan tahmin edicinin %8.6'sı. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %84.6–%87.4.
     <details>
     <summary>Üretilmiş Görselleri Gör (sınıf başına 10 örnek)</summary>
 
@@ -579,17 +579,17 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     </details>
 *   **Mekanizma:** eşleştirilmiş, belleği olmayan bir kontrole karşı ölçüldü — aynı kareler, aynı hedefler, aynı gradyan bütçesi, ancak ayrı çağrılar hâlinde verilerek gürültü gidericinin her kareye sıfırdan başladığı durum; bir UNet örnekleyicisinin yaptığı tam olarak budur.
 
-    | Kol başına 600 adım | doğrulama MSE | sadakat | Fréchet | parametre |
+    | Kol başına 3 dk, tohum 54321 | doğrulama MSE | sadakat | Fréchet | parametre |
     | :--- | :--- | :--- | :--- | :--- |
-    | **yörünge (varsayılan)** | 0.1550 | **%78.4** | 40.82 | **573,376** |
-    | 4 attention kafası | 0.1575 | %71.8 | **38.97** | 901,184 |
-    | paylaşımlı-epsilon yörünge | **0.1351** | %54.2 | 76.85 | 573,376 |
-    | belleksiz kontrol | 0.2010 | %39.4 | 83.10 | 573,376 |
+    | **yörünge (varsayılan)** | **0.0967** | **%83.6** | 19.92 | **573,376** |
+    | 4 attention kafası | 0.1250 | %83.0 | 30.42 | 901,184 |
+    | paylaşımlı-epsilon yörünge | 0.1762 | %83.4 | **18.91** | 573,376 |
+    | belleksiz kontrol | 0.3054 | %10.4 | 152.32 | 573,376 |
 
-    Paylaşımlı-epsilon satırı yerleşmiş bir sonuç değil, bir uyarıdır: ölçülen her bütçede doğrulama kaybını kazanır, ancak örnek kalitesindeki cezası bu tohumda görülüp ikinci bir tohumda kayboldu (%83.4'e karşı %83.6). `--traj-noise iid` varsayılandır çünkü hiçbir zaman daha kötü olmadı.
+    Paylaşımlı-epsilon satırı yerleşmiş bir sonuç değil, bir uyarıdır: her kareyi tek bir epsilondan türetmek modelin gürültü giderici yerine bir ters çevirme öğrenmesine izin verir ve iid ızgarası bunu yakalar (0.0967'ye karşı 0.1762); örnek kalitesindeki cezası ise 42 tohumunda görülüp bu tohumda kayboldu (%83.4'e karşı %83.6). `--traj-noise iid` varsayılandır çünkü örnek sütunlarında hiçbir zaman daha kötü olmadı.
 
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini ikiye katlar. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.767, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı altı katı azaltır. Ayrıca sabit `K*E` hesap bütçesinde, bu bütçeyi gürültü giderme adımları yerine yankı derinliğine harcamak sadakati %73.0'ten **%95.0**'e çıkarır — bunu ancak derinliği zaman olan bir mimari sorabilir.
+*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini rastlantı seviyesinden %83.6'ya çıkarır. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.791, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı sekiz katı azaltır. Ayrıca sabit `K*E` hesap bütçesinde, bu bütçeyi gürültü giderme adımları yerine yankı derinliğine harcamak sadakati %73.0'ten **%95.0**'e çıkarır — bunu ancak derinliği zaman olan bir mimari sorabilir.
 
 ---
 

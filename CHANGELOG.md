@@ -4,6 +4,17 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.3.1] — 2026-09-04
+
+### Fixed
+- **`Validator` scored every arm on a shared-epsilon grid while the default trains on iid noise, so the val column measured the wrong thing.** The grid was built with one epsilon expanded across all K frames regardless of `--traj-noise`. That is `traj_noise_shared`'s own training distribution and a foreign one for every other arm, and it inflated the reported loss of any iid run: the `cifar` checkpoint reads 0.0773 on the old grid and 0.0631 on the fixed one, against a training loss of 0.0629. The apparent val-above-train gap on every iid run was this mismatch, not overfitting. The grid is now always iid, which is the distribution that keeps the column comparable across arms — a shared-epsilon trajectory determines `x_0` from any two frames, so scoring on it credits an inversion as though it were a denoiser.
+
+  This reverses one claim. `traj_noise_shared` did **not** hold the best held-out loss; on the fixed grid it scores 0.1762 against `trajectory`'s 0.0967, which is the inversion shortcut failing exactly as the theory predicted. Every val figure in the four sweep tables, `README.md`, `README_TR.md` and `docs/LIBRARY.md` has been re-measured from the saved checkpoints. The `--sweep depth` val column reverses order as well: coarser denoising grids make each timestep a harder prediction, so `k32_e2` leads on loss while `k4_e16` still leads on conditioning fidelity at 95.0%.
+
+  Conditioning fidelity and Frechet are unaffected — they come from `measure_samples()`, which never calls `Validator` — so `RANK_KEY` orderings, the 86.0% headline, the carried-versus-wiped result and the choice of `iid` as the default all stand as measured. `--traj-noise iid` remains the default on the sample columns, which are the ones that decide.
+
+- **The example read `extra_data` as a nested dict, but `save_checkpoint` merges it into the top level.** `adopt_saved_arch` and the resume path both looked up `payload["extra_data"]["cfg"]`, which was always empty. Loading any checkpoint whose architecture differed from the CLI defaults therefore failed outright — `--mode sample --tag <an attention run>` died with `Unexpected key(s) in state_dict: "attn.q_proj.weight"` — and `--resume` always restarted the step counter at zero with `best_val` at infinity. Both now read the top level.
+
 ## [3.3.0] — 2026-08-28
 
 ### Added

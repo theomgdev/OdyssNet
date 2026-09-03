@@ -546,24 +546,24 @@ The whole reverse trajectory is a single differentiable forward pass, so `train_
 
 The answer is read off `n_out` neurons, so whatever the network emits is a **rank-`n_out` view** of a `P`-dimensional image, and the parameterisation decides whether that rank is enough.
 
-Epsilon is white noise: isotropic, full rank, incompressible. A rank-192 view of it keeps `192/784` of the variance, which pins the achievable MSE at **0.755** however long training runs — and a 573k-parameter run measured **0.767**, saturated rather than undertrained. Natural images are low rank: the same 192 directions carry all but **3.4%** of MNIST's variance.
+Epsilon is white noise: isotropic, full rank, incompressible. A rank-192 view of it keeps `192/784` of the variance, which pins the achievable MSE at **0.755** however long training runs — and a 573k-parameter run measured **0.791**, saturated rather than undertrained. Natural images are low rank: the same 192 directions carry all but **3.4%** of MNIST's variance.
 
-Measured at 700 steps, each target against its own do-nothing predictor:
+Measured at 3 minutes per arm, each target against its own do-nothing predictor:
 
 | target | val MSE / trivial | at pure noise | at nearly clean |
 |---|---|---|---|
-| **x_0** | **13.3%** | 0.237 | **0.096** |
-| v | 59.7% | 0.236 | 0.998 |
-| eps | 80.5% | 0.787 | 0.896 |
+| **x_0** | **10.2%** | 0.215 | **0.048** |
+| v | 56.3% | 0.218 | 1.001 |
+| eps | 79.2% | 0.770 | 1.001 |
 
 `v` is x_0-like at high `t` and epsilon-like at low `t`, so it inherits the rank problem over half the range. `--sweep size` carries epsilon arms at four widths, and they behave as the rank argument requires: always above the bound, monotone in `n_out`, closing on it with training, and sampling at chance throughout.
 
-| `n_out` | bound `1 - n_out/P` | measured, 1200 steps |
+| `n_out` | bound `1 - n_out/P` | measured |
 |---|---|---|
-| 96 | 0.878 | 0.900 |
-| 144 | 0.816 | 0.852 |
-| 192 | 0.755 | 0.806 (0.767 by 8.5k steps) |
-| 288 | 0.633 | 0.710 |
+| 96 | 0.878 | 0.896 (2,200 steps) |
+| 144 | 0.816 | 0.845 (2,115 steps) |
+| 192 | 0.755 | 0.791 (3,003 steps) |
+| 288 | 0.633 | 0.681 (3,643 steps) |
 
 ### Does the trajectory memory help? Measured, on MNIST
 
@@ -573,18 +573,19 @@ python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --
 python -u experiment_diffusion.py --mode train --tag attn --attn-heads 4 --minutes 20
 ```
 
-`independent` is the control: the same frames, the same targets and the same gradient budget, issued as K separate calls so the denoiser starts each frame with nothing — which is what a UNet sampler does. 512 neurons, 573k parameters, 16 frames x 4 echo, guidance 2.0, seed 42, 600 steps per arm, RTX 3060 Ti:
+`independent` is the control: the same frames, the same targets and the same gradient budget, issued as K separate calls so the denoiser starts each frame with nothing — which is what a UNet sampler does. 512 neurons, 573k parameters, 16 frames x 4 echo, guidance 2.0, seed 54321, 3 minutes per arm, RTX 3060 Ti:
 
 | arm | val MSE | conditioning fidelity | Frechet | params |
 |---|---|---|---|---|
-| 4 attention heads | 0.1575 | 71.8% | **38.97** | 901,184 |
-| **trajectory (default)** | 0.1550 | **78.4%** | 40.82 | **573,376** |
-| attention + plasticity | 0.1518 | 73.2% | 47.69 | 902,720 |
-| plasticity, temporal | 0.1564 | 70.4% | 65.79 | 574,912 |
-| shared-epsilon trajectory | **0.1351** | 54.2% | 76.85 | 573,376 |
-| `independent` (memoryless) | 0.2010 | 39.4% | 83.10 | 573,376 |
+| **trajectory (default)** | **0.0967** | **83.6%** | 19.92 | **573,376** |
+| 4 attention heads | 0.1250 | 83.0% | 30.42 | 901,184 |
+| shared-epsilon trajectory | 0.1762 | 83.4% | **18.91** | 573,376 |
+| attention + plasticity | 0.1980 | 19.6% | 169.11 | 902,720 |
+| plasticity, spatial | 0.2037 | 11.6% | 202.66 | 574,912 |
+| plasticity, temporal | 0.2059 | 10.8% | 214.90 | 574,912 |
+| `independent` (memoryless) | 0.3054 | 10.4% | 152.32 | 573,376 |
 
-**Carrying the trajectory doubles conditioning fidelity and halves the Frechet distance against a memoryless denoiser at an identical parameter count.** That is the claim this example exists to test, and it survived its control.
+**Carrying the trajectory takes conditioning fidelity from chance to 83.6% and the Frechet distance from 152.3 to 19.9 against a memoryless denoiser at an identical parameter count.** That is the claim this example exists to test, and it survived its control.
 
 The same claim, without a second training run: `--mode eval` samples one checkpoint twice, carried and wiped between denoising steps — identical weights, identical guidance, one line of difference at inference time.
 
@@ -593,9 +594,9 @@ The same claim, without a second training run: `--mode eval` samples one checkpo
 | trajectory carried | **85.6%** | **11.0** |
 | wiped each step | 58.6% | 22.7 |
 
-Two of the other rows are cautionary. The **shared-epsilon** arm holds the best held-out loss at every budget measured: one epsilon per trajectory leaves two frames enough to recover `x_0` by linear algebra, so the model can learn an inversion rather than a denoiser, and an inversion cannot follow it into sampling. Whether that costs it samples did not replicate — 54.2% conditioning fidelity against `trajectory`'s 78.4% at seed 42, but 83.4% against 83.6% at seed 54321, both at equal wall clock. `--traj-noise iid` is the default because it has never been worse, not because the gap is settled, and both columns are reported so an arm that trades one for the other stays visible.
+Two of the other rows are cautionary. The **shared-epsilon** arm derives all K frames from one epsilon, which leaves two frames enough to recover `x_0` by linear algebra, so the model can learn an inversion rather than a denoiser — and an inversion cannot follow it into sampling. Scored on the iid grid that is exactly what shows up: 0.1762 against `trajectory`'s 0.0967. Its samples did not follow — 54.2% conditioning fidelity against 78.4% at seed 42, but 83.4% against 83.6% at seed 54321, both at equal wall clock. `--traj-noise iid` is the default because it has never been worse on the sample columns, not because the gap is settled, and both are reported so an arm that trades one for the other stays visible.
 
-**Attention** leads on Frechet by 4.5% while behind on conditioning fidelity and held-out loss for 57% more parameters — on one seed at 500 samples that is not a separation, and per parameter it is a loss. It is available (`--attn-heads 4`) and is not the default. **Plasticity** is behind on every column, and it is slow: at equal wall clock the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
+**Attention** leads on Frechet by 5% at seed 42 but is behind `trajectory` on all three columns at seed 54321, for 57% more parameters — on one seed at 500 samples that is not a separation, and per parameter it is a loss. It is available (`--attn-heads 4`) and is not the default. **Plasticity** is behind on every column, and it is slow: at equal wall clock the plastic arms reach roughly 6% of the plain arm's step count and attention roughly 28%, because the retained trace grows with the step count, the batch and the neuron count together.
 
 Frechet distances here are taken in a small fixed classifier's feature space, not InceptionV3's, so they are **not FID** and are comparable only between arms of the same sweep.
 
@@ -605,12 +606,12 @@ Frechet distances here are taken in a small fixed classifier's feature space, no
 
 | arm | frames | echo | val MSE | conditioning fidelity | Frechet | steps |
 |---|---|---|---|---|---|---|
-| k32_e2 | 32 | 2 | 0.1104 | 73.0% | **13.06** | 3,593 |
-| k16_e4 | 16 | 4 | 0.1058 | 83.6% | 15.97 | 3,800 |
-| k8_e8 | 8 | 8 | 0.0986 | 88.0% | 13.96 | 3,932 |
-| **k4_e16** | **4** | **16** | 0.1001 | **95.0%** | 15.66 | 4,004 |
+| k32_e2 | 32 | 2 | **0.0860** | 73.0% | **13.06** | 3,593 |
+| k16_e4 | 16 | 4 | 0.0914 | 83.6% | 15.97 | 3,800 |
+| k8_e8 | 8 | 8 | 0.0947 | 88.0% | 13.96 | 3,932 |
+| **k4_e16** | **4** | **16** | 0.0999 | **95.0%** | 15.66 | 4,004 |
 
-**Fidelity climbs monotonically with echo depth at identical compute**, and the deepest arm samples in four denoising steps rather than thirty-two — the cheapest inference in the table by a factor of eight. Frechet stays flat across all four in no order, which is what rules out the climb being the sample distribution narrowing onto a few modes.
+**Fidelity climbs monotonically with echo depth at identical compute**, and the deepest arm samples in four denoising steps rather than thirty-two — the cheapest inference in the table by a factor of eight. Frechet stays flat across all four in no order, which is what rules out the climb being the sample distribution narrowing onto a few modes. Held-out loss runs the other way, and that is the denoising grid rather than the model: fewer frames means coarser timesteps, so each one is a harder prediction.
 
 The default stays `16 x 4`. This is one seed at equal wall clock, the step counts spread 11% in the deepest arm's favour, and the ranked table crowns `k32_e2` because `RANK_KEY` is Frechet and Frechet is the one column that does not separate here — read the fidelity column for this sweep.
 
@@ -620,10 +621,10 @@ The default stays `16 x 4`. This is one seed at equal wall clock, the step count
 
 | arm | neurons | `n_out` | params | val MSE | conditioning fidelity | Frechet |
 |---|---|---|---|---|---|---|
-| n256 | 256 | 96 | 221,152 | 0.1234 | 75.6% | 27.63 |
-| n384 | 384 | 144 | 380,880 | 0.1098 | 83.0% | 21.17 |
-| n512 | 512 | 192 | 573,376 | 0.1067 | 85.8% | 14.73 |
-| n768 | 768 | 288 | 1,056,672 | 0.1007 | **87.6%** | **11.52** |
+| n256 | 256 | 96 | 221,152 | 0.1107 | 75.6% | 27.63 |
+| n384 | 384 | 144 | 380,880 | 0.0959 | 83.0% | 21.17 |
+| n512 | 512 | 192 | 573,376 | 0.0918 | 85.8% | 14.73 |
+| n768 | 768 | 288 | 1,056,672 | **0.0866** | **87.6%** | **11.52** |
 
 Returns are still positive at a million parameters and already shallow: 4.8x the parameters of `n256` buys twelve points of fidelity. `n_out` scales with the width in this grid, so the curve mixes capacity with output rank — and the epsilon arms carried alongside it move rank alone, staying at chance fidelity whatever the width.
 

@@ -34,25 +34,26 @@ rank-`n_out` view of a P-dimensional image, and the parameterisation decides
 whether that rank is enough. Epsilon is white noise -- isotropic, full rank,
 incompressible -- so a rank-192 view of it keeps 192/784 of the variance and
 pins the achievable MSE at 0.755 however long training runs. A 573k-parameter
-run measured 0.767: saturated, not undertrained. Natural images are low rank,
+run measured 0.791: saturated, not undertrained. Natural images are low rank,
 and the same 192 directions carry all but 3.4% of MNIST's variance. Measured at
-700 steps, as a fraction of the do-nothing predictor on the same frozen grid:
+3 minutes per arm, as a fraction of the do-nothing predictor on the same frozen
+grid:
 
-    x_0     13.3%      falls 0.237 -> 0.096 from pure noise to nearly clean
-    v       59.7%      x_0-like at high t, epsilon-like at low t, so it
+    x_0     10.2%      falls 0.215 -> 0.048 from pure noise to nearly clean
+    v       56.3%      x_0-like at high t, epsilon-like at low t, so it
                        inherits the rank problem over half the range
-    eps     80.5%      flat across every timestep, at the bound
+    eps     79.2%      flat across every timestep, at the bound
 
 `--sweep size` carries epsilon arms at four widths, and they behave as the rank
 argument says they must -- always above the bound, monotone in `n_out`, and
-closing on it with training (the 192 arm reaches 0.767 by 8.5k steps). All four
+closing on it with training. All four
 sample at chance:
 
-    n_out    bound 1 - n_out/P    measured, 1200 steps
-       96                0.878                   0.900
-      144                0.816                   0.852
-      192                0.755                   0.806
-      288                0.633                   0.710
+    n_out    bound 1 - n_out/P    measured
+       96                0.878       0.896  (2,200 steps)
+      144                0.816       0.845  (2,115 steps)
+      192                0.755       0.791  (3,003 steps)
+      288                0.633       0.681  (3,643 steps)
 
 Usage
 -----
@@ -66,24 +67,26 @@ Usage
 
 What the memory is worth
 ------------------------
-Measured, not claimed. `--sweep memory` at a matched gradient budget -- 600 steps
-per arm, MNIST, seed 42, guidance 2.0, the do-nothing predictor at 0.927, and the
-Frechet distance taken in a fixed classifier's feature space:
+Measured, not claimed. `--sweep memory` at equal wall clock -- 3 minutes per arm,
+MNIST, seed 54321, guidance 2.0, and the Frechet distance taken in a fixed
+classifier's feature space:
 
     arm                    val MSE   fidelity   frechet     params
-    traj_attn               0.1575      71.8%    38.965    901,184
-    trajectory              0.1550      78.4%    40.821    573,376
-    traj_full               0.1518      73.2%    47.691    902,720
-    traj_hebb_temporal      0.1564      70.4%    65.785    574,912
-    traj_noise_shared       0.1351      54.2%    76.845    573,376
-    independent             0.2010      39.4%    83.101    573,376
+    trajectory              0.0967      83.6%    19.921    573,376
+    traj_attn               0.1250      83.0%    30.423    901,184
+    traj_noise_shared       0.1762      83.4%    18.912    573,376
+    traj_full               0.1980      19.6%   169.113    902,720
+    traj_hebb_spatial       0.2037      11.6%   202.660    574,912
+    traj_hebb_temporal      0.2059      10.8%   214.899    574,912
+    traj_hebb_both          0.2142      16.8%   149.040    576,448
+    independent             0.3054      10.4%   152.321    573,376
 
 `independent` is the control that matters: the same frames, the same targets and
 the same gradient budget, issued as K separate calls so the denoiser begins every
 frame with nothing -- which is what a UNet sampler does. Carrying the trajectory
-instead doubles conditioning fidelity and halves the Frechet distance at an
-identical parameter count. That is what this file was written to test, and it
-survived its control.
+instead takes conditioning fidelity from chance to 83.6% and the Frechet
+distance from 152.3 to 19.9 at an identical parameter count. That is what this
+file was written to test, and it survived its control.
 
 The cleanest form of the same measurement needs no second training run at all.
 `--mode eval` samples one checkpoint twice, with the carry on and with it wiped
@@ -102,19 +105,20 @@ argued.
 
 The rest is worth reading for what it costs.
 
-`traj_noise_shared` holds the best held-out loss at every budget measured. One
-epsilon per trajectory leaves two frames enough to recover x_0 by linear
-algebra, so the model can learn an inversion instead of a denoiser, and an
-inversion cannot follow it into sampling, where the frames come from its own
-predictions. That is the theory, and the sample half of it did not replicate: on
-the table above it scores 54.2% fidelity against `trajectory`'s 78.4%, while a
-second seed at equal wall clock put the two at 83.4% and 83.6%. `--traj-noise
-iid` is the default on the weaker ground that it has never been worse, not on a
-settled gap; both columns are reported so an arm that trades one for the other
-stays visible.
+`traj_noise_shared` is the arm the validation grid decides. One epsilon per
+trajectory leaves two frames enough to recover x_0 by linear algebra, so the
+model can learn an inversion instead of a denoiser, and an inversion cannot
+follow it into sampling, where the frames come from its own predictions. Scored
+on the iid grid it sits at 0.1762 against `trajectory`'s 0.0967 -- the shortcut
+does not survive contact with independent noise, which is the theory holding.
+Its samples are a different story: 83.4% fidelity and the best Frechet in the
+table on this seed, against 54.2% and 76.8 on seed 42. `--traj-noise iid` is the
+default because it has never been worse on the sample columns, which are the
+ones that decide; the loss column is reported beside them so an arm that trades
+one for the other stays visible.
 
-`traj_attn` is the one arm ahead on Frechet, by 4.5%, while behind on
-conditioning fidelity and on held-out loss for 57% more parameters. On one seed
+`traj_attn` is behind `trajectory` on all three columns here for 57% more
+parameters, and it reached only 862 steps in the same three minutes. On one seed
 at 500 samples that is not a separation, and per parameter it is a loss, so
 attention is available and is not the default. Data harder than MNIST is the
 case for `--attn-heads 4`, and that case is not measured here.
@@ -140,17 +144,19 @@ steps and the depth spent inside one are different resources, and here they are
 the same one. MNIST, seed 54321, x_0, guidance 2.0, 3 minutes per arm:
 
     arm      frames  echo   val MSE   fidelity   frechet    steps
-    k32_e2       32     2    0.1104      73.0%    13.059    3,593
-    k16_e4       16     4    0.1058      83.6%    15.968    3,800
-    k8_e8         8     8    0.0986      88.0%    13.963    3,932
-    k4_e16        4    16    0.1001      95.0%    15.657    4,004
+    k32_e2       32     2    0.0860      73.0%    13.059    3,593
+    k16_e4       16     4    0.0914      83.6%    15.968    3,800
+    k8_e8         8     8    0.0947      88.0%    13.963    3,932
+    k4_e16        4    16    0.0999      95.0%    15.657    4,004
 
 Conditioning fidelity climbs monotonically with echo depth at identical compute,
 while the Frechet distance stays flat across all four -- 13.1 to 16.0, in no
 order -- so what improves is the conditioning rather than the sample
-distribution narrowing onto a few modes. The deepest arm also samples in four
-denoising steps instead of thirty-two, which is the cheapest inference in the
-table by a factor of eight.
+distribution narrowing onto a few modes. Held-out loss runs the other way, and
+that is the denoising grid rather than the model: fewer frames means coarser
+timesteps, so each one is a harder prediction. The deepest arm also samples in
+four denoising steps instead of thirty-two, which is the cheapest inference in
+the table by a factor of eight.
 
 Two things to hold against it. The arms are equal wall clock rather than equal
 gradients, and the step counts spread 11% in the deepest arm's favour. And the
@@ -164,10 +170,10 @@ What width is worth
 `--sweep size` at the same budget, the x_0 arms:
 
     arm    neurons  n_out     params   val MSE   fidelity   frechet
-    n256       256     96    221,152    0.1234      75.6%    27.633
-    n384       384    144    380,880    0.1098      83.0%    21.165
-    n512       512    192    573,376    0.1067      85.8%    14.732
-    n768       768    288  1,056,672    0.1007      87.6%    11.523
+    n256       256     96    221,152    0.1107      75.6%    27.633
+    n384       384    144    380,880    0.0959      83.0%    21.165
+    n512       512    192    573,376    0.0918      85.8%    14.732
+    n768       768    288  1,056,672    0.0866      87.6%    11.523
 
 Returns are still positive at a million parameters and already shallow: 4.8x the
 parameters of n256 buys twelve points of fidelity. `n_out` scales with the width
@@ -360,7 +366,7 @@ class Schedule:
         Epsilon is white noise: isotropic, full rank, incompressible. A rank-192
         view of it keeps 192/784 of the variance, which pins the achievable MSE
         at 0.755 no matter how long the model trains -- and a 573k-parameter run
-        measured 0.767, within 2% of that floor. The network was saturated, not
+        measured 0.791, within 5% of that floor. The network was saturated, not
         untrained.
 
         x_0 is a natural image, and those are low rank: the same 192 directions
@@ -503,17 +509,19 @@ def trajectory_batch(x0, labels, sched, cfg, gen=None):
     closed form. That is the trajectory a perfect DDIM sampler walks, which is
     why it looks like the right choice, and it carries a risk: two frames of a
     shared epsilon trajectory determine x_0 by linear algebra, so the model can
-    learn an inversion instead of a denoiser. It wins on held-out MSE at every
-    budget measured. Whether that costs it samples did not replicate:
+    learn an inversion instead of a denoiser. Scored on the iid grid, which is
+    the one `Validator` holds for every arm, that is what it looks like: 0.1762
+    against iid's 0.0967 at equal wall clock, seed 54321. What did not replicate
+    is the sample half:
 
-        seed 42     shared val 0.0750 fid 62.8%   iid val 0.1084 fid 86.0%
-        seed 54321  shared val 0.0834 fid 83.4%   iid val 0.1087 fid 83.6%
+        seed 42     shared fid 54.2% frechet 76.845   iid fid 78.4% frechet 40.821
+        seed 54321  shared fid 83.4% frechet 18.912   iid fid 83.6% frechet 19.921
 
     Both rows are equal wall clock, so what disagrees is the seed and not the
-    budget. `iid` is the default on the weaker ground that it has never been
-    worse, not on a settled gap. `--sweep memory` reports loss and Frechet in
-    separate columns, because an arm that improves on one while worsening on the
-    other is the signature to watch for.
+    budget. `iid` is the default because it has never been worse on those two
+    columns, not on a settled gap. `--sweep memory` reports loss and Frechet
+    separately, because an arm that improves on one while worsening on the other
+    is the signature to watch for.
     """
     B, P = x0.shape
     K = cfg.frames
@@ -653,6 +661,12 @@ class Validator:
     Deterministic on purpose: the same images, the same epsilon and the same
     class dropout pattern every call, so two runs are comparable to the last
     digit and a sweep arm's number means something.
+
+    The grid is always iid, whatever `--traj-noise` trained the model. A shared
+    epsilon determines x_0 from any two frames, so a grid built that way is the
+    shared arm's own training distribution and a foreign one for every other
+    arm -- it scores an inversion as though it were a denoiser. Holding the grid
+    at iid is what makes the column comparable across arms.
     """
 
     def __init__(self, x, y, sched, cfg):
@@ -669,7 +683,7 @@ class Validator:
             labels = y[i:i + self.batch].to(cfg.device)
             B = x0.shape[0]
             t = sched.grid.unsqueeze(0).expand(B, K)
-            eps = torch.randn(B, 1, P, generator=gen).to(cfg.device).expand(B, K, P)
+            eps = torch.randn(B, K, P, generator=gen).to(cfg.device)
             x_wide = x0.unsqueeze(1).expand(B, K, P)
             cls = class_vector(labels.unsqueeze(1).expand(B, K), classes)
             self.chunks.append((
@@ -1038,7 +1052,8 @@ def adopt_saved_arch(cfg, path):
         raise SystemExit(f"\n✋ No checkpoint at {path}.\n"
                          f"   Train one first, or pass a different --tag.\n")
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    saved = (payload.get("extra_data") or {}).get("cfg") or {}
+    # save_checkpoint merges extra_data into the top level rather than nesting it.
+    saved = payload.get("cfg") or {}
     changed = {f: saved[f] for f in ARCH_FIELDS
                if f in saved and saved[f] != getattr(cfg, f)}
     for f in ("activation", "weight_init", "gates"):
@@ -1078,8 +1093,7 @@ def run_session(cfg, data, quiet=False, eval_every=200, log_every=50,
     if resume and os.path.exists(resume):
         info = load_checkpoint(model, trainer.optimizer, resume,
                                device=cfg.device, trainer=trainer)
-        extra = info.get("extra_data") or {}
-        step, best = extra.get("step", 0), extra.get("best_val", float("inf"))
+        step, best = info.get("step", 0), info.get("best_val", float("inf"))
         print(f"📂 resumed {os.path.basename(resume)} at step {step:,} "
               f"(best val {best:.4f})")
 
