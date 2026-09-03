@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **The example read `extra_data` as a nested dict, but `save_checkpoint` merges it into the top level.** `adopt_saved_arch` and the resume path both looked up `payload["extra_data"]["cfg"]`, which was always empty. Loading any checkpoint whose architecture differed from the CLI defaults therefore failed outright — `--mode sample --tag <an attention run>` died with `Unexpected key(s) in state_dict: "attn.q_proj.weight"` — and `--resume` always restarted the step counter at zero with `best_val` at infinity. Both now read the top level.
 
+- **`--lr` was silently dropped on `--resume`.** `lr` is a parameter-group key, and `torch.optim.Optimizer.load_state_dict` replaces the group dicts wholesale, so the checkpoint's rate overwrote whatever the command line asked for; `ChaosGrad.load_state_dict` only backfills keys that are *missing*, and this one never is. A resume with `--lr 1e-2` went on printing ChaosGrad's adaptive estimate and stepping at it. `run_session` now passes `cfg.lr` to `load_checkpoint`, whose `lr` parameter already existed for exactly this. Zero-config resumes pass `None` and keep the carried estimate.
+
+- **`--frames`, `--echo` and `--timesteps` were ignored on `--resume`.** `adopt_saved_arch` restored every field in `ARCH_FIELDS`, and those three sat in it despite fixing no tensor shape — they set which timesteps the grid visits and how many echo steps run between them. A resume asking for `--frames 64 --echo 8` silently trained at the checkpoint's 16x4. They move to a new `GRID_FIELDS`, which the checkpoint supplies only when the command line is quiet: name one and it is honoured, leave it unset and it follows the checkpoint rather than falling back to the dataclass default. Everything left in `ARCH_FIELDS` does fix a shape and still always comes from the checkpoint — including `attn_window`, which fixes none but decides the context the weights were trained against.
+
 ## [3.3.0] — 2026-08-28
 
 ### Added

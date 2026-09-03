@@ -1023,11 +1023,16 @@ def describe(cfg, model):
 # Checkpoints                                                                  #
 # --------------------------------------------------------------------------- #
 
-ARCH_FIELDS = ("dataset", "neurons", "n_in", "n_out", "t_embed", "frames", "echo",
-               "predict", "timesteps", "activation", "weight_init", "gates",
+ARCH_FIELDS = ("dataset", "neurons", "n_in", "n_out", "t_embed",
+               "predict", "activation", "weight_init", "gates",
                "hebb_type", "hebb_res", "attn_heads", "attn_kv_heads",
                "attn_head_dim", "attn_window", "attn_write", "attn_read",
                "attn_rope", "attn_qk_norm")
+
+# The denoising grid. None of these fixes a tensor shape -- they set how many
+# frames are visited and how long the schedule is -- so a resume may change
+# them, and they follow the checkpoint only when the command line stays quiet.
+GRID_FIELDS = ("frames", "echo", "timesteps")
 
 
 def ckpt_paths(cfg):
@@ -1046,15 +1051,22 @@ def guard_overwrite(cfg, overwrite, resume):
             f"   --overwrite  discard it and start over\n")
 
 
-def adopt_saved_arch(cfg, path):
-    """Re-adopt the architecture a checkpoint was trained with."""
+def adopt_saved_arch(cfg, path, grid_from_cli=()):
+    """Re-adopt the architecture a checkpoint was trained with.
+
+    `ARCH_FIELDS` fixes tensor shapes, so those always come from the
+    checkpoint -- the state dict would not load otherwise. `GRID_FIELDS` does
+    not, and a field the command line named explicitly stays as the caller
+    asked, so a resume can move the denoising grid without retraining.
+    """
     if not os.path.exists(path):
         raise SystemExit(f"\n✋ No checkpoint at {path}.\n"
                          f"   Train one first, or pass a different --tag.\n")
     payload = torch.load(path, map_location="cpu", weights_only=False)
     # save_checkpoint merges extra_data into the top level rather than nesting it.
     saved = payload.get("cfg") or {}
-    changed = {f: saved[f] for f in ARCH_FIELDS
+    adopt = ARCH_FIELDS + tuple(f for f in GRID_FIELDS if f not in grid_from_cli)
+    changed = {f: saved[f] for f in adopt
                if f in saved and saved[f] != getattr(cfg, f)}
     for f in ("activation", "weight_init", "gates"):
         if f in changed:
@@ -1091,8 +1103,11 @@ def run_session(cfg, data, quiet=False, eval_every=200, log_every=50,
 
     step, best = 0, float("inf")
     if resume and os.path.exists(resume):
+        # `lr` is a param-group key, so loading the optimizer state would
+        # otherwise put the checkpoint's rate back over the one asked for.
+        # `cfg.lr` is None under zero-config, which leaves the estimate alone.
         info = load_checkpoint(model, trainer.optimizer, resume,
-                               device=cfg.device, trainer=trainer)
+                               device=cfg.device, trainer=trainer, lr=cfg.lr)
         step, best = info.get("step", 0), info.get("best_val", float("inf"))
         print(f"📂 resumed {os.path.basename(resume)} at step {step:,} "
               f"(best val {best:.4f})")
@@ -1450,12 +1465,15 @@ def parse_args():
     g.add_argument("--val-images", type=int, default=d.val_images)
 
     g = p.add_argument_group("diffusion")
-    g.add_argument("--timesteps", type=int, default=d.timesteps,
-                   help="T, the continuous schedule (default: %(default)s)")
-    g.add_argument("--frames", type=int, default=d.frames,
-                   help="K, denoising steps visited (default: %(default)s)")
-    g.add_argument("--echo", type=int, default=d.echo,
-                   help="E, echo steps per denoising step (default: %(default)s)")
+    # These three carry no tensor shape, so a resume is free to change them.
+    # Left unset they follow the checkpoint, which is why the default is a
+    # sentinel rather than the value.
+    g.add_argument("--timesteps", type=int, default=None,
+                   help=f"T, the continuous schedule (default: {d.timesteps})")
+    g.add_argument("--frames", type=int, default=None,
+                   help=f"K, denoising steps visited (default: {d.frames})")
+    g.add_argument("--echo", type=int, default=None,
+                   help=f"E, echo steps per denoising step (default: {d.echo})")
     g.add_argument("--predict", default=d.predict, choices=["x0", "eps", "v"])
     g.add_argument("--carry", default=d.carry,
                    choices=["trajectory", "independent"],
@@ -1533,6 +1551,13 @@ def parse_args():
     if a.resume_best:
         a.resume = True
 
+    # Which grid fields the command line actually named, before the sentinels
+    # are resolved -- `adopt_saved_arch` leaves exactly these alone.
+    a.grid_from_cli = {f for f in GRID_FIELDS if getattr(a, f) is not None}
+    for f in GRID_FIELDS:
+        if getattr(a, f) is None:
+            setattr(a, f, getattr(d, f))
+
     # Everything that can be rejected is rejected here, before the images are
     # loaded and before CUDA is initialised.
     for name in ("neurons", "n_in", "n_out", "frames", "echo", "timesteps",
@@ -1609,10 +1634,12 @@ def main():
 
     latest, best = ckpt_paths(cfg)
     if a.mode in ("sample", "eval"):
-        cfg = adopt_saved_arch(cfg, best if os.path.exists(best) else latest)
+        cfg = adopt_saved_arch(cfg, best if os.path.exists(best) else latest,
+                               a.grid_from_cli)
     elif a.mode == "train":
         if a.resume:
-            cfg = adopt_saved_arch(cfg, best if a.resume_best else latest)
+            cfg = adopt_saved_arch(cfg, best if a.resume_best else latest,
+                                   a.grid_from_cli)
         else:
             guard_overwrite(cfg, a.overwrite, a.resume)
 
