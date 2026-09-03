@@ -569,7 +569,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     *   **Strategy:** 16 denoising frames x 4 echo steps = 64 thinking steps, run as **one differentiable forward pass** — so hidden state, attention cache and plastic trace all cross every denoising step.
     *   **No VAE:** `vocab_mode='continuous'` makes the model's own projections the encoder and decoder. Every learned parameter is inside OdyssNet.
     *   **Total Parameters:** **573,376** — against Stable Diffusion's ~860M-parameter UNet.
-*   **Result:** **86.0% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti, val x0-MSE 0.0800 — 8.6% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 84.6%–87.4% across sampling batch sizes 10 to 100.
+*   **Result:** **91.2% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti, val x0-MSE 0.0800 — 8.6% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 90.8%–92.8% across sampling batch sizes 10 to 100.
     <details>
     <summary>See Generated Images (10 samples per class)</summary>
 

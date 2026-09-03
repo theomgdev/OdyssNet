@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [3.3.1] — 2026-09-04
 
+### Changed
+- **The diffusion example's default guidance scale is 3.0, measured up from 2.0.** Scored with `--mode sample` over 500 images on the MNIST `base` checkpoint, 3.0 leads 2.0 on both sample columns at all three seeds tried — 86.0% to 91.2% at seed 42, 87.4% to 93.0% at 123, 84.8% to 91.8% at 54321, with the Frechet distance improving alongside. Past 3.0 the two columns separate: 5.0 reaches 94.0% fidelity while the Frechet distance turns back to 10.9, which is guidance buying class-purity with variety, so the default stops where both still agree. `--mode eval --tag base` consequently reads 91.2% rather than 86.0%, batch sensitivity 90.8–92.8%, and carried-versus-wiped 91.4% against 53.6% — a wider gap than before, because guidance amplifies the memoryless arm's error too. The sweep tables are unchanged and still say they were measured at guidance 2.0. `--eta` stays at 0.0: it helped CIFAR at cfg 5 and hurt it at cfg 3, and hurt MNIST at two seeds of three.
+
 ### Fixed
 - **`Validator` scored every arm on a shared-epsilon grid while the default trains on iid noise, so the val column measured the wrong thing.** The grid was built with one epsilon expanded across all K frames regardless of `--traj-noise`. That is `traj_noise_shared`'s own training distribution and a foreign one for every other arm, and it inflated the reported loss of any iid run: the `cifar` checkpoint reads 0.0773 on the old grid and 0.0631 on the fixed one, against a training loss of 0.0629. The apparent val-above-train gap on every iid run was this mismatch, not overfitting. The grid is now always iid, which is the distribution that keeps the column comparable across arms — a shared-epsilon trajectory determines `x_0` from any two frames, so scoring on it credits an inversion as though it were a denoiser.
 

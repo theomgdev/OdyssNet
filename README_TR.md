@@ -569,7 +569,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     *   **Strateji:** 16 difüzyon karesi × 4 yankı adımı = 64 düşünme adımı, **tek türevlenebilir ileri geçiş** olarak — böylece gizli durum, attention önbelleği ve plastik iz her difüzyon adımını aşar.
     *   **VAE yok:** `vocab_mode='continuous'` ile modelin kendi projeksiyonları kodlayıcı ve kod çözücü olur. Öğrenilen her parametre OdyssNet'in içindedir.
     *   **Toplam Parametre:** **573,376** — Stable Diffusion'ın ~860M parametreli UNet'ine karşı.
-*   **Sonuç:** RTX 3060 Ti'de 15 dakikada, `--mode eval` ile yeniden puanlanan **%86.0 koşullama sadakati**, doğrulama x₀-MSE 0.0800 — hiçbir şey yapmayan tahmin edicinin %8.6'sı. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %84.6–%87.4.
+*   **Sonuç:** RTX 3060 Ti'de 15 dakikada, `--mode eval` ile yeniden puanlanan **%91.2 koşullama sadakati**, doğrulama x₀-MSE 0.0800 — hiçbir şey yapmayan tahmin edicinin %8.6'sı. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %90.8–%92.8.
     <details>
     <summary>Üretilmiş Görselleri Gör (sınıf başına 10 örnek)</summary>
 

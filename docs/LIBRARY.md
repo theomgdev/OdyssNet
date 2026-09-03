@@ -591,8 +591,8 @@ The same claim, without a second training run: `--mode eval` samples one checkpo
 
 | same checkpoint, sampling only | conditioning fidelity | Frechet |
 |---|---|---|
-| trajectory carried | **85.6%** | **11.0** |
-| wiped each step | 58.6% | 22.7 |
+| trajectory carried | **91.4%** | **9.8** |
+| wiped each step | 53.6% | 40.8 |
 
 Two of the other rows are cautionary. The **shared-epsilon** arm derives all K frames from one epsilon, which leaves two frames enough to recover `x_0` by linear algebra, so the model can learn an inversion rather than a denoiser — and an inversion cannot follow it into sampling. Scored on the iid grid that is exactly what shows up: 0.1762 against `trajectory`'s 0.0967. Its samples did not follow — 54.2% conditioning fidelity against 78.4% at seed 42, but 83.4% against 83.6% at seed 54321, both at equal wall clock. `--traj-noise iid` is the default because it has never been worse on the sample columns, not because the gap is settled, and both are reported so an arm that trades one for the other stays visible.
 

@@ -62,7 +62,7 @@ Usage
     python -u experiment_diffusion.py --mode sweep --sweep memory --minutes 4
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
-    python -u experiment_diffusion.py --mode sample --tag base --cfg 2.0
+    python -u experiment_diffusion.py --mode sample --tag base --cfg 3.0
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
 What the memory is worth
@@ -93,13 +93,13 @@ The cleanest form of the same measurement needs no second training run at all.
 between denoising steps -- identical weights, identical guidance, one line of
 difference at inference:
 
-    carried            fidelity 85.6%   frechet 11.0
-    wiped each step    fidelity 58.6%   frechet 22.7
+    carried            fidelity 91.4%   frechet  9.8
+    wiped each step    fidelity 53.6%   frechet 40.8
 
 That run also reports sampling-batch sensitivity, because the plastic buffer is
 a batch mean and a batch generated together would share one memory. With
 plasticity off, which is the default, there is nothing to share and fidelity
-holds between 84.6% and 87.4% from batch 10 to batch 100. Turn `--hebb` on and
+holds between 90.8% and 92.8% from batch 10 to batch 100. Turn `--hebb` on and
 the question becomes live again, which is why the probe is printed rather than
 argued.
 
@@ -279,7 +279,10 @@ class Cfg:
     # sampling
     sampler: str = "ddim"           # ddim | ddpm
     eta: float = 0.0
-    cfg_scale: float = 2.0
+    # 3.0 rather than 2.0: it leads on both sample columns at every seed and on
+    # both datasets measured. Past it fidelity still climbs while the Frechet
+    # distance turns, which is guidance trading variety for class-purity.
+    cfg_scale: float = 3.0
     sample_batch: int = 64
 
     # run control
@@ -1349,9 +1352,11 @@ def run_smoke(cfg, data):
 
     # 3. A rollout produces finite images, guided and unguided, with and
     #    without the trajectory memory.
+    # The default is guided, so the arm that differs is the unguided one --
+    # `cfg_scale=1.0` takes the branch where the conditional pass is the answer.
     for label, over, carry in (("ddim", {}, True), ("ddim no-carry", {}, False),
                                ("ddpm", {"sampler": "ddpm"}, True),
-                               ("cfg", {"cfg_scale": 3.0}, True)):
+                               ("unguided", {"cfg_scale": 1.0}, True)):
         arm = replace(base, **over)
         imgs = sample(model, sched, arm, torch.arange(10, device=arm.device))
         check(f"samples ({label})",
