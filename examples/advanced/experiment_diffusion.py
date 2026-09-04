@@ -788,6 +788,15 @@ def build(cfg):
         vocab_mode="continuous",
     )
     if cfg.compile:
+        # Dynamo specialises `for t in range(steps)` on the integer, so a
+        # k-range of width W compiles W graphs. The default recompile_limit
+        # is 8; past it every new K falls back to eager. Observed at
+        # `--k-range 12,20` (9 values) as a 272k -> 95k img/s collapse once
+        # the 9th cadence appeared.
+        if cfg.k_range:
+            n = cfg.k_range[1] - cfg.k_range[0] + 1
+            torch._dynamo.config.recompile_limit = max(
+                torch._dynamo.config.recompile_limit, n + 4)
         model.forward = torch.compile(model.forward)
 
     trainer = OdyssNetTrainer(model, lr=cfg.lr, device=cfg.device)
@@ -1355,7 +1364,9 @@ def describe(cfg, model, training=True):
         print(f"   tag {cfg.tag} | seed {cfg.seed} | {budget}"
               + (f" | {cfg.train_images:,} train images"
                  if cfg.train_images > 0 else "")
-              + (" | compile" if cfg.compile else "")
+              + (f" | compile ({cfg.k_range[1] - cfg.k_range[0] + 1} K-graphs)"
+                 if cfg.compile and cfg.k_range else
+                 " | compile" if cfg.compile else "")
               + (" | grad-ckpt" if cfg.grad_ckpt else ""))
     memory_advisory(cfg, model)
 
@@ -1673,7 +1684,9 @@ def run_flex(cfg, data, model, counts, count):
     print(f"\n   fidelity spans {max(fid) - min(fid):.1f} points "
           f"({min(fid):.1f} at K={rows[fid.index(min(fid))]['frames']} to "
           f"{max(fid):.1f} at K={rows[fid.index(max(fid))]['frames']})")
-    path = os.path.join(CKPT_DIR, f"flex_diffusion_{cfg.tag}.json")
+    path = os.path.join(
+        CKPT_DIR,
+        f"flex_diffusion_{cfg.tag}_e{cfg.echo}_cfg{cfg.cfg_scale:g}_{cfg.sampler}.json")
     os.makedirs(CKPT_DIR, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump({"tag": cfg.tag, "dataset": cfg.dataset, "echo": cfg.echo,
@@ -2160,9 +2173,6 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision("high")
 
-    print("🚀 OdyssNet-Diffusion — the denoiser remembers its own trajectory")
-    print(f"   mode {a.mode} | {cfg.dataset} | device {cfg.device} | seed {cfg.seed}")
-
     latest, best = ckpt_paths(cfg)
     if a.mode in ("sample", "eval", "bench", "flex"):
         cfg = adopt_saved_arch(cfg, best if os.path.exists(best) else latest,
@@ -2173,6 +2183,9 @@ def main():
                                    a.grid_from_cli)
         else:
             guard_overwrite(cfg, a.overwrite, a.resume)
+
+    print("🚀 OdyssNet-Diffusion — the denoiser remembers its own trajectory")
+    print(f"   mode {a.mode} | {cfg.dataset} | device {cfg.device} | seed {cfg.seed}")
 
     print(f"🔤 loading {cfg.dataset} ...", flush=True)
     xtr, ytr, xva, yva = load_images(cfg)
