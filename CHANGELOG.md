@@ -4,6 +4,24 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.4.0] — 2026-09-04
+
+### Added
+- **The diffusion example's step count can become a dial the caller turns.** Every other diffusion tool lets you pick the number of denoising steps at sampling time; this one could not, because the training grid is the sampling grid and the weights were fitted to a single cadence. Measured on the `base` checkpoint, conditioning fidelity falls monotonically as K rises — 97.2% at K=6 down to 68.8% at K=64 on MNIST, and 77.6% to 32.6% at K=32 on CIFAR-10 — while the Frechet distance is best near the trained grid. The step count was part of the architecture rather than a parameter.
+
+  Two flags, kept separate so a result is attributable to one of them. `--k-range LO,HI` draws K per batch over a random monotone grid, widening the distribution of cadences the weights ever see. `--cadence` widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it, which a frame cannot otherwise infer before it has seen two of them — by which point its first prediction is already made. Because it widens the input it fixes a tensor shape, so it lives in `ARCH_FIELDS`; existing checkpoints are unaffected and `base` still samples 91.2% at K=16.
+
+  `--mode flex` scores one checkpoint across step counts, and the `flexk` sweep trains the four arms against a fixed-grid control. MNIST, 6 minutes per arm at equal wall clock, echo 2, fidelity at K=4/16/64 with the span across nine step counts:
+
+      fixed         98.4  88.6  55.8    span 42.8
+      rand_k        97.4  92.2  82.6    span 14.8
+      cadence       99.2  93.0  68.0    span 31.2
+      rand_cadence  99.8  94.8  83.4    span 16.4
+
+  The span is the result, and the two mechanisms turn out to do different jobs. Randomising K is what buys flexibility: it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. Cadence lifts fidelity at every K instead, most where the walk is short, and pays for it in the Frechet distance everywhere — conditioning bought with sample distribution — at about a third of the step count for the same wall clock. Neither is on by default; the fixed-grid behaviour and every published figure are unchanged.
+
+  The val MSE column disagrees with this table, ranking `fixed` first at 0.0871. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the same grid-choice trap that inverted the memory sweep in 3.3.1. The sample columns decide.
+
 ## [3.3.1] — 2026-09-04
 
 ### Added

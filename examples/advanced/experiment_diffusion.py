@@ -63,6 +63,8 @@ Usage
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
     python -u experiment_diffusion.py --mode sample --tag base --cfg 3.0
+    python -u experiment_diffusion.py --mode train --k-range 12,20 --cadence
+    python -u experiment_diffusion.py --mode flex --tag base
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
 What the memory is worth
@@ -180,6 +182,41 @@ parameters of n256 buys twelve points of fidelity. `n_out` scales with the width
 in this grid, so the curve mixes capacity with output rank -- which is the pair
 the epsilon arms above separate, since those move only rank and stay at chance
 whatever the width.
+
+Making the step count a dial
+----------------------------
+The training grid is the sampling grid, so the weights are fitted to one
+cadence and every other K asks for a walk they never saw. Measured on `base`,
+that costs more than it looks: conditioning fidelity falls monotonically from
+97.2% at K=6 to 68.8% at K=64 on MNIST, and 77.6% to 32.6% at K=32 on CIFAR-10,
+while the Frechet distance is best near the trained grid. Elsewhere K is a dial
+the caller turns; here it was part of the architecture.
+
+`--k-range LO,HI` draws K per batch over a random monotone grid, so the weights
+see many cadences instead of one. `--cadence` gives each frame the log-sigma
+stride it is about to take and how far along the walk it is -- a frame cannot
+infer its own stride before it has seen two of them, and by then the first
+prediction is already made. They are separate flags because they turn out to do
+separate things. MNIST, 6 minutes per arm at equal wall clock, echo 2, scored
+across nine step counts:
+
+    arm            K=4    K=16    K=64    span    frechet at K=64
+    fixed         98.4    88.6    55.8    42.8             15.727
+    rand_k        97.4    92.2    82.6    14.8             10.302
+    cadence       99.2    93.0    68.0    31.2             14.382
+    rand_cadence  99.8    94.8    83.4    16.4             14.710
+
+The span is the result. Randomising K cuts it from 42.8 points to 14.8 and
+holds the Frechet distance flat from K=12 to K=64, which is the dial working.
+Cadence does something else: it lifts fidelity at every K, most of all where the
+walk is short, and it pays for that in the Frechet distance everywhere -- so it
+buys conditioning and sells sample distribution. It also costs about a third of
+the step count at equal wall clock.
+
+Read the val MSE column against this table and it disagrees, ranking `fixed`
+first at 0.0871. It is scored on the fixed K=16 grid, which is `fixed`'s own
+training distribution and one cadence out of many for the others. The sample
+columns decide; the loss column is the fixed-K probe beside them.
 
 Which sampler, and where the stops go
 -------------------------------------

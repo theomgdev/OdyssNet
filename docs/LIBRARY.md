@@ -650,6 +650,25 @@ Two results run against expectation. **The second-order solver is behind the fir
 
 The default is `ddim` with `uniform` placement, which is what every figure above was measured with.
 
+### The step count as a dial
+
+The training grid is the sampling grid, so the weights are fitted to one cadence and every other K asks them to walk a schedule they never saw. On `base`, fidelity falls monotonically from 97.2% at K=6 to 68.8% at K=64 (MNIST) and 77.6% to 32.6% at K=32 (CIFAR-10), while the Frechet distance is best near the trained grid. Elsewhere the step count is a parameter; here it was part of the architecture.
+
+Two flags address it from different sides. `--k-range LO,HI` draws K per batch over a random monotone grid, so the weights meet many cadences. `--cadence` widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it — a frame cannot infer its own stride until it has seen two of them, by which time the first prediction is made. Widening the input fixes a tensor shape, so `cadence` sits in `ARCH_FIELDS`.
+
+`--mode flex` scores one checkpoint across step counts; `--sweep flexk` trains the arms against a fixed-grid control. MNIST, 6 minutes per arm at equal wall clock, echo 2, 500 samples:
+
+| arm | K=4 | K=16 | K=64 | span | Frechet at K=64 |
+|---|---|---|---|---|---|
+| fixed | 98.4% | 88.6% | 55.8% | 42.8 | 15.727 |
+| rand_k | 97.4% | 92.2% | 82.6% | **14.8** | **10.302** |
+| cadence | 99.2% | 93.0% | 68.0% | 31.2 | 14.382 |
+| rand_cadence | **99.8%** | **94.8%** | **83.4%** | 16.4 | 14.710 |
+
+The span is the result, and the two mechanisms do different jobs. **Randomising K is what buys flexibility** — it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. **Cadence lifts fidelity at every K instead**, most where the walk is short, and pays for it in the Frechet distance everywhere: conditioning bought with sample distribution, at about a third of the step count for the same wall clock.
+
+The val MSE column ranks `fixed` first at 0.0871 and disagrees with all of this. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the sample columns decide. Neither flag is on by default.
+
 ---
 
 ## Advanced Capabilities
