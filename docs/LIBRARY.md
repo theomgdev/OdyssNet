@@ -628,6 +628,28 @@ The default stays `16 x 4`. This is one seed at equal wall clock, the step count
 
 Returns are still positive at a million parameters and already shallow: 4.8x the parameters of `n256` buys twelve points of fidelity. `n_out` scales with the width in this grid, so the curve mixes capacity with output rank — and the epsilon arms carried alongside it move rank alone, staying at chance fidelity whatever the width.
 
+### Samplers
+
+`--sampler` offers `ddim`, `ddpm`, `euler`, `euler_a` and `dpmpp_2m`; `--sigma-schedule` picks `uniform` or `karras` on a separate axis, so "DPM++ 2M Karras" is `--sampler dpmpp_2m --sigma-schedule karras`.
+
+Every one of them calls the model exactly once per denoising step. That is a constraint the architecture imposes: a multistage solver evaluates the denoiser twice within one step, and a second call would advance the hidden state, the KV cache and the plastic trace a second time. Multistep solvers reuse their own previous output instead, so they compose with a stateful denoiser; multistage ones do not.
+
+`--mode bench` scores a trained checkpoint across the whole grid over several seeds and trains nothing, which is what separates it from `--sweep` — the sampler is chosen after the weights exist. MNIST `base`, 500 samples, mean of seeds 42/123/54321, cfg 3.0, eta 0:
+
+| sampler | uniform fidelity | uniform Frechet | karras fidelity | karras Frechet |
+|---|---|---|---|---|
+| ddim | 92.3% | 9.522 | 57.1% | 19.396 |
+| ddpm | **92.6%** | 10.304 | **69.9%** | 18.424 |
+| euler | 92.1% | 9.522 | 57.1% | 19.396 |
+| euler_a | 92.5% | **9.182** | 56.5% | 20.260 |
+| dpmpp_2m | 90.7% | 9.517 | 54.9% | **18.853** |
+
+`euler` and `ddim` agree to three decimals because at eta=0 they integrate the same probability-flow ODE, one written in `alpha_bar` and one in `sigma` — a check on the arithmetic rather than a result.
+
+Two results run against expectation. **The second-order solver is behind the first-order ones**, by 1.6 points of fidelity on MNIST and 2.5 on CIFAR-10. `dpmpp_2m` extrapolates through the previous step's `x_0` on the assumption that the denoiser is a pure function of `(x_t, t)`; this denoiser carries its own history, so the solver's history is a second memory resting on an assumption the architecture breaks. **And `karras` loses by 20 to 50 points** on both datasets — the placement is the standard one, but it moves the stops onto timesteps the model never trained on, and here the training grid *is* the sampling grid. Both stay available: the first is a genuine finding about stateful denoisers, and the second should behave normally once a model is trained across the full schedule rather than a fixed grid.
+
+The default is `ddim` with `uniform` placement, which is what every figure above was measured with.
+
 ---
 
 ## Advanced Capabilities

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [3.3.1] — 2026-09-04
 
+### Added
+- **Three more samplers in the diffusion example, and the stop placement as its own axis.** `--sampler` gains `euler`, `euler_a` and `dpmpp_2m` beside `ddim` and `ddpm`, and `--sigma-schedule` selects `uniform` or `karras` independently, so "DPM++ 2M Karras" is the two flags together the way the tools that popularised it keep them apart. Every sampler calls the model exactly once per denoising step, which is the constraint this architecture imposes rather than a simplification: a multistage solver evaluates the denoiser twice inside one step, and here a second call would advance the recurrent state a second time. Multistep solvers, whose history is their own previous output, compose with it cleanly.
+
+  `--mode bench` scores a trained checkpoint across every sampler and placement over several seeds without training anything, which `--mode sweep` cannot do without re-training an arm per sampler for a choice made after the weights exist.
+
+  Measured on MNIST `base`, 500 samples, mean of seeds 42/123/54321, cfg 3.0: `euler` reproduces `ddim` to three decimals (9.522 Frechet either way), which is the arithmetic checking itself — at eta=0 both integrate the same probability-flow ODE in different coordinates. Two findings against expectation. The second-order `dpmpp_2m` is *behind* the first-order solvers, by 1.6 points of fidelity on MNIST and 2.5 on CIFAR-10, because its correction assumes the denoiser is a pure function of `(x_t, t)` and this one carries its own history — the solver's memory is a second one built on an assumption the architecture breaks. And `karras` loses by 20 to 50 points on both datasets, because it moves the stops onto timesteps a model trained on its own sampling grid has never seen. Both axes are kept and documented rather than hidden: the first is a real result about stateful denoisers, and the second should behave normally on a model trained across the full schedule.
+
+  The default is unchanged at `ddim`/`uniform`, so every published figure stands.
+
 ### Changed
 - **The diffusion example's default guidance scale is 3.0, measured up from 2.0.** Scored with `--mode sample` over 500 images on the MNIST `base` checkpoint, 3.0 leads 2.0 on both sample columns at all three seeds tried — 86.0% to 91.2% at seed 42, 87.4% to 93.0% at 123, 84.8% to 91.8% at 54321, with the Frechet distance improving alongside. Past 3.0 the two columns separate: 5.0 reaches 94.0% fidelity while the Frechet distance turns back to 10.9, which is guidance buying class-purity with variety, so the default stops where both still agree. `--mode eval --tag base` consequently reads 91.2% rather than 86.0%, batch sensitivity 90.8–92.8%, and carried-versus-wiped 91.4% against 53.6% — a wider gap than before, because guidance amplifies the memoryless arm's error too. The sweep tables are unchanged and still say they were measured at guidance 2.0. `--eta` stays at 0.0: it helped CIFAR at cfg 5 and hurt it at cfg 3, and hurt MNIST at two seeds of three.
 

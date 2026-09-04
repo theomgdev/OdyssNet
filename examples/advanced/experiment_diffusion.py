@@ -180,6 +180,43 @@ parameters of n256 buys twelve points of fidelity. `n_out` scales with the width
 in this grid, so the curve mixes capacity with output rank -- which is the pair
 the epsilon arms above separate, since those move only rank and stay at chance
 whatever the width.
+
+Which sampler, and where the stops go
+-------------------------------------
+`--sampler` and `--sigma-schedule` are separate axes, so "DPM++ 2M Karras" is
+`--sampler dpmpp_2m --sigma-schedule karras`. Every sampler here calls the model
+exactly once per denoising step, which is not a coincidence: a second call
+inside one step would advance the recurrent state twice, and the state is the
+thing this file exists to test. That rules out the multistage solvers and keeps
+the multistep ones, whose history is their own previous output.
+
+`--mode bench` scores one checkpoint across the grid without training anything.
+MNIST `base`, 500 samples, mean over seeds 42/123/54321, cfg 3.0, eta 0:
+
+    sampler     uniform fid   uniform fre   karras fid   karras fre
+    ddim              92.3         9.522         57.1       19.396
+    ddpm              92.6        10.304         69.9       18.424
+    euler             92.1         9.522         57.1       19.396
+    euler_a           92.5         9.182         56.5       20.260
+    dpmpp_2m          90.7         9.517         54.9       18.853
+
+`euler` and `ddim` agree to three decimals, which is the arithmetic checking
+itself: at eta=0 both integrate the same probability-flow ODE, one written in
+alpha_bar and one in sigma.
+
+Two results worth keeping. The second-order solver is *behind* the first-order
+ones -- `dpmpp_2m` trails `ddim` by 1.6 points of fidelity on MNIST and 2.5 on
+CIFAR-10. Its correction extrapolates through the previous step's `x_0` on the
+assumption that the denoiser is a pure function of `(x_t, t)`, and here it is
+not: the model already carries its own history, so the solver's history is a
+second, redundant memory built on an assumption the architecture breaks.
+
+And `karras` loses everywhere, by 20 to 50 points. The placement is not wrong --
+it is the standard one -- but it moves the stops onto timesteps the model never
+trained on, and this file trains on the grid it samples. That is a property of
+the design rather than a bug in the placement, which is why the axis is exposed
+rather than hidden: on a model trained over the full schedule it should behave
+as it does elsewhere.
 """
 
 import sys
@@ -277,7 +314,8 @@ class Cfg:
     compile: bool = False
 
     # sampling
-    sampler: str = "ddim"           # ddim | ddpm
+    sampler: str = "ddim"           # see SAMPLERS
+    sigma_schedule: str = "uniform"  # uniform | karras
     eta: float = 0.0
     # 3.0 rather than 2.0: it leads on both sample columns at every seed and on
     # both datasets measured. Past it fidelity still climbs while the Frechet
@@ -344,9 +382,56 @@ class Schedule:
 
         # The visited grid, noisiest first: t_0 > t_1 > ... > t_{K-1}, and a
         # trailing -1 standing for the clean image the last step lands on.
-        grid = torch.linspace(self.T - 1, 0, self.K, device=device).round().long()
+        grid = self._place(cfg.sigma_schedule, device)
         self.grid = grid
         self.prev = torch.cat([grid[1:], torch.tensor([-1], device=device)])
+
+    def _place(self, placement, device):
+        """Which K of the T timesteps the sampler stops at.
+
+        `uniform` strides the timestep axis, which is what the training grid
+        walks -- so it is the one that keeps training and sampling on the same
+        stops. `karras` strides sigma^(1/rho) instead (Karras et al. 2022),
+        spending more of the budget at low noise where the image is decided.
+        It samples timesteps the model was never trained on, which is a real
+        cost here and not on a UNet: read `--sigma-schedule` before using it.
+        """
+        if placement == "uniform":
+            return torch.linspace(self.T - 1, 0, self.K, device=device).round().long()
+
+        rho = 7.0
+        sig = self.sigma_of_index(torch.arange(self.T, device=device)).double()
+        # The top of the schedule is the alpha_bar clamp rather than a real
+        # noise level -- sigma(T-1) is ~3e4 against ~6e2 one step below -- so
+        # the ramp starts from the highest timestep the uniform grid would
+        # visit second. Anchored at the clamp, every interior stop collapses.
+        hi = sig[max(self.T - 2, 0)]
+        lo = sig[0]
+        ramp = torch.linspace(0, 1, self.K, dtype=torch.float64, device=device)
+        want = (hi ** (1 / rho) + ramp * (lo ** (1 / rho) - hi ** (1 / rho))) ** rho
+        # sigma increases with the index, and `want` runs high to low.
+        idx = torch.searchsorted(sig.contiguous(), want.flip(0).contiguous())
+        idx = idx.clamp(max=self.T - 1).flip(0)
+        # Keep the first stop at the noisiest timestep: sampling starts from
+        # pure noise whichever placement is chosen.
+        idx[0] = self.T - 1
+        return idx.long()
+
+    def sigma_of_index(self, t):
+        """sigma = sqrt(1-ab)/sqrt(ab) at integer timesteps, before any grid."""
+        ab = self.alpha_bar[t.clamp(min=0)]
+        return ((1.0 - ab) / ab.clamp(min=1e-12)).sqrt()
+
+    def sigma(self, t):
+        """sigma at grid timesteps, with sigma(-1) = 0 for the clean end.
+
+        The variance-preserving `alpha_bar` and the variance-exploding `sigma`
+        are the same schedule in different coordinates; the samplers below are
+        written in sigma because that is the space their published forms use.
+        """
+        ab = self.ab(t)
+        return torch.where(t < 0, torch.zeros_like(ab),
+                           ((1.0 - ab) / ab.clamp(min=1e-12)).sqrt())
 
     def ab(self, t):
         """alpha_bar at integer timesteps, with alpha_bar(-1) = 1 (clean)."""
@@ -746,6 +831,95 @@ class Carrier:
         return out
 
 
+def _step_ddim(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg, last, mem):
+    sigma = cfg.eta * ((1 - ab_prev) / (1 - ab)).sqrt() * (1 - ab / ab_prev).sqrt()
+    sigma = torch.nan_to_num(sigma, nan=0.0)
+    x = ab_prev.sqrt() * x0 + (1 - ab_prev - sigma ** 2).clamp(min=0).sqrt() * eps
+    if cfg.eta > 0 and not last:
+        x = x + sigma * torch.randn_like(x)
+    return x
+
+
+def _step_ddpm(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg, last, mem):
+    alpha = (ab / ab_prev).clamp(max=1.0)
+    beta = 1.0 - alpha
+    x = (x - beta / (1 - ab).clamp(min=1e-8).sqrt() * eps) / alpha.sqrt()
+    if not last:
+        var = beta * (1 - ab_prev) / (1 - ab).clamp(min=1e-8)
+        x = x + var.clamp(min=0).sqrt() * torch.randn_like(x)
+    return x
+
+
+def _to_ve(x, ab):
+    """The variance-exploding view of x_t, which is where the sigma samplers work."""
+    return x / ab.sqrt().clamp(min=1e-8)
+
+
+def _step_euler(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg, last, mem):
+    """First-order ODE step. d = (x - x0)/sigma is the derivative at this point."""
+    x_ve = _to_ve(x, ab)
+    d = (x_ve - x0) / sig.clamp(min=1e-8)
+    x_ve = x_ve + (sig_prev - sig) * d
+    return x_ve * ab_prev.sqrt()
+
+
+def _step_euler_a(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg, last, mem):
+    """Ancestral Euler: step to a lower sigma than asked, put the rest back as noise.
+
+    `eta` scales how much of the available variance is resampled rather than
+    integrated; at eta=0 this is exactly `_step_euler`.
+    """
+    x_ve = _to_ve(x, ab)
+    s2, s2p = sig ** 2, sig_prev ** 2
+    up = cfg.eta * (s2p * (s2 - s2p).clamp(min=0) / s2.clamp(min=1e-12)).clamp(min=0).sqrt()
+    down = (s2p - up ** 2).clamp(min=0).sqrt()
+    d = (x_ve - x0) / sig.clamp(min=1e-8)
+    x_ve = x_ve + (down - sig) * d
+    if not last:
+        x_ve = x_ve + up * torch.randn_like(x_ve)
+    return x_ve * ab_prev.sqrt()
+
+
+def _step_dpmpp_2m(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg, last, mem):
+    """DPM-Solver++(2M): second order from the previous x_0, no extra model call.
+
+    Multistep rather than multistage is what makes this one usable here. A
+    multistage solver evaluates the model twice inside one step, and a second
+    call would advance the recurrent state a second time -- this reuses the
+    previous step's prediction instead, so the model is still called once per
+    denoising step exactly as `ddim` calls it.
+    """
+    x_ve = _to_ve(x, ab)
+    # lambda = log(1/sigma); the solver is linear in this coordinate.
+    lam = -sig.clamp(min=1e-8).log()
+    lam_prev = -sig_prev.clamp(min=1e-8).log()
+    h = lam_prev - lam
+
+    prev = mem.get("x0")
+    prev_h = mem.get("h")
+    if prev is None or prev_h is None or last:
+        denoised = x0
+    else:
+        r = prev_h / h.clamp(min=1e-8)
+        # The 2M correction: extrapolate through the last x_0 estimate.
+        denoised = (1 + 1 / (2 * r)) * x0 - (1 / (2 * r)) * prev
+
+    x_ve = (sig_prev / sig.clamp(min=1e-8)) * x_ve - (-h).expm1() * denoised
+    mem["x0"], mem["h"] = x0, h
+    return x_ve * ab_prev.sqrt()
+
+
+# Every entry takes one model call per denoising step, which is what keeps the
+# recurrent state advancing exactly once per step whichever one is chosen.
+SAMPLERS = {
+    "ddim": _step_ddim,
+    "ddpm": _step_ddpm,
+    "euler": _step_euler,
+    "euler_a": _step_euler_a,
+    "dpmpp_2m": _step_dpmpp_2m,
+}
+
+
 @torch.no_grad()
 def sample(model, sched, cfg, labels, carry=True, progress=False):
     """Walk the reverse trajectory. Returns images in [-1, 1]."""
@@ -759,6 +933,10 @@ def sample(model, sched, cfg, labels, carry=True, progress=False):
     x = torch.randn(B, P, device=device)
     cond = class_vector(labels, classes)
     null = null_class_vector((B,), classes, device)
+    step = SAMPLERS[cfg.sampler]
+    # Whatever a multistep solver needs to carry between steps. Empty for the
+    # single-step ones, which is why they take it and ignore it.
+    mem = {}
 
     if split:
         carriers = (Carrier(model, B), Carrier(model, B))
@@ -803,24 +981,13 @@ def sample(model, sched, cfg, labels, carry=True, progress=False):
         x0 = sched.read_x0(pred.float(), x, t, cfg.predict).clamp(-1.0, 1.0)
 
         ab, ab_prev = sched.ab(t).unsqueeze(-1), sched.ab(t_prev).unsqueeze(-1)
-        # Epsilon consistent with the clamped x_0, which is what both samplers
-        # below are written against.
+        sig = sched.sigma(t).unsqueeze(-1)
+        sig_prev = sched.sigma(t_prev).unsqueeze(-1)
+        # Epsilon consistent with the clamped x_0, which is what every sampler
+        # here is written against.
         eps = (x - ab.sqrt() * x0) / (1 - ab).clamp(min=1e-8).sqrt()
-        if cfg.sampler == "ddim":
-            sigma = cfg.eta * ((1 - ab_prev) / (1 - ab)).sqrt() * (1 - ab / ab_prev).sqrt()
-            sigma = torch.nan_to_num(sigma, nan=0.0)
-            dir_xt = (1 - ab_prev - sigma ** 2).clamp(min=0).sqrt() * eps
-            x = ab_prev.sqrt() * x0 + dir_xt
-            if cfg.eta > 0 and k < cfg.frames - 1:
-                x = x + sigma * torch.randn_like(x)
-        else:
-            alpha = (ab / ab_prev).clamp(max=1.0)
-            beta = 1.0 - alpha
-            mean = (x - beta / (1 - ab).clamp(min=1e-8).sqrt() * eps) / alpha.sqrt()
-            x = mean
-            if k < cfg.frames - 1:
-                var = beta * (1 - ab_prev) / (1 - ab).clamp(min=1e-8)
-                x = x + var.clamp(min=0).sqrt() * torch.randn_like(x)
+        x = step(x, x0, eps, ab, ab_prev, sig, sig_prev, cfg,
+                 k == cfg.frames - 1, mem)
 
         if progress:
             print(f"   step {k + 1:2d}/{cfg.frames}  t={int(t[0]):<4} "
@@ -1240,6 +1407,57 @@ SWEEPS = {
 RANK_KEY = "frechet"
 
 
+def run_bench(cfg, data, model, sched_of, seeds, count):
+    """Score one trained checkpoint across every sampler and placement.
+
+    Separate from `--mode sweep` because nothing here trains: the sampler is
+    chosen after the weights exist, so re-training an arm per sampler would
+    measure the same model several times over. Several seeds because a single
+    one has twice misled this file -- 500 samples is a noisy instrument, and a
+    gap that does not survive a second seed is not a gap.
+    """
+    _, _, xva, _, scorer = data
+    rows = []
+    print(f"\n{'=' * 92}")
+    print(f"🔬 BENCH — {len(SAMPLERS)} samplers x 2 placements x {len(seeds)} seeds "
+          f"| {cfg.frames} frames | cfg {cfg.cfg_scale:g} | eta {cfg.eta:g}")
+    print(f"{'=' * 92}")
+    print(f"{'sampler':<10} {'placement':<10} {'fidelity':>18} {'frechet':>18}")
+
+    for name in SAMPLERS:
+        for placement in ("uniform", "karras"):
+            arm = replace(cfg, sampler=name, sigma_schedule=placement)
+            sched = sched_of(arm)
+            fid, fre = [], []
+            for sd in seeds:
+                set_seed(sd)
+                got = measure_samples(model, sched, arm, scorer, xva, count)
+                fid.append(got["fidelity"] * 100)
+                fre.append(got["frechet"])
+            mf, mr = sum(fid) / len(fid), sum(fre) / len(fre)
+            spread = f"±{(max(fid) - min(fid)) / 2:.1f}"
+            print(f"{name:<10} {placement:<10} {mf:>11.1f}% {spread:>5} "
+                  f"{mr:>13.3f} ±{(max(fre) - min(fre)) / 2:.3f}", flush=True)
+            rows.append({"sampler": name, "placement": placement,
+                         "fidelity": mf, "frechet": mr,
+                         "fidelity_all": fid, "frechet_all": fre})
+
+    path = os.path.join(CKPT_DIR, f"bench_diffusion_{cfg.tag}.json")
+    os.makedirs(CKPT_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"tag": cfg.tag, "dataset": cfg.dataset, "seeds": list(seeds),
+                   "count": count, "cfg_scale": cfg.cfg_scale, "eta": cfg.eta,
+                   "frames": cfg.frames, "rows": rows}, fh, indent=2)
+
+    best = min(rows, key=lambda r: r[RANK_KEY])
+    top = max(rows, key=lambda r: r["fidelity"])
+    print(f"\n   {best['sampler']}/{best['placement']} leads on {RANK_KEY} "
+          f"({best[RANK_KEY]:.3f}); {top['sampler']}/{top['placement']} on "
+          f"fidelity ({top['fidelity']:.1f}%)")
+    print(f"   ↳ {os.path.relpath(path, os.getcwd())}")
+    return rows
+
+
 def run_sweep(cfg, data, name, arms=None, minutes=3.0):
     grid = SWEEPS[name]
     chosen = arms or list(grid)
@@ -1354,9 +1572,11 @@ def run_smoke(cfg, data):
     #    without the trajectory memory.
     # The default is guided, so the arm that differs is the unguided one --
     # `cfg_scale=1.0` takes the branch where the conditional pass is the answer.
-    for label, over, carry in (("ddim", {}, True), ("ddim no-carry", {}, False),
-                               ("ddpm", {"sampler": "ddpm"}, True),
-                               ("unguided", {"cfg_scale": 1.0}, True)):
+    arms = [("ddim", {}, True), ("ddim no-carry", {}, False),
+            ("unguided", {"cfg_scale": 1.0}, True),
+            ("karras", {"sigma_schedule": "karras"}, True)]
+    arms += [(name, {"sampler": name}, True) for name in SAMPLERS if name != "ddim"]
+    for label, over, carry in arms:
         arm = replace(base, **over)
         imgs = sample(model, sched, arm, torch.arange(10, device=arm.device))
         check(f"samples ({label})",
@@ -1417,6 +1637,17 @@ examples:
   and what the trajectory memory is worth at sampling time
     python -u experiment_diffusion.py --mode eval --tag base
 
+  the samplers, on a checkpoint that already exists -- every one of them across
+  both stop placements, averaged over three seeds because 500 samples is a noisy
+  instrument. Nothing is trained; the sampler is chosen after the weights are
+    python -u experiment_diffusion.py --mode bench --tag base
+    python -u experiment_diffusion.py --mode bench --tag base --seeds 1,2,3,4
+
+  --sampler and --sigma-schedule compose, so "DPM++ 2M Karras" is both flags
+    python -u experiment_diffusion.py --mode sample --tag base --sampler dpmpp_2m
+    python -u experiment_diffusion.py --mode sample --tag base --sampler euler_a --eta 0.6
+    python -u experiment_diffusion.py --mode sample --tag base --sampler dpmpp_2m --sigma-schedule karras
+
   the measurements this file's claims rest on. Equal wall clock asks which arm
   is the better use of a GPU-minute; equal steps asks which mechanism is better
   per gradient. A plastic arm runs an order of magnitude fewer steps per minute,
@@ -1458,7 +1689,10 @@ def parse_args():
 
     g = p.add_argument_group("mode")
     g.add_argument("--mode", default="train",
-                   choices=["train", "sample", "sweep", "smoke", "eval"])
+                   choices=["train", "sample", "sweep", "smoke", "eval", "bench"])
+    g.add_argument("--seeds", default=None, metavar="A,B,C",
+                   help="comma-separated seeds for --mode bench "
+                        "(default: --seed, 123, 54321)")
     g.add_argument("--sweep", default="memory", choices=sorted(SWEEPS))
     g.add_argument("--arms", default=None, metavar="A,B",
                    help="comma-separated subset of the sweep's arms")
@@ -1528,7 +1762,11 @@ def parse_args():
     g.add_argument("--compile", action="store_true")
 
     g = p.add_argument_group("sampling")
-    g.add_argument("--sampler", default=d.sampler, choices=["ddim", "ddpm"])
+    g.add_argument("--sampler", default=d.sampler, choices=sorted(SAMPLERS))
+    g.add_argument("--sigma-schedule", default=d.sigma_schedule,
+                   choices=["uniform", "karras"],
+                   help="where the K stops sit; kept separate from --sampler "
+                        "because the two compose (default: %(default)s)")
     g.add_argument("--eta", type=float, default=d.eta)
     g.add_argument("--cfg", type=float, default=d.cfg_scale, dest="cfg_scale",
                    help="classifier-free guidance scale; 1.0 disables it")
@@ -1613,7 +1851,8 @@ def cfg_from_args(a):
         attn_qk_norm=a.attn_qk_norm, attn_dropout=a.attn_dropout,
         batch=a.batch, lr=None if str(a.lr) == "auto" else float(a.lr),
         grad_ckpt=a.grad_ckpt, compile=a.compile,
-        sampler=a.sampler, eta=a.eta, cfg_scale=a.cfg_scale,
+        sampler=a.sampler, sigma_schedule=a.sigma_schedule,
+        eta=a.eta, cfg_scale=a.cfg_scale,
         sample_batch=a.sample_batch,
         minutes=a.minutes, max_steps=a.max_steps, tag=a.tag, seed=a.seed,
         device=a.device,
@@ -1638,7 +1877,7 @@ def main():
     print(f"   mode {a.mode} | {cfg.dataset} | device {cfg.device} | seed {cfg.seed}")
 
     latest, best = ckpt_paths(cfg)
-    if a.mode in ("sample", "eval"):
+    if a.mode in ("sample", "eval", "bench"):
         cfg = adopt_saved_arch(cfg, best if os.path.exists(best) else latest,
                                a.grid_from_cli)
     elif a.mode == "train":
@@ -1664,7 +1903,7 @@ def main():
         run_sweep(cfg, data, a.sweep, arms, a.minutes or 3.0)
         return
 
-    if a.mode in ("sample", "eval"):
+    if a.mode in ("sample", "eval", "bench"):
         set_seed(cfg.seed)
         model, trainer = build(cfg)
         path = best if os.path.exists(best) else latest
@@ -1673,6 +1912,13 @@ def main():
         print(f"📂 {os.path.basename(path)}")
         describe(cfg, model)
         sched = Schedule(cfg, cfg.device)
+
+        if a.mode == "bench":
+            seeds = ([int(s) for s in a.seeds.split(",")] if a.seeds
+                     else [cfg.seed, 123, 54321])
+            run_bench(cfg, data, model, lambda c: Schedule(c, c.device),
+                      seeds, a.sample_count)
+            return
 
         got = measure_samples(model, sched, cfg, scorer, xva, a.sample_count)
         shown = min(len(got["images"]), 100)
