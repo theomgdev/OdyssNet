@@ -283,12 +283,17 @@ class Cfg:
     carry: str = "trajectory"       # trajectory | independent
     traj_noise: str = "iid"         # iid | shared
     class_dropout: float = 0.1      # for classifier-free guidance
+    # () trains at `frames`; (lo, hi) draws K per batch, so the sampler's step
+    # count stops being the one value the weights were fitted to.
+    k_range: tuple = ()
 
     # architecture
     neurons: int = 512
     n_in: int = 192
     n_out: int = 192
     t_embed: int = 32
+    cadence: bool = False           # tell the frame how far the next step moves
+    cad_embed: int = 16
     activation: tuple = ("none", "tanh", "tanh")
     weight_init: tuple = ("quiet", "resonant", "quiet", "zero")
     gates: tuple = ("none", "none", "identity")
@@ -345,7 +350,8 @@ class Cfg:
     def feature_width(self):
         """Width of one frame: the noisy image, the clock, and the class."""
         _, _, classes = self.shape()
-        return self.pixels() + self.t_embed + classes + 1
+        return (self.pixels() + self.t_embed + classes + 1
+                + (self.cad_embed if self.cadence else 0))
 
     def steps(self):
         return self.frames * self.echo
@@ -384,7 +390,29 @@ class Schedule:
         # trailing -1 standing for the clean image the last step lands on.
         grid = self._place(cfg.sigma_schedule, device)
         self.grid = grid
-        self.prev = torch.cat([grid[1:], torch.tensor([-1], device=device)])
+        self.prev = self.prev_of(grid)
+
+    @staticmethod
+    def prev_of(grid):
+        """Where each stop lands, with -1 standing for the clean image."""
+        return torch.cat([grid[1:], torch.tensor([-1], device=grid.device)])
+
+    def random_grid(self, K, gen=None):
+        """A K-stop grid drawn at random, noisiest first.
+
+        The endpoints are pinned because sampling has no choice about them: it
+        starts at pure noise and ends on the clean image. The K-2 interior stops
+        are drawn without replacement and sorted, so the walk stays monotone in
+        noise while its cadence changes from batch to batch.
+        """
+        if K <= 2:
+            return torch.tensor([self.T - 1, 0][:K], device=self.device).long()
+        inner = torch.randperm(self.T - 2, generator=gen)[:K - 2].to(self.device) + 1
+        return torch.cat([
+            torch.tensor([self.T - 1], device=self.device),
+            inner.sort(descending=True).values,
+            torch.tensor([0], device=self.device),
+        ]).long()
 
     def _place(self, placement, device):
         """Which K of the T timesteps the sampler stops at.
@@ -503,6 +531,33 @@ def timestep_embedding(t, dim):
     return torch.cat([ang.sin(), ang.cos()], dim=-1)
 
 
+def sinusoid(v, dim, scale=1.0):
+    """Sinusoidal embedding of a continuous quantity. `v` is (...,)."""
+    half = dim // 2
+    freqs = torch.exp(-math.log(10000.0)
+                      * torch.arange(half, device=v.device, dtype=torch.float32) / half)
+    ang = (v.float() * scale).unsqueeze(-1) * freqs
+    return torch.cat([ang.sin(), ang.cos()], dim=-1)
+
+
+def cadence_embedding(t, t_prev, progress, sched, dim):
+    """How far the next step moves, and how far along the walk already is.
+
+    The clock says where the trajectory is; it does not say how big the next
+    stride will be, and with a fixed grid the model never has to ask -- the
+    stride is a constant folded into the weights. Once K varies, the stride is
+    the one thing a frame cannot infer before it has seen two of them, so it is
+    given rather than left to be discovered.
+
+    The gap is taken in log1p(sigma) because sigma spans four orders of
+    magnitude across the schedule and the clamp at the noisy end is not a real
+    noise level; a linear gap there would swamp every other stride.
+    """
+    gap = torch.log1p(sched.sigma(t)) - torch.log1p(sched.sigma(t_prev))
+    return torch.cat([sinusoid(gap, dim - dim // 2, scale=8.0),
+                      sinusoid(progress, dim // 2, scale=8.0)], dim=-1)
+
+
 def class_vector(labels, classes, drop_mask=None):
     """One-hot over classes plus a null slot.
 
@@ -525,9 +580,12 @@ def null_class_vector(shape, classes, device):
     return v
 
 
-def make_frames(x_t, t, cls_vec, cfg):
+def make_frames(x_t, t, cls_vec, cfg, cad=None):
     """Assemble (B, K, F_in): the noisy image, the clock, and the class."""
-    return torch.cat([x_t, timestep_embedding(t, cfg.t_embed), cls_vec], dim=-1)
+    parts = [x_t, timestep_embedding(t, cfg.t_embed), cls_vec]
+    if cfg.cadence:
+        parts.append(cad)
+    return torch.cat(parts, dim=-1)
 
 
 # --------------------------------------------------------------------------- #
@@ -612,9 +670,15 @@ def trajectory_batch(x0, labels, sched, cfg, gen=None):
     is the signature to watch for.
     """
     B, P = x0.shape
-    K = cfg.frames
     _, _, classes = cfg.shape()
-    t = sched.grid.unsqueeze(0).expand(B, K)
+
+    if cfg.k_range:
+        lo, hi = cfg.k_range
+        K = int(torch.randint(lo, hi + 1, (1,), generator=gen).item())
+        grid = sched.random_grid(K, gen)
+    else:
+        K, grid = cfg.frames, sched.grid
+    t = grid.unsqueeze(0).expand(B, K)
 
     if cfg.traj_noise == "shared":
         eps = torch.randn(B, 1, P, device=x0.device, generator=gen).expand(B, K, P)
@@ -628,7 +692,12 @@ def trajectory_batch(x0, labels, sched, cfg, gen=None):
     drop = torch.rand(B, device=x0.device, generator=gen) < cfg.class_dropout
     cls = class_vector(labels.unsqueeze(1).expand(B, K), classes,
                        drop.unsqueeze(1).expand(B, K))
-    return make_frames(x_t, t, cls, cfg), target
+    cad = None
+    if cfg.cadence:
+        prog = torch.arange(K, device=x0.device).float() / max(K - 1, 1)
+        cad = cadence_embedding(t, Schedule.prev_of(grid).unsqueeze(0).expand(B, K),
+                                prog.unsqueeze(0).expand(B, K), sched, cfg.cad_embed)
+    return make_frames(x_t, t, cls, cfg, cad), target
 
 
 # --------------------------------------------------------------------------- #
@@ -724,16 +793,20 @@ def train_step(trainer, frames, target, cfg):
     the step count and the gradient budget are identical to `trajectory`;
     only the memory differs, which is what makes the comparison readable.
     """
+    # K comes from the batch rather than the config: with `--k-range` it changes
+    # from one batch to the next, and the step count has to follow it.
+    K = frames.shape[1]
+
     if cfg.carry == "trajectory":
         return trainer.train_batch(frames, target,
-                                   thinking_steps=cfg.steps(),
+                                   thinking_steps=K * cfg.echo,
                                    full_sequence=True)
 
     # The trainer already reports the un-normalised loss, so averaging the K
     # calls gives the same quantity the trajectory arm's single call reports:
     # the mean squared error over every frame.
     total = 0.0
-    for k in range(cfg.frames):
+    for k in range(K):
         total += trainer.train_batch(
             frames[:, k:k + 1], target[:, k:k + 1],
             thinking_steps=cfg.echo,
@@ -755,6 +828,11 @@ class Validator:
     shared arm's own training distribution and a foreign one for every other
     arm -- it scores an inversion as though it were a denoiser. Holding the grid
     at iid is what makes the column comparable across arms.
+
+    It is also the fixed `--frames` grid even when training draws K at random.
+    That keeps the column comparable, and it means the column is one cadence out
+    of many for a `--k-range` run: read it as a fixed-K probe, and let the
+    multi-K sample table decide.
     """
 
     def __init__(self, x, y, sched, cfg):
@@ -774,8 +852,14 @@ class Validator:
             eps = torch.randn(B, K, P, generator=gen).to(cfg.device)
             x_wide = x0.unsqueeze(1).expand(B, K, P)
             cls = class_vector(labels.unsqueeze(1).expand(B, K), classes)
+            cad = None
+            if cfg.cadence:
+                prog = torch.arange(K, device=cfg.device).float() / max(K - 1, 1)
+                cad = cadence_embedding(t, sched.prev.unsqueeze(0).expand(B, K),
+                                        prog.unsqueeze(0).expand(B, K),
+                                        sched, cfg.cad_embed)
             self.chunks.append((
-                make_frames(sched.q_sample(x_wide, t, eps), t, cls, cfg),
+                make_frames(sched.q_sample(x_wide, t, eps), t, cls, cfg, cad),
                 sched.target(x_wide, eps, t, cfg.predict),
             ))
 
@@ -948,19 +1032,23 @@ def sample(model, sched, cfg, labels, carry=True, progress=False):
     for k in range(cfg.frames):
         t = sched.grid[k].expand(B)
         t_prev = sched.prev[k].expand(B)
+        cad = None
+        if cfg.cadence:
+            prog = torch.full_like(t, k, dtype=torch.float32) / max(cfg.frames - 1, 1)
+            cad = cadence_embedding(t, t_prev, prog, sched, cfg.cad_embed)
 
         if split:
-            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg).unsqueeze(1),
+            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg, cad).unsqueeze(1),
                                   cfg.echo)[:, 0]
-            e_u = carriers[1].run(model, make_frames(x, t, null, cfg).unsqueeze(1),
+            e_u = carriers[1].run(model, make_frames(x, t, null, cfg, cad).unsqueeze(1),
                                   cfg.echo)[:, 0]
         elif guided:
-            both = torch.cat([make_frames(x, t, cond, cfg),
-                              make_frames(x, t, null, cfg)], dim=0).unsqueeze(1)
+            both = torch.cat([make_frames(x, t, cond, cfg, cad),
+                              make_frames(x, t, null, cfg, cad)], dim=0).unsqueeze(1)
             out = carriers[0].run(model, both, cfg.echo)[:, 0]
             e_c, e_u = out[:B], out[B:]
         else:
-            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg).unsqueeze(1),
+            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg, cad).unsqueeze(1),
                                   cfg.echo)[:, 0]
             e_u = e_c
 
@@ -1184,6 +1272,8 @@ def describe(cfg, model):
     print(f"   {cfg.dataset} {c}x{side}x{side} = {cfg.pixels()} px | feature width "
           f"{cfg.feature_width()} | predict {cfg.predict} | carry {cfg.carry} | "
           f"noise {cfg.traj_noise}"
+          + (f" | K drawn from {cfg.k_range[0]}-{cfg.k_range[1]}" if cfg.k_range else "")
+          + (f" | cadence {cfg.cad_embed}d" if cfg.cadence else "")
           + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else "")
           + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else ""))
     memory_advisory(cfg, model)
@@ -1194,6 +1284,7 @@ def describe(cfg, model):
 # --------------------------------------------------------------------------- #
 
 ARCH_FIELDS = ("dataset", "neurons", "n_in", "n_out", "t_embed",
+               "cadence", "cad_embed",
                "predict", "activation", "weight_init", "gates",
                "hebb_type", "hebb_res", "attn_heads", "attn_kv_heads",
                "attn_head_dim", "attn_window", "attn_write", "attn_read",
@@ -1402,6 +1493,17 @@ SWEEPS = {
     },
     "predict": {"x0": {"predict": "x0"}, "eps": {"predict": "eps"},
                 "v": {"predict": "v"}},
+    # Can the step count become a dial the caller turns? `fixed` is the control:
+    # one grid, one cadence, the behaviour every other arm has to beat across
+    # `--mode flex`. The two mechanisms are separated because a win has to be
+    # attributable -- widening the training distribution and telling the frame
+    # what its stride is are different claims.
+    "flexk": {
+        "fixed":        {},
+        "rand_k":       {"k_range": (12, 20)},
+        "cadence":      {"cadence": True},
+        "rand_cadence": {"k_range": (12, 20), "cadence": True},
+    },
 }
 
 RANK_KEY = "frechet"
@@ -1454,6 +1556,49 @@ def run_bench(cfg, data, model, sched_of, seeds, count):
     print(f"\n   {best['sampler']}/{best['placement']} leads on {RANK_KEY} "
           f"({best[RANK_KEY]:.3f}); {top['sampler']}/{top['placement']} on "
           f"fidelity ({top['fidelity']:.1f}%)")
+    print(f"   ↳ {os.path.relpath(path, os.getcwd())}")
+    return rows
+
+
+FLEX_K = (4, 6, 8, 12, 16, 24, 32, 48, 64)
+
+
+def run_flex(cfg, data, model, counts, count):
+    """Score one checkpoint across step counts. The answer is the curve.
+
+    A fixed-grid model has one cadence it was fitted to, and every other K asks
+    it to walk a schedule it never saw. What this table reports is how much that
+    costs -- so a flat row is the result worth having, not a high one.
+    """
+    _, _, xva, _, scorer = data
+    rows = []
+    print(f"\n{'=' * 78}")
+    print(f"🎚️  FLEX-K — {len(counts)} step counts | echo {cfg.echo} "
+          f"| cfg {cfg.cfg_scale:g} | {cfg.sampler}")
+    print(f"{'=' * 78}")
+    print(f"{'frames':>7} {'steps':>7} {'fidelity':>11} {'frechet':>11}")
+
+    for k in counts:
+        arm = replace(cfg, frames=k)
+        set_seed(cfg.seed)
+        got = measure_samples(model, Schedule(arm, arm.device), arm, scorer,
+                              xva, count)
+        print(f"{k:>7} {k * cfg.echo:>7} {got['fidelity'] * 100:>10.1f}% "
+              f"{got['frechet']:>11.3f}", flush=True)
+        rows.append({"frames": k, "steps": k * cfg.echo,
+                     "fidelity": got["fidelity"] * 100, "frechet": got["frechet"]})
+
+    fid = [r["fidelity"] for r in rows]
+    print(f"\n   fidelity spans {max(fid) - min(fid):.1f} points "
+          f"({min(fid):.1f} at K={rows[fid.index(min(fid))]['frames']} to "
+          f"{max(fid):.1f} at K={rows[fid.index(max(fid))]['frames']})")
+    path = os.path.join(CKPT_DIR, f"flex_diffusion_{cfg.tag}.json")
+    os.makedirs(CKPT_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"tag": cfg.tag, "dataset": cfg.dataset, "echo": cfg.echo,
+                   "cfg_scale": cfg.cfg_scale, "count": count,
+                   "k_range": list(cfg.k_range), "cadence": cfg.cadence,
+                   "rows": rows}, fh, indent=2)
     print(f"   ↳ {os.path.relpath(path, os.getcwd())}")
     return rows
 
@@ -1553,20 +1698,36 @@ def run_smoke(cfg, data):
     for variant, over in (("plain", {}), ("attention", {"attn_heads": 2}),
                           ("plastic", {"hebb_type": "temporal"}),
                           ("independent", {"carry": "independent"}),
-                          ("eps-pred", {"predict": "eps"})):
+                          ("eps-pred", {"predict": "eps"}),
+                          ("random-K", {"k_range": (3, 6)}),
+                          ("cadence", {"cadence": True}),
+                          ("random-K + cadence", {"k_range": (3, 6),
+                                                  "cadence": True})):
         arm = replace(base, **over)
         set_seed(arm.seed)
         model, trainer = build(arm)
-        val = Validator(data[2][:256], data[3][:256], sched, arm)
+        if not over:
+            plain = (model, trainer)
+        arm_sched = Schedule(arm, arm.device)
+        val = Validator(data[2][:256], data[3][:256], arm_sched, arm)
         batches = Batches(data[0][:4096], data[1][:4096], arm.batch,
                           arm.device, arm.seed)
         for _ in range(arm.max_steps):
             bx, by = batches.next()
-            f, t = trajectory_batch(bx, by, sched, arm)
+            f, t = trajectory_batch(bx, by, arm_sched, arm)
             loss = train_step(trainer, f, t, arm)
         score = val.score(model)
         check(f"learns ({variant})", score < val.trivial,
               f"val {score:.4f} < trivial {val.trivial:.3f}")
+        # A cadence model has to sample too, and at a K it never trained on.
+        if arm.cadence:
+            flex = replace(arm, frames=arm.frames * 2)
+            imgs = sample(model, Schedule(flex, flex.device), flex,
+                          torch.arange(10, device=arm.device))
+            check(f"samples at unseen K ({variant})",
+                  imgs.shape == (10, flex.pixels())
+                  and torch.isfinite(imgs).all().item(),
+                  f"K={flex.frames} {tuple(imgs.shape)}")
 
     # 3. A rollout produces finite images, guided and unguided, with and
     #    without the trajectory memory.
@@ -1576,6 +1737,8 @@ def run_smoke(cfg, data):
             ("unguided", {"cfg_scale": 1.0}, True),
             ("karras", {"sigma_schedule": "karras"}, True)]
     arms += [(name, {"sampler": name}, True) for name in SAMPLERS if name != "ddim"]
+    # The plain arm, so the frame width matches `base` whatever ran last.
+    model, trainer = plain
     for label, over, carry in arms:
         arm = replace(base, **over)
         imgs = sample(model, sched, arm, torch.arange(10, device=arm.device))
@@ -1597,6 +1760,18 @@ def run_smoke(cfg, data):
     # 5. The invariant the whole library is built on.
     check("W diagonal pinned to zero",
           float(model.W.diagonal().abs().max()) == 0.0)
+
+    # 6. The random grid's contract: K stops, strictly decreasing in timestep,
+    #    anchored at pure noise and at the clean end.
+    ok, detail = True, ""
+    for k in (2, 3, 8, 32):
+        g = sched.random_grid(k)
+        if not (len(g) == k and g[0] == base.timesteps - 1
+                and (k < 2 or g[-1] == 0)
+                and (k < 2 or bool((g[1:] < g[:-1]).all()))):
+            ok, detail = False, f"K={k} gave {g.tolist()[:6]}"
+            break
+    check("random grid contract", ok, detail or "K, endpoints, monotone")
 
     print(f"{'=' * 78}")
     if failures:
@@ -1689,7 +1864,11 @@ def parse_args():
 
     g = p.add_argument_group("mode")
     g.add_argument("--mode", default="train",
-                   choices=["train", "sample", "sweep", "smoke", "eval", "bench"])
+                   choices=["train", "sample", "sweep", "smoke", "eval", "bench",
+                            "flex"])
+    g.add_argument("--flex-k", default=None, metavar="A,B,C",
+                   help="step counts for --mode flex "
+                        f"(default: {','.join(str(k) for k in FLEX_K)})")
     g.add_argument("--seeds", default=None, metavar="A,B,C",
                    help="comma-separated seeds for --mode bench "
                         "(default: --seed, 123, 54321)")
@@ -1720,12 +1899,19 @@ def parse_args():
                         "independent is the matched memoryless control")
     g.add_argument("--traj-noise", default=d.traj_noise, choices=["iid", "shared"])
     g.add_argument("--class-dropout", type=float, default=d.class_dropout)
+    g.add_argument("--k-range", default=None, metavar="LO,HI",
+                   help="draw K per batch instead of training at --frames")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons)
     g.add_argument("--n-in", type=int, default=d.n_in)
     g.add_argument("--n-out", type=int, default=d.n_out)
     g.add_argument("--t-embed", type=int, default=d.t_embed)
+    g.add_argument("--cadence", action=argparse.BooleanOptionalAction,
+                   default=d.cadence,
+                   help="give each frame the stride it is about to take; "
+                        "widens the input, so it fixes a tensor shape")
+    g.add_argument("--cad-embed", type=int, default=d.cad_embed)
     g.add_argument("--activation", default=",".join(d.activation),
                    help="ENC,CORE,MEM (default: %(default)s)")
     g.add_argument("--weight-init", default=",".join(d.weight_init),
@@ -1812,8 +1998,20 @@ def parse_args():
                 f"--neurons ({a.neurons})")
     if a.t_embed % 2:
         p.error("--t-embed must be even")
+    if a.cad_embed % 4:
+        p.error("--cad-embed must be a multiple of 4")
     if a.frames > a.timesteps:
         p.error("--frames cannot exceed --timesteps")
+    if a.k_range:
+        try:
+            lo, hi = (int(v) for v in a.k_range.split(","))
+        except ValueError:
+            p.error("--k-range takes two integers, as LO,HI")
+        if not 2 <= lo <= hi:
+            p.error("--k-range needs 2 <= LO <= HI")
+        if hi > a.timesteps:
+            p.error("--k-range HI cannot exceed --timesteps")
+        a.k_range = (lo, hi)
     if not 0.0 <= a.class_dropout < 1.0:
         p.error("--class-dropout must be in [0, 1)")
     if a.attn_heads and a.attn_heads % a.attn_kv_heads:
@@ -1839,7 +2037,9 @@ def cfg_from_args(a):
         dataset=a.dataset, train_images=a.train_images, val_images=a.val_images,
         timesteps=a.timesteps, frames=a.frames, echo=a.echo, predict=a.predict,
         carry=a.carry, traj_noise=a.traj_noise, class_dropout=a.class_dropout,
+        k_range=tuple(a.k_range) if a.k_range else (),
         neurons=a.neurons, n_in=a.n_in, n_out=a.n_out, t_embed=a.t_embed,
+        cadence=a.cadence, cad_embed=a.cad_embed,
         activation=tuple(a.activation.split(",")),
         weight_init=tuple(a.weight_init.split(",")),
         gates=tuple(a.gates.split(",")),
@@ -1877,7 +2077,7 @@ def main():
     print(f"   mode {a.mode} | {cfg.dataset} | device {cfg.device} | seed {cfg.seed}")
 
     latest, best = ckpt_paths(cfg)
-    if a.mode in ("sample", "eval", "bench"):
+    if a.mode in ("sample", "eval", "bench", "flex"):
         cfg = adopt_saved_arch(cfg, best if os.path.exists(best) else latest,
                                a.grid_from_cli)
     elif a.mode == "train":
@@ -1903,7 +2103,7 @@ def main():
         run_sweep(cfg, data, a.sweep, arms, a.minutes or 3.0)
         return
 
-    if a.mode in ("sample", "eval", "bench"):
+    if a.mode in ("sample", "eval", "bench", "flex"):
         set_seed(cfg.seed)
         model, trainer = build(cfg)
         path = best if os.path.exists(best) else latest
@@ -1918,6 +2118,12 @@ def main():
                      else [cfg.seed, 123, 54321])
             run_bench(cfg, data, model, lambda c: Schedule(c, c.device),
                       seeds, a.sample_count)
+            return
+
+        if a.mode == "flex":
+            counts = ([int(k) for k in a.flex_k.split(",")] if a.flex_k
+                      else list(FLEX_K))
+            run_flex(cfg, data, model, counts, a.sample_count)
             return
 
         got = measure_samples(model, sched, cfg, scorer, xva, a.sample_count)
