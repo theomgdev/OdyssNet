@@ -63,8 +63,8 @@ Usage
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
     python -u experiment_diffusion.py --mode sample --tag base --cfg 3.0
-    python -u experiment_diffusion.py --mode train --k-range 12,20 --cadence
     python -u experiment_diffusion.py --mode flex --tag base
+    python -u experiment_diffusion.py --mode train --k-range off
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
 What the memory is worth
@@ -183,44 +183,49 @@ in this grid, so the curve mixes capacity with output rank -- which is the pair
 the epsilon arms above separate, since those move only rank and stay at chance
 whatever the width.
 
-Making the step count a dial
-----------------------------
-The training grid is the sampling grid, so the weights are fitted to one
-cadence and every other K asks for a walk they never saw. Measured on `base`,
-that costs more than it looks: conditioning fidelity falls monotonically from
-97.2% at K=6 to 68.8% at K=64 on MNIST, and 77.6% to 32.6% at K=32 on CIFAR-10,
-while the Frechet distance is best near the trained grid. Elsewhere K is a dial
-the caller turns; here it was part of the architecture.
+The step count is a dial
+------------------------
+A fixed grid makes it one. The training grid is the sampling grid, so weights
+trained that way are fitted to a single cadence and every other K asks for a
+walk they never saw. Measured on a fixed-grid checkpoint, conditioning fidelity
+falls monotonically from 97.2% at K=6 to 68.8% at K=64 on MNIST, and 77.6% to
+32.6% at K=32 on CIFAR-10, while the Frechet distance is best near the trained
+grid. Everywhere else in diffusion the step count is the caller's to choose;
+here it was part of the architecture.
 
 `--k-range LO,HI` draws K per batch over a random monotone grid, so the weights
-see many cadences instead of one. `--cadence` gives each frame the log-sigma
-stride it is about to take and how far along the walk it is -- a frame cannot
-infer its own stride before it has seen two of them, and by then the first
-prediction is already made. They are separate flags because they turn out to do
-separate things. MNIST, 6 minutes per arm at equal wall clock, echo 2, scored
-across nine step counts:
+see many cadences instead of one. It is the default at 12-20, and it is the one
+change that makes the dial work. MNIST, 6 minutes per arm at equal wall clock,
+echo 2, 500 samples at each of nine step counts, over two seeds:
 
-    arm            K=4    K=16    K=64    span    frechet at K=64
-    fixed         98.4    88.6    55.8    42.8             15.727
-    rand_k        97.4    92.2    82.6    14.8             10.302
-    cadence       99.2    93.0    68.0    31.2             14.382
-    rand_cadence  99.8    94.8    83.4    16.4             14.710
+    arm            K=4    K=16    K=64    span 42   span 123
+    fixed         98.4    88.6    55.8       42.8       45.4
+    rand_k        97.4    92.2    82.6       14.8       10.4
+    cadence       99.2    93.0    68.0       31.2       41.6
+    rand_cadence  99.8    94.8    83.4       16.4       19.6
 
-The span is the result. Randomising K cuts it from 42.8 points to 14.8 and
-holds the Frechet distance flat from K=12 to K=64, which is the dial working.
-Cadence does something else: it lifts fidelity at every K, most of all where the
-walk is short, and it pays for that in the Frechet distance everywhere -- so it
-buys conditioning and sells sample distribution. It also costs about a third of
-the step count at equal wall clock.
+The span across step counts is the result, and `--k-range` cuts it by three to
+four times while holding the Frechet distance flat from K=12 to K=64, where the
+fixed arm's climbs from 9.3 to 15.7. It costs one to three points at K=4, which
+is the trade the table is here to show. Note where the arms were trained: K is
+drawn from 12 to 20 and the flexibility reaches K=4 and K=64 either side of it,
+so what is learned is not the range but that cadence is a quantity to be read.
+A narrow range is enough, which is why the default is narrow.
 
-A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so the effect
-is the mechanism rather than the draw. Note where those arms were trained: K is
-drawn from 12 to 20, and the flexibility reaches K=4 and K=64 either side of it.
-What the arm learns is not the range it saw but that the cadence is a quantity
-to read, which is why a narrow range is enough.
+`--cadence` is the other half of the idea and it did not survive its second
+seed. It widens each frame with the log-sigma stride about to be taken and the
+fraction of the walk behind it, on the reasoning that a frame cannot infer its
+own stride until it has seen two of them. It does lift fidelity at every K --
+93.0% against 89.0% at K=16 on the first seed -- but its apparent flexibility
+gain (31.2 against 42.8) came back at 41.6 against 45.4 on the second, which is
+the fixed arm's own number. Worse, adding it to `--k-range` makes flexibility
+consistently *worse* (16.4 and 19.6 against 14.8 and 10.4) and the Frechet
+distance worse everywhere. It stays available and off: telling the model the
+stride is not what taught it to read the stride, and the two signals appear to
+interfere. Why is not measured.
 
 Read the val MSE column against this table and it disagrees, ranking `fixed`
-first at 0.0871. It is scored on the fixed K=16 grid, which is `fixed`'s own
+first. It is scored on the fixed `--frames` grid, which is that arm's own
 training distribution and one cadence out of many for the others. The sample
 columns decide; the loss column is the fixed-K probe beside them.
 
@@ -326,9 +331,11 @@ class Cfg:
     carry: str = "trajectory"       # trajectory | independent
     traj_noise: str = "iid"         # iid | shared
     class_dropout: float = 0.1      # for classifier-free guidance
-    # () trains at `frames`; (lo, hi) draws K per batch, so the sampler's step
-    # count stops being the one value the weights were fitted to.
-    k_range: tuple = ()
+    # Draws K per batch, so the sampler's step count stops being the one value
+    # the weights were fitted to. () pins it to `frames`, which is what the
+    # fixed-grid control arm does. The range is narrow because the flexibility
+    # reaches well past it: 12-20 in training holds K=4 and K=64 at sampling.
+    k_range: tuple = (12, 20)
 
     # architecture
     neurons: int = 512
@@ -1306,7 +1313,7 @@ def memory_advisory(cfg, model):
               "That is the control arm working as intended.")
 
 
-def describe(cfg, model):
+def describe(cfg, model, training=True):
     c, side, classes = cfg.shape()
     print(f"\n🧠 {model.get_num_params():,} trainable params | {cfg.neurons} neurons "
           f"| in {cfg.n_in} / out {cfg.n_out} | {cfg.frames} frames x {cfg.echo} echo "
@@ -1315,7 +1322,8 @@ def describe(cfg, model):
     print(f"   {cfg.dataset} {c}x{side}x{side} = {cfg.pixels()} px | feature width "
           f"{cfg.feature_width()} | predict {cfg.predict} | carry {cfg.carry} | "
           f"noise {cfg.traj_noise}"
-          + (f" | K drawn from {cfg.k_range[0]}-{cfg.k_range[1]}" if cfg.k_range else "")
+          + (f" | K drawn from {cfg.k_range[0]}-{cfg.k_range[1]}"
+             if cfg.k_range and training else "")
           + (f" | cadence {cfg.cad_embed}d" if cfg.cadence else "")
           + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else "")
           + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else ""))
@@ -1542,10 +1550,10 @@ SWEEPS = {
     # attributable -- widening the training distribution and telling the frame
     # what its stride is are different claims.
     "flexk": {
-        "fixed":        {},
-        "rand_k":       {"k_range": (12, 20)},
-        "cadence":      {"cadence": True},
-        "rand_cadence": {"k_range": (12, 20), "cadence": True},
+        "fixed":        {"k_range": ()},
+        "rand_k":       {},
+        "cadence":      {"k_range": (), "cadence": True},
+        "rand_cadence": {"cadence": True},
     },
 }
 
@@ -1609,9 +1617,9 @@ FLEX_K = (4, 6, 8, 12, 16, 24, 32, 48, 64)
 def run_flex(cfg, data, model, counts, count):
     """Score one checkpoint across step counts. The answer is the curve.
 
-    A fixed-grid model has one cadence it was fitted to, and every other K asks
-    it to walk a schedule it never saw. What this table reports is how much that
-    costs -- so a flat row is the result worth having, not a high one.
+    A flat row is the result worth having, not a high one: it says the step
+    count is the caller's to choose. `--k-range` is what flattens it, so this
+    is the mode that tells a `--k-range off` checkpoint from the default.
     """
     _, _, xva, _, scorer = data
     rows = []
@@ -1717,7 +1725,8 @@ def run_smoke(cfg, data):
     print(f"{'=' * 78}")
 
     base = replace(cfg, neurons=128, n_in=48, n_out=48, frames=4, echo=2,
-                   batch=32, max_steps=150, minutes=0.0, tag="smoke")
+                   k_range=(3, 6), batch=32, max_steps=150, minutes=0.0,
+                   tag="smoke")
     sched = Schedule(base, base.device)
     failures = []
 
@@ -1728,13 +1737,15 @@ def run_smoke(cfg, data):
 
     # 1. The shape contract the whole design rests on: K frames in, K
     #    predictions out, with E echo steps of temporal depth between them.
+    #    K comes from the batch, because the default draws it per batch.
     set_seed(base.seed)
     model, trainer = build(base)
     x0, labels = data[0][:8].to(base.device), data[1][:8].to(base.device)
     frames, target = trajectory_batch(x0, labels, sched, base)
-    out, _ = model(frames, steps=base.steps())
-    check("frame contract", tuple(out.shape) == (8, base.frames, base.pixels()),
-          f"{tuple(frames.shape)} -> {tuple(out.shape)} over {base.steps()} steps")
+    K = frames.shape[1]
+    out, _ = model(frames, steps=K * base.echo)
+    check("frame contract", tuple(out.shape) == (8, K, base.pixels()),
+          f"{tuple(frames.shape)} -> {tuple(out.shape)} over {K * base.echo} steps")
 
     # 2. Learning at all, measured against the do-nothing predictor on the same
     #    frozen grid. A run that cannot beat outputting zero has learned nothing.
@@ -1742,10 +1753,9 @@ def run_smoke(cfg, data):
                           ("plastic", {"hebb_type": "temporal"}),
                           ("independent", {"carry": "independent"}),
                           ("eps-pred", {"predict": "eps"}),
-                          ("random-K", {"k_range": (3, 6)}),
+                          ("fixed-K", {"k_range": ()}),
                           ("cadence", {"cadence": True}),
-                          ("random-K + cadence", {"k_range": (3, 6),
-                                                  "cadence": True})):
+                          ("fixed-K + cadence", {"k_range": (), "cadence": True})):
         arm = replace(base, **over)
         set_seed(arm.seed)
         model, trainer = build(arm)
@@ -1942,8 +1952,10 @@ def parse_args():
                         "independent is the matched memoryless control")
     g.add_argument("--traj-noise", default=d.traj_noise, choices=["iid", "shared"])
     g.add_argument("--class-dropout", type=float, default=d.class_dropout)
-    g.add_argument("--k-range", default=None, metavar="LO,HI",
-                   help="draw K per batch instead of training at --frames")
+    g.add_argument("--k-range", default=",".join(str(v) for v in d.k_range),
+                   metavar="LO,HI",
+                   help="draw K per batch (default: %(default)s); "
+                        "'off' trains at --frames instead")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons)
@@ -2045,11 +2057,13 @@ def parse_args():
         p.error("--cad-embed must be a multiple of 4")
     if a.frames > a.timesteps:
         p.error("--frames cannot exceed --timesteps")
-    if a.k_range:
+    if str(a.k_range).lower() in ("off", "none", ""):
+        a.k_range = ()
+    else:
         try:
             lo, hi = (int(v) for v in a.k_range.split(","))
         except ValueError:
-            p.error("--k-range takes two integers, as LO,HI")
+            p.error("--k-range takes two integers as LO,HI, or 'off'")
         if not 2 <= lo <= hi:
             p.error("--k-range needs 2 <= LO <= HI")
         if hi > a.timesteps:
@@ -2153,7 +2167,7 @@ def main():
         load_checkpoint(model, trainer.optimizer, path, device=cfg.device,
                         trainer=trainer)
         print(f"📂 {os.path.basename(path)}")
-        describe(cfg, model)
+        describe(cfg, model, training=False)
         sched = Schedule(cfg, cfg.device)
 
         if a.mode == "bench":

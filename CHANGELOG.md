@@ -6,23 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [3.4.0] — 2026-09-04
 
+### Changed
+- **The diffusion example's step count is now a dial the caller turns, and `--k-range 12,20` is the default that makes it one.** Every other diffusion tool lets you choose the number of denoising steps at sampling time; this one could not, because the training grid is the sampling grid and the weights were fitted to a single cadence. On a fixed-grid checkpoint, conditioning fidelity falls monotonically as K rises — 97.2% at K=6 down to 68.8% at K=64 on MNIST, 77.6% to 32.6% at K=32 on CIFAR-10 — while the Frechet distance is best near the trained grid. The step count was part of the architecture rather than a parameter.
+
+  `--k-range LO,HI` draws K per batch over a random monotone grid, so the weights meet many cadences instead of one. `--mode flex` scores a checkpoint across step counts and `--sweep flexk` trains the arms against a fixed-grid control; `--k-range off` restores the old behaviour. MNIST, 6 minutes per arm at equal wall clock, echo 2, 500 samples at each of nine step counts, fidelity at K=4/16/64 and the span across all nine, on two seeds:
+
+      arm            K=4   K=16   K=64   span 42   span 123
+      fixed         98.4   88.6   55.8      42.8       45.4
+      rand_k        97.4   92.2   82.6      14.8       10.4
+      cadence       99.2   93.0   68.0      31.2       41.6
+      rand_cadence  99.8   94.8   83.4      16.4       19.6
+
+  The span is the result: randomising K cuts it three to four times on both seeds and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. It costs one to three points at K=4. Worth noting where the arms were trained — K is drawn from 12 to 20 while the flexibility reaches K=4 and K=64 either side of that range, so what is learned is that cadence is a quantity to read rather than the set of step counts seen. A narrow range is enough, which is why the default is narrow.
+
+  The val MSE column ranks `fixed` first and disagrees with all of this. It is scored on the fixed `--frames` grid, that arm's own training distribution and one cadence out of many for the others — the same grid-choice trap that inverted the memory sweep in 3.3.1. The sample columns decide.
+
+  Existing checkpoints are unaffected: they carry `k_range` in their config, `--mode sample` and `--mode eval` do not use it, and `base` still samples 91.2% at K=16.
+
 ### Added
-- **The diffusion example's step count can become a dial the caller turns.** Every other diffusion tool lets you pick the number of denoising steps at sampling time; this one could not, because the training grid is the sampling grid and the weights were fitted to a single cadence. Measured on the `base` checkpoint, conditioning fidelity falls monotonically as K rises — 97.2% at K=6 down to 68.8% at K=64 on MNIST, and 77.6% to 32.6% at K=32 on CIFAR-10 — while the Frechet distance is best near the trained grid. The step count was part of the architecture rather than a parameter.
-
-  Two flags, kept separate so a result is attributable to one of them. `--k-range LO,HI` draws K per batch over a random monotone grid, widening the distribution of cadences the weights ever see. `--cadence` widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it, which a frame cannot otherwise infer before it has seen two of them — by which point its first prediction is already made. Because it widens the input it fixes a tensor shape, so it lives in `ARCH_FIELDS`; existing checkpoints are unaffected and `base` still samples 91.2% at K=16.
-
-  `--mode flex` scores one checkpoint across step counts, and the `flexk` sweep trains the four arms against a fixed-grid control. MNIST, 6 minutes per arm at equal wall clock, echo 2, fidelity at K=4/16/64 with the span across nine step counts:
-
-      fixed         98.4  88.6  55.8    span 42.8
-      rand_k        97.4  92.2  82.6    span 14.8
-      cadence       99.2  93.0  68.0    span 31.2
-      rand_cadence  99.8  94.8  83.4    span 16.4
-
-  The span is the result, and the two mechanisms turn out to do different jobs. Randomising K is what buys flexibility: it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. Cadence lifts fidelity at every K instead, most where the walk is short, and pays for it in the Frechet distance everywhere — conditioning bought with sample distribution — at about a third of the step count for the same wall clock. Neither is on by default; the fixed-grid behaviour and every published figure are unchanged.
-
-  A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so the effect is the mechanism rather than the draw. Both arms draw K from 12 to 20 while the flexibility reaches K=4 and K=64 either side of that range, which says the arm learns that cadence is a quantity to read rather than the set of step counts it happened to see — a narrow range is enough.
-
-  The val MSE column disagrees with this table, ranking `fixed` first at 0.0871. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the same grid-choice trap that inverted the memory sweep in 3.3.1. The sample columns decide.
+- **`--cadence`, off by default, which did not survive its second seed.** It widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it, on the reasoning that a frame cannot infer its own stride until it has seen two of them — by which point the first prediction is made. It does lift conditioning fidelity at every step count, 93.0% against 89.0% at K=16 on the first seed. But its apparent flexibility gain, a span of 31.2 against the fixed arm's 42.8, came back at 41.6 against 45.4 on the second seed, which is no gain at all; and combined with `--k-range` it makes flexibility consistently worse (16.4 and 19.6 against 14.8 and 10.4) along with the Frechet distance everywhere. Telling the model the stride is evidently not what taught it to read the stride, and the two signals appear to interfere. The flag stays because the fidelity lift is real and reproduced; it is off because the rest is not. Widening the input fixes a tensor shape, so it lives in `ARCH_FIELDS`.
 
 ## [3.3.1] — 2026-09-04
 

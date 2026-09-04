@@ -652,24 +652,22 @@ The default is `ddim` with `uniform` placement, which is what every figure above
 
 ### The step count as a dial
 
-The training grid is the sampling grid, so the weights are fitted to one cadence and every other K asks them to walk a schedule they never saw. On `base`, fidelity falls monotonically from 97.2% at K=6 to 68.8% at K=64 (MNIST) and 77.6% to 32.6% at K=32 (CIFAR-10), while the Frechet distance is best near the trained grid. Elsewhere the step count is a parameter; here it was part of the architecture.
+A fixed grid makes it one. The training grid is the sampling grid, so weights trained that way are fitted to a single cadence and every other K asks them to walk a schedule they never saw. On a fixed-grid checkpoint fidelity falls monotonically from 97.2% at K=6 to 68.8% at K=64 (MNIST) and 77.6% to 32.6% at K=32 (CIFAR-10), while the Frechet distance is best near the trained grid. Everywhere else in diffusion the step count is the caller's to choose; here it was part of the architecture.
 
-Two flags address it from different sides. `--k-range LO,HI` draws K per batch over a random monotone grid, so the weights meet many cadences. `--cadence` widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it — a frame cannot infer its own stride until it has seen two of them, by which time the first prediction is made. Widening the input fixes a tensor shape, so `cadence` sits in `ARCH_FIELDS`.
+`--k-range LO,HI` draws K per batch over a random monotone grid, so the weights meet many cadences. It is the default at `12,20`; `--k-range off` restores the fixed grid. `--mode flex` scores one checkpoint across step counts and `--sweep flexk` trains the arms against a fixed-grid control. MNIST, 6 minutes per arm at equal wall clock, echo 2, 500 samples at each of nine step counts, two seeds:
 
-`--mode flex` scores one checkpoint across step counts; `--sweep flexk` trains the arms against a fixed-grid control. MNIST, 6 minutes per arm at equal wall clock, echo 2, 500 samples:
-
-| arm | K=4 | K=16 | K=64 | span | Frechet at K=64 |
+| arm | K=4 | K=16 | K=64 | span (s42) | span (s123) |
 |---|---|---|---|---|---|
-| fixed | 98.4% | 88.6% | 55.8% | 42.8 | 15.727 |
-| rand_k | 97.4% | 92.2% | 82.6% | **14.8** | **10.302** |
-| cadence | 99.2% | 93.0% | 68.0% | 31.2 | 14.382 |
-| rand_cadence | **99.8%** | **94.8%** | **83.4%** | 16.4 | 14.710 |
+| fixed | 98.4% | 88.6% | 55.8% | 42.8 | 45.4 |
+| **rand_k** (default) | 97.4% | 92.2% | 82.6% | **14.8** | **10.4** |
+| cadence | 99.2% | 93.0% | 68.0% | 31.2 | 41.6 |
+| rand_cadence | **99.8%** | **94.8%** | **83.4%** | 16.4 | 19.6 |
 
-The span is the result, and the two mechanisms do different jobs. **Randomising K is what buys flexibility** — it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. **Cadence lifts fidelity at every K instead**, most where the walk is short, and pays for it in the Frechet distance everywhere: conditioning bought with sample distribution, at about a third of the step count for the same wall clock.
+The span across step counts is the result. `--k-range` cuts it three to four times on both seeds and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7; the cost is one to three points at K=4. Both arms draw K from 12 to 20 and the flexibility reaches K=4 and K=64 either side of that range, so what is learned is that cadence is a quantity to be read rather than the set of step counts seen — a narrow range suffices, which is why the default is narrow.
 
-A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so this is the mechanism and not the draw. Both arms draw K from 12 to 20, and the flexibility reaches K=4 and K=64 on either side of that range: what the arm learns is not the set of step counts it saw but that the cadence is a quantity to be read, which is why a narrow range suffices.
+`--cadence` is the other half of the idea and it did not survive its second seed. It widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it, reasoning that a frame cannot infer its own stride until it has seen two of them. The fidelity lift is real and reproduces, but the flexibility gain (31.2 against 42.8) came back at 41.6 against 45.4 on the second seed, and adding it to `--k-range` makes both the span and the Frechet distance consistently worse. It stays available and off; why the two signals interfere is not measured.
 
-The val MSE column ranks `fixed` first at 0.0871 and disagrees with all of this. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the sample columns decide. Neither flag is on by default.
+The val MSE column ranks `fixed` first and disagrees with all of this. It is scored on the fixed `--frames` grid, which is that arm's own training distribution and one cadence out of many for the others — the sample columns decide.
 
 ---
 
