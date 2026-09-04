@@ -1285,7 +1285,10 @@ def save_grid(images, cfg, path, rows=None):
 # --------------------------------------------------------------------------- #
 
 def memory_advisory(cfg, model):
-    steps = cfg.steps()
+    # An advisory has to quote the worst case that will actually occur, so
+    # under `--k-range` that is the top of the range rather than `--frames`.
+    frames = cfg.k_range[1] if cfg.k_range else cfg.frames
+    steps = frames * cfg.echo
     if model.hebb_type is not None:
         paths = 2 if model.hebb_type == "both" else 1
         row_gb = (26 if paths == 1 else 35) * steps * cfg.neurons * 4 / 1e9
@@ -1299,7 +1302,7 @@ def memory_advisory(cfg, model):
                   f"{max(1, int(2.0 / row_gb))}, fewer --frames, or --grad-ckpt.")
 
     if model.attn is not None:
-        writes = steps if cfg.attn_write == "step" else cfg.frames
+        writes = steps if cfg.attn_write == "step" else frames
         gb = model.attn.training_cache_bytes(cfg.batch, writes) / 1e9
         print(f"👁️  attention {model.attn.heads}x{model.attn.head_dim} "
               f"(kv {model.attn.kv_heads}, window {model.attn.window}) | "
@@ -1314,19 +1317,46 @@ def memory_advisory(cfg, model):
 
 
 def describe(cfg, model, training=True):
+    """Every setting that decides what a run means, before it starts.
+
+    Cheap to print and expensive to reconstruct afterwards from a log that
+    only says how it went.
+    """
     c, side, classes = cfg.shape()
+
+    # Under `--k-range` the step count is a range, and saying otherwise would
+    # name one cadence out of the nine the run actually trains on.
+    if training and cfg.k_range:
+        lo, hi = cfg.k_range
+        walk = (f"K {lo}-{hi} x {cfg.echo} echo = {lo * cfg.echo}-{hi * cfg.echo} "
+                f"steps")
+    else:
+        walk = f"{cfg.frames} frames x {cfg.echo} echo = {cfg.steps()} steps"
+
     print(f"\n🧠 {model.get_num_params():,} trainable params | {cfg.neurons} neurons "
-          f"| in {cfg.n_in} / out {cfg.n_out} | {cfg.frames} frames x {cfg.echo} echo "
-          f"= {cfg.steps()} steps | batch {cfg.batch} | "
+          f"| in {cfg.n_in} / out {cfg.n_out} | {walk} | batch {cfg.batch} | "
           f"lr {'auto' if cfg.lr is None else cfg.lr}")
     print(f"   {cfg.dataset} {c}x{side}x{side} = {cfg.pixels()} px | feature width "
           f"{cfg.feature_width()} | predict {cfg.predict} | carry {cfg.carry} | "
           f"noise {cfg.traj_noise}"
-          + (f" | K drawn from {cfg.k_range[0]}-{cfg.k_range[1]}"
-             if cfg.k_range and training else "")
           + (f" | cadence {cfg.cad_embed}d" if cfg.cadence else "")
           + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else "")
-          + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else ""))
+          + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else "")
+          + (f" | dropout {cfg.dropout:g}" if cfg.dropout else ""))
+    print(f"   T {cfg.timesteps} | {cfg.sigma_schedule} placement | "
+          f"class-dropout {cfg.class_dropout:g} | sampler {cfg.sampler} | "
+          f"cfg {cfg.cfg_scale:g}"
+          + (f" | eta {cfg.eta:g}" if cfg.eta else "")
+          + f" | sample-batch {cfg.sample_batch}")
+
+    if training:
+        budget = (f"{cfg.minutes:g} min" if cfg.minutes else
+                  f"{cfg.max_steps:,} steps" if cfg.max_steps else "until Ctrl-C")
+        print(f"   tag {cfg.tag} | seed {cfg.seed} | {budget}"
+              + (f" | {cfg.train_images:,} train images"
+                 if cfg.train_images > 0 else "")
+              + (" | compile" if cfg.compile else "")
+              + (" | grad-ckpt" if cfg.grad_ckpt else ""))
     memory_advisory(cfg, model)
 
 
