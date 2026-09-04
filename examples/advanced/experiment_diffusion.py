@@ -213,6 +213,12 @@ walk is short, and it pays for that in the Frechet distance everywhere -- so it
 buys conditioning and sells sample distribution. It also costs about a third of
 the step count at equal wall clock.
 
+A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so the effect
+is the mechanism rather than the draw. Note where those arms were trained: K is
+drawn from 12 to 20, and the flexibility reaches K=4 and K=64 either side of it.
+What the arm learns is not the range it saw but that the cadence is a quantity
+to read, which is why a narrow range is enough.
+
 Read the val MSE column against this table and it disagrees, ranking `fixed`
 first at 0.0871. It is scored on the fixed K=16 grid, which is `fixed`'s own
 training distribution and one cadence out of many for the others. The sample

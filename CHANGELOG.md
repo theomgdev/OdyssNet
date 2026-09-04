@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
   The span is the result, and the two mechanisms turn out to do different jobs. Randomising K is what buys flexibility: it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. Cadence lifts fidelity at every K instead, most where the walk is short, and pays for it in the Frechet distance everywhere — conditioning bought with sample distribution — at about a third of the step count for the same wall clock. Neither is on by default; the fixed-grid behaviour and every published figure are unchanged.
 
+  A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so the effect is the mechanism rather than the draw. Both arms draw K from 12 to 20 while the flexibility reaches K=4 and K=64 either side of that range, which says the arm learns that cadence is a quantity to read rather than the set of step counts it happened to see — a narrow range is enough.
+
   The val MSE column disagrees with this table, ranking `fixed` first at 0.0871. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the same grid-choice trap that inverted the memory sweep in 3.3.1. The sample columns decide.
 
 ## [3.3.1] — 2026-09-04

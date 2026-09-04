@@ -667,6 +667,8 @@ Two flags address it from different sides. `--k-range LO,HI` draws K per batch o
 
 The span is the result, and the two mechanisms do different jobs. **Randomising K is what buys flexibility** — it cuts the span from 42.8 points to 14.8 and holds the Frechet distance flat from K=12 to K=64, where the fixed arm's climbs from 9.3 to 15.7. **Cadence lifts fidelity at every K instead**, most where the walk is short, and pays for it in the Frechet distance everywhere: conditioning bought with sample distribution, at about a third of the step count for the same wall clock.
 
+A second seed puts `fixed` at a span of 45.4 and `rand_k` at 10.4, so this is the mechanism and not the draw. Both arms draw K from 12 to 20, and the flexibility reaches K=4 and K=64 on either side of that range: what the arm learns is not the set of step counts it saw but that the cadence is a quantity to be read, which is why a narrow range suffices.
+
 The val MSE column ranks `fixed` first at 0.0871 and disagrees with all of this. It is scored on the fixed K=16 grid, which is that arm's own training distribution and one cadence out of many for the others — the sample columns decide. Neither flag is on by default.
 
 ---
