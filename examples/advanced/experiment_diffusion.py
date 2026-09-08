@@ -368,6 +368,8 @@ class Cfg:
     frames: int = 16                # K, denoising steps actually visited
     echo: int = 4                   # E, echo steps per denoising step
     predict: str = "x0"             # x0 | eps | v
+    interpolant: str = "cosine"     # cosine | rf
+    t_density: str = "uniform"      # uniform | logit_normal
     carry: str = "trajectory"       # trajectory | independent
     traj_noise: str = "iid"         # iid | shared
     class_dropout: float = 0.1      # for classifier-free guidance
@@ -478,10 +480,21 @@ class Cfg:
 # --------------------------------------------------------------------------- #
 
 class Schedule:
-    """A cosine noise schedule and the K-step grid the model actually visits.
+    """The noise schedule and the K-step grid the model actually visits.
 
-    Cosine rather than linear because at 28x28 a linear schedule spends most of
-    its budget on timesteps that are already pure noise (Nichol & Dhariwal).
+    Everything downstream -- `q_sample`, `target`, the parameterisation
+    conversions, all five samplers, the cadence embedding -- reads the schedule
+    through `alpha_bar` and `sigma`. So an interpolant is a table here and
+    nothing else: `--interpolant` swaps the table and no other code moves.
+
+    `cosine` rather than linear because at 28x28 a linear schedule spends most
+    of its budget on timesteps that are already pure noise (Nichol & Dhariwal).
+    `rf` is the rectified-flow straight path, `x_u = (1-u) x_0 + u eps`. That is
+    a variance-exploding parameterisation, and dividing it by its own norm is
+    exactly this table at `alpha_bar = (1-u)^2 / ((1-u)^2 + u^2)` -- the two
+    differ in where the noise levels sit, not in what a step means. Which is
+    also why `--predict x0` stays: the rank ceiling belongs to what the network
+    is asked to output, and a velocity target carries epsilon at full rank.
 
     The training grid *is* the sampling grid. Training on the same strided
     timesteps the sampler will walk keeps the trajectory the model learns and
@@ -493,12 +506,22 @@ class Schedule:
         self.T = cfg.timesteps
         self.K = cfg.frames
         self.device = device
+        self.t_density = cfg.t_density
 
-        t = torch.linspace(0, 1, self.T + 1, dtype=torch.float64, device=device)
-        f = torch.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2
-        alpha_bar = (f / f[0]).clamp(1e-9, 1.0)
+        if cfg.interpolant == "rf":
+            # u runs over (0, 1]; u=1 is pure noise, which the clamp turns into
+            # the same finite top the cosine table has.
+            u = torch.linspace(0, 1, self.T + 1, dtype=torch.float64,
+                               device=device)[1:]
+            f = (1.0 - u) ** 2 / ((1.0 - u) ** 2 + u ** 2)
+            alpha_bar = f.clamp(1e-9, 1.0)
+        else:
+            t = torch.linspace(0, 1, self.T + 1, dtype=torch.float64,
+                               device=device)
+            f = torch.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2
+            alpha_bar = (f / f[0]).clamp(1e-9, 1.0)[1:]
 
-        self.alpha_bar = alpha_bar[1:].float()          # (T,), index t-1 .. t
+        self.alpha_bar = alpha_bar.float()              # (T,), index t-1 .. t
         self.sqrt_ab = self.alpha_bar.sqrt()
         self.sqrt_1mab = (1.0 - self.alpha_bar).sqrt()
 
@@ -520,10 +543,39 @@ class Schedule:
         starts at pure noise and ends on the clean image. The K-2 interior stops
         are drawn without replacement and sorted, so the walk stays monotone in
         noise while its cadence changes from batch to batch.
+
+        `--t-density` decides where those interior stops fall. `uniform` gives
+        every timestep the same chance, which spends the budget evenly over an
+        axis whose ends are nearly decided already. `logit_normal` concentrates
+        it in the middle, where the image is actually being chosen (Esser et
+        al. 2024); it is a density over the draw, so the endpoints and the
+        monotonicity are untouched either way.
         """
         if K <= 2:
             return torch.tensor([self.T - 1, 0][:K], device=self.device).long()
-        inner = torch.randperm(self.T - 2, generator=gen)[:K - 2].to(self.device) + 1
+
+        if self.t_density == "uniform":
+            inner = torch.randperm(self.T - 2,
+                                   generator=gen)[:K - 2].to(self.device) + 1
+        else:
+            # Oversample, map through the logistic, and take distinct stops:
+            # rejection would loop, and a plain round can collide.
+            n = 4 * (K - 2)
+            v = torch.sigmoid(torch.randn(n, generator=gen) * 1.0)
+            idx = (v * (self.T - 2)).long().clamp(0, self.T - 3) + 1
+            inner = torch.unique(idx)[torch.randperm(
+                torch.unique(idx).numel(), generator=gen)][:K - 2]
+            # A short draw is possible after deduplication; top it up uniformly
+            # so the grid always has the K stops it was asked for.
+            if inner.numel() < K - 2:
+                pool = torch.ones(self.T - 2)
+                pool[inner - 1] = 0.0
+                extra = pool.nonzero().flatten()[
+                    torch.randperm(int(pool.sum()), generator=gen)][
+                        :K - 2 - inner.numel()] + 1
+                inner = torch.cat([inner, extra])
+            inner = inner.to(self.device)
+
         return torch.cat([
             torch.tensor([self.T - 1], device=self.device),
             inner.sort(descending=True).values,
@@ -1506,8 +1558,10 @@ def describe(cfg, model, training=True):
           + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else "")
           + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else "")
           + (f" | dropout {cfg.dropout:g}" if cfg.dropout else ""))
-    print(f"   T {cfg.timesteps} | {cfg.sigma_schedule} placement | "
-          f"class-dropout {cfg.class_dropout:g} | sampler {cfg.sampler} | "
+    print(f"   T {cfg.timesteps} | {cfg.interpolant} interpolant | "
+          f"{cfg.sigma_schedule} placement"
+          + (f" | {cfg.t_density} density" if cfg.k_range else "")
+          + f" | class-dropout {cfg.class_dropout:g} | sampler {cfg.sampler} | "
           f"cfg {cfg.cfg_scale:g}"
           + (f" | eta {cfg.eta:g}" if cfg.eta else "")
           + f" | sample-batch {cfg.sample_batch}")
@@ -1531,7 +1585,11 @@ def describe(cfg, model, training=True):
 
 ARCH_FIELDS = ("dataset", "neurons", "n_in", "n_out", "t_embed",
                "cadence", "cad_embed", "echo_cadence", "ecad_embed",
-               "predict", "activation", "weight_init", "gates",
+               # Neither of these fixes a tensor shape, but a checkpoint scored
+               # on the wrong interpolant is scored on a schedule it never saw
+               # and says nothing -- so they are adopted rather than defaulted.
+               "predict", "interpolant", "t_density",
+               "activation", "weight_init", "gates",
                "hebb_type", "hebb_res", "attn_heads", "attn_kv_heads",
                "attn_head_dim", "attn_window", "attn_write", "attn_read",
                "attn_rope", "attn_qk_norm")
@@ -1775,6 +1833,17 @@ SWEEPS = {
         # depth, and whether it is what a drawn depth was missing.
         "ecad":         {"k_range": (), "e_range": (), "echo_cadence": True},
         "rand_e_ecad":  {"k_range": (), "echo_cadence": True},
+    },
+    # Where the noise levels sit, and where the drawn stops fall. Both read the
+    # schedule through alpha_bar, so these are two tables rather than two
+    # architectures -- and two separate claims, hence the 2x2. `--predict x0`
+    # is held across all four: the rank ceiling belongs to what the network
+    # outputs, not to the interpolant, and a velocity target would move both.
+    "flowmatch": {
+        "cosine":       {},
+        "rf":           {"interpolant": "rf"},
+        "logitnorm":    {"t_density": "logit_normal"},
+        "rf_logitnorm": {"interpolant": "rf", "t_density": "logit_normal"},
     },
 }
 
@@ -2048,7 +2117,9 @@ def run_smoke(cfg, data):
                            {"k_range": (), "e_range": (1, 4),
                             "echo_cadence": True}),
                           ("cadence", {"cadence": True}),
-                          ("fixed-K + cadence", {"k_range": (), "cadence": True})):
+                          ("fixed-K + cadence", {"k_range": (), "cadence": True}),
+                          ("rf", {"interpolant": "rf"}),
+                          ("logit-normal", {"t_density": "logit_normal"})):
         arm = replace(base, **over)
         set_seed(arm.seed)
         model, trainer = build(arm)
@@ -2119,16 +2190,56 @@ def run_smoke(cfg, data):
           float(model.W.diagonal().abs().max()) == 0.0)
 
     # 6. The random grid's contract: K stops, strictly decreasing in timestep,
-    #    anchored at pure noise and at the clean end.
-    ok, detail = True, ""
-    for k in (2, 3, 8, 32):
-        g = sched.random_grid(k)
-        if not (len(g) == k and g[0] == base.timesteps - 1
-                and (k < 2 or g[-1] == 0)
-                and (k < 2 or bool((g[1:] < g[:-1]).all()))):
-            ok, detail = False, f"K={k} gave {g.tolist()[:6]}"
-            break
-    check("random grid contract", ok, detail or "K, endpoints, monotone")
+    #    anchored at pure noise and at the clean end. It holds whichever
+    #    density places the interior stops.
+    for density in ("uniform", "logit_normal"):
+        d_sched = Schedule(replace(base, t_density=density), base.device)
+        ok, detail = True, ""
+        for k in (2, 3, 8, 32):
+            g = d_sched.random_grid(k)
+            if not (len(g) == k and g[0] == base.timesteps - 1
+                    and (k < 2 or g[-1] == 0)
+                    and (k < 2 or bool((g[1:] < g[:-1]).all()))):
+                ok, detail = False, f"K={k} gave {g.tolist()[:6]}"
+                break
+        check(f"random grid contract ({density})", ok,
+              detail or "K, endpoints, monotone")
+
+    # A density is only worth a flag if it moves the stops. Logit-normal should
+    # put more of them in the middle, where the image is decided.
+    mid = {}
+    for density in ("uniform", "logit_normal"):
+        d_sched = Schedule(replace(base, t_density=density), base.device)
+        inner = torch.cat([d_sched.random_grid(8)[1:-1] for _ in range(60)])
+        frac = float(((inner > base.timesteps * 0.25)
+                      & (inner < base.timesteps * 0.75)).float().mean())
+        mid[density] = frac
+    check("logit-normal concentrates the interior stops",
+          mid["logit_normal"] > mid["uniform"] + 0.1,
+          f"middle half holds {mid['uniform']:.0%} of uniform stops, "
+          f"{mid['logit_normal']:.0%} of logit-normal")
+
+    # 7. The rectified-flow table is the straight path in this file's own
+    #    coordinates: x_u = (1-u) x_0 + u eps, rescaled by its norm, is
+    #    sqrt(ab) x_0 + sqrt(1-ab) eps at ab = (1-u)^2/((1-u)^2+u^2).
+    rf = Schedule(replace(base, interpolant="rf"), base.device)
+    u = torch.linspace(0, 1, base.timesteps + 1,
+                       device=base.device)[1:-1]      # skip the clamped end
+    idx = torch.arange(base.timesteps - 1, device=base.device)
+    want = (1 - u) ** 2 / ((1 - u) ** 2 + u ** 2)
+    check("rf table is the straight path",
+          torch.allclose(rf.ab(idx), want, atol=1e-6),
+          f"max |ab - (1-u)^2/((1-u)^2+u^2)| = "
+          f"{float((rf.ab(idx) - want).abs().max()):.2e}")
+    # sqrt(1-ab) loses precision where ab rounds to 1 in float32, which is the
+    # table's storage rather than the schedule -- the same at the clean end of
+    # the cosine table. Checked where sigma is a number the sampler acts on.
+    keep = idx[10:]
+    u_keep = u[10:]
+    rel = ((rf.sigma(keep) - u_keep / (1 - u_keep)).abs()
+           / (u_keep / (1 - u_keep))).max()
+    check("rf sigma is u/(1-u)", float(rel) < 1e-4,
+          f"max rel err {float(rel):.2e} over sigma >= {float(rf.sigma(keep)[0]):.4f}")
 
     print(f"{'=' * 78}")
     if failures:
@@ -2264,6 +2375,14 @@ def parse_args():
     g.add_argument("--echo", type=int, default=None,
                    help=f"E, echo steps per denoising step (default: {d.echo})")
     g.add_argument("--predict", default=d.predict, choices=["x0", "eps", "v"])
+    g.add_argument("--interpolant", default=d.interpolant,
+                   choices=["cosine", "rf"],
+                   help="where the noise levels sit; rf is the rectified-flow "
+                        "straight path (default: %(default)s)")
+    g.add_argument("--t-density", default=d.t_density,
+                   choices=["uniform", "logit_normal"],
+                   help="where --k-range puts its interior stops "
+                        "(default: %(default)s)")
     g.add_argument("--carry", default=d.carry,
                    choices=["trajectory", "independent"],
                    help="trajectory keeps state/cache/trace across frames; "
@@ -2434,6 +2553,7 @@ def cfg_from_args(a):
     return Cfg(
         dataset=a.dataset, train_images=a.train_images, val_images=a.val_images,
         timesteps=a.timesteps, frames=a.frames, echo=a.echo, predict=a.predict,
+        interpolant=a.interpolant, t_density=a.t_density,
         carry=a.carry, traj_noise=a.traj_noise, class_dropout=a.class_dropout,
         k_range=tuple(a.k_range) if a.k_range else (),
         e_range=tuple(a.e_range) if a.e_range else (),
