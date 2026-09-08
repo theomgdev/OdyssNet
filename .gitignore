@@ -42,10 +42,18 @@ Thumbs.db
 # AI
 CLAUDE.md
 GEMINI.md
+.gemini/
 .claude/
+.cursor/
+.mcp.json
+opencode.json
+.github/copilot-instructions.md
 
 # Migrations & Plans
 *[mM]igration*.md
 *MIGRATION*.md
 *[pP]lan*.md
 *PLAN*.md
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
