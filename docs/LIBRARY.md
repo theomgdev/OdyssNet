@@ -650,7 +650,7 @@ Two results run against expectation. **The second-order solver is behind the fir
 
 The default is `ddim` with `uniform` placement, which is what every figure above was measured with.
 
-### The step count as a dial
+### The walk as a dial
 
 A fixed grid makes it one. The training grid is the sampling grid, so weights trained that way are fitted to a single cadence and every other K asks them to walk a schedule they never saw. On a fixed-grid checkpoint fidelity falls monotonically from 97.2% at K=6 to 68.8% at K=64 (MNIST) and 77.6% to 32.6% at K=32 (CIFAR-10), while the Frechet distance is best near the trained grid. Everywhere else in diffusion the step count is the caller's to choose; here it was part of the architecture.
 
@@ -668,6 +668,21 @@ The span across step counts is the result. `--k-range` cuts it three to four tim
 `--cadence` is the other half of the idea and it did not survive its second seed. It widens each frame with the log-sigma stride it is about to take and the fraction of the walk behind it, reasoning that a frame cannot infer its own stride until it has seen two of them. The fidelity lift is real and reproduces, but the flexibility gain (31.2 against 42.8) came back at 41.6 against 45.4 on the second seed, and adding it to `--k-range` makes both the span and the Frechet distance consistently worse. It stays available and off; why the two signals interfere is not measured.
 
 The val MSE column ranks `fixed` first and disagrees with all of this. It is scored on the fixed `--frames` grid, which is that arm's own training distribution and one cadence out of many for the others — the sample columns decide.
+
+K decides which timesteps are visited; **E decides how long the core thinks between them**, and it was the other value baked into the weights. `--e-range LO,HI` draws it per call, default `2,6`. Same protocol at echo 4, two seeds, reported as the span across nine step counts (at E=4) and across six echo depths (at K=16):
+
+| arm | span K (s42) | span E (s42) | span K (s123) | span E (s123) |
+|---|---|---|---|---|
+| fixed | 17.6 | 10.2 | 16.6 | 6.2 |
+| rand_k | 10.8 | 8.0 | 7.2 | 5.2 |
+| **rand_e** (default) | 9.2 | 5.8 | **3.6** | **2.6** |
+| rand_ke | **5.2** | 3.0 | 6.0 | 3.2 |
+| ecad | 20.8 | 16.6 | 18.0 | 10.4 |
+| rand_e_ecad | 8.8 | **2.8** | 6.4 | 3.2 |
+
+A drawn E beats the fixed control on both axes at both seeds and keeps the Frechet distance flat. It also flattens the K axis while drawing only E, so the two are not independent knobs — `rand_ke` is no better than either alone and its Frechet distance is worse everywhere.
+
+`--echo-cadence` names a hole in the mechanism. A frame is injected once and repeated for every echo step of its run, byte for byte, so the core can count the steps it has taken and never the ones it has left: the last step of an E=2 run and the second step of an E=6 run are the same input to the same state. The flag widens the frame axis to K\*E and gives each step a sinusoidal embedding of the steps remaining and the fraction elapsed — run the same frame for two steps, built once for E=2 and once for E=6, and the hidden states go from bit-identical to 2.3e-1 apart. It is off because the measurement does not support turning it on: alone it is *worse* than the control at both seeds, since at a fixed E the signal is the same constant sequence every batch and pins the model to that depth harder. Paired with a drawn E it leads the E axis at one seed and trails at the other, which is not a separation, and K\*E entries make the frame tensor E times larger for 18% fewer gradient steps.
 
 ---
 

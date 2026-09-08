@@ -4,6 +4,38 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.5.0] — 2026-09-09
+
+### Changed
+- **The diffusion example draws the thinking depth per batch as well, `--e-range 2,6` by default.** 3.4.0 made the number of denoising steps something the caller chooses; the depth spent between them was the other value baked into the weights. K decides which timesteps are visited and E decides how long the core thinks between them, so E can be drawn without touching the training distribution at all — nothing in the batch has to know which depth it will be run at, which is why the draw lives in `train_step` rather than `trajectory_batch`.
+
+  MNIST, echo 4, 6 minutes per arm at equal wall clock, two seeds. `--mode flex` gains an echo axis (`--flex-e`) and reports the two spans separately, since flexibility in K and in E are separate claims; the numbers below are the span of conditioning fidelity across nine step counts at E=4 and across six echo depths at K=16, lower being flatter:
+
+      arm            span 42       span 123
+                     K axis / E    K axis / E
+      fixed          17.6 / 10.2   16.6 /  6.2
+      rand_k         10.8 /  8.0    7.2 /  5.2
+      rand_e          9.2 /  5.8    3.6 /  2.6
+      rand_ke         5.2 /  3.0    6.0 /  3.2
+      ecad           20.8 / 16.6   18.0 / 10.4
+      rand_e_ecad     8.8 /  2.8    6.4 /  3.2
+
+  A drawn E beats the fixed control on both axes at both seeds and leaves the Frechet distance flat, which is the case `--k-range` was made the default on. It also flattens the K axis while drawing only E, so the two are not independent knobs — `rand_ke` is no better than either alone and its Frechet distance is worse everywhere (15.9–17.8 against 9.1–11.5).
+
+  `--sweep flexe` is the grid; `--e-range off` restores the fixed depth. Sweep arms now pin both ranges off wherever the axis under test is the other one, `--sweep depth` included, since a drawn K or E would average away the split those arms exist to compare. Existing checkpoints are unaffected and `base` still samples 91.2% / 9.341 at K=16.
+
+### Added
+- **`--echo-cadence`, off by default, which names a hole in the mechanism it cannot yet be shown to fix.** A frame is injected once and repeated for every echo step of its run — byte for byte, eleven of eleven transitions identical under `torch.equal`. So the core can count the steps it has taken and never the ones it has left: the last step of an E=2 run and the second step of an E=6 run are the same input to the same state, and a drawn E asks for the answer at a moment it has no way to see coming.
+
+  The flag widens the frame axis to K\*E, so `forward` resolves `ratio = 1` and each echo step carries its own vector: a sinusoidal embedding of the steps remaining and the fraction elapsed. The remaining count is left unnormalised, because "two steps left" has to mean the same thing whatever E is for a depth outside the training range to be readable. Measured on the mechanism rather than argued — run the same frame for two steps, built once for E=2 and once for E=6: without the signal the hidden states are bit-identical, with it they differ by 2.3e-1.
+
+  It is off because the measurement does not support turning it on. Alone it is *worse* than the fixed control at both seeds, since at a fixed E the remaining-step signal is the same constant sequence every batch and pins the model to that depth harder rather than freeing it — the same shape of result `--cadence` gave in 3.4.0, more sharply. Paired with a drawn E it leads the E axis at one seed (2.8 against 5.8) and trails at the other (3.2 against 2.6), which is not a separation. It also costs: K\*E entries make the frame tensor E times larger, and the arm reached 18% fewer gradient steps in the same wall clock. Widening the input fixes a tensor shape, so it lives in `ARCH_FIELDS`.
+
+  The general form of this gap is a library one, not an example one: OdyssNet is a network whose depth is time, and nothing in its API lets a model be told how much time it has. That is worth fixing where every example can reach it rather than here.
+
+### Fixed
+- **The diffusion example's `--carry independent` arm stepped the optimizer mid-trajectory.** The memoryless control issues K separate calls and told the trainer to accumulate over `cfg.frames` instead of that K. Once `--k-range` became the default in 3.4.0, K moved from 12 to 20 while `cfg.frames` stayed 16, so the accumulation counter drifted: the step landed part-way through a trajectory and the reported loss was scaled by K/16. Only the control arm was affected — the default `trajectory` arm makes one call — but the memory sweep's `independent` row was measured under it and needs re-measuring.
+
 ## [3.4.0] — 2026-09-04
 
 ### Changed

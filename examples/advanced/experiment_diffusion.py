@@ -63,8 +63,8 @@ Usage
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
     python -u experiment_diffusion.py --mode sample --tag base --cfg 3.0
-    python -u experiment_diffusion.py --mode flex --tag base
-    python -u experiment_diffusion.py --mode train --k-range off
+    python -u experiment_diffusion.py --mode flex --tag base --flex-e 1,2,4,8
+    python -u experiment_diffusion.py --mode train --k-range off --e-range off
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
 What the memory is worth
@@ -229,6 +229,46 @@ first. It is scored on the fixed `--frames` grid, which is that arm's own
 training distribution and one cadence out of many for the others. The sample
 columns decide; the loss column is the fixed-K probe beside them.
 
+So is the thinking depth
+------------------------
+K says which timesteps are visited; E says how long the core thinks between
+them, and it was the other value baked into the weights. `--e-range LO,HI`
+draws it per call, default 2-6. Same protocol as above, echo 4, two seeds,
+reported as the span across nine step counts at E=4 and across six echo depths
+at K=16:
+
+    arm            span 42       span 123
+                   K axis / E    K axis / E
+    fixed          17.6 / 10.2   16.6 /  6.2
+    rand_k         10.8 /  8.0    7.2 /  5.2
+    rand_e          9.2 /  5.8    3.6 /  2.6
+    rand_ke         5.2 /  3.0    6.0 /  3.2
+    ecad           20.8 / 16.6   18.0 / 10.4
+    rand_e_ecad     8.8 /  2.8    6.4 /  3.2
+
+A drawn E beats the fixed control on both axes at both seeds and keeps the
+Frechet distance flat, which is why it is on by default. It also flattens the K
+axis while drawing only E -- the two are not independent knobs, and `rand_ke`
+is no better than either alone while its Frechet distance is worse everywhere.
+
+`--echo-cadence` is here because the mechanism has a hole worth naming. A frame
+is injected once and repeated for every echo step of its run, byte for byte, so
+the core can count the steps it has taken and never the ones it has left: the
+last step of an E=2 run and the second step of an E=6 run are the same input to
+the same state, and a drawn E asks for the answer at a moment it cannot see
+coming. The flag widens the frame axis to K*E and gives each step a sinusoidal
+embedding of the steps remaining and the fraction elapsed. Run the same frame
+for two steps, built once for E=2 and once for E=6: without it the hidden
+states are bit-identical, with it they differ by 2.3e-1.
+
+It is off, because the measurement does not support turning it on. Alone it is
+*worse* than the control at both seeds -- at a fixed E the remaining-step
+signal is the same constant sequence every batch, so it pins the model to that
+depth harder rather than freeing it. Paired with a drawn E it leads the E axis
+at one seed (2.8 against 5.8) and trails at the other (3.2 against 2.6), which
+is not a separation. It also costs: K*E entries make the frame tensor E times
+larger, and the arm reached 18% fewer gradient steps in the same wall clock.
+
 Which sampler, and where the stops go
 -------------------------------------
 `--sampler` and `--sigma-schedule` are separate axes, so "DPM++ 2M Karras" is
@@ -336,6 +376,13 @@ class Cfg:
     # fixed-grid control arm does. The range is narrow because the flexibility
     # reaches well past it: 12-20 in training holds K=4 and K=64 at sampling.
     k_range: tuple = (12, 20)
+    # The same treatment for the other half of the walk. K sets which timesteps
+    # are visited; E sets how long the core thinks between them, so drawing it
+    # per batch varies the depth without touching the training distribution.
+    # () pins it to `echo`. Centred on `echo` so the expected cost per batch is
+    # unchanged, and narrow for the same reason `k_range` is: what is learned
+    # is that depth is a quantity, not the range it was shown.
+    e_range: tuple = (2, 6)
 
     # architecture
     neurons: int = 512
@@ -344,6 +391,12 @@ class Cfg:
     t_embed: int = 32
     cadence: bool = False           # tell the frame how far the next step moves
     cad_embed: int = 16
+    # Tell each echo step how much thinking is left. Without it the injection is
+    # byte-identical across a frame's E steps, so the core can count the steps it
+    # has taken and not the ones it has left -- and a drawn E asks it for the
+    # answer at a moment it has no way to see coming.
+    echo_cadence: bool = False
+    ecad_embed: int = 16
     activation: tuple = ("none", "tanh", "tanh")
     weight_init: tuple = ("quiet", "resonant", "quiet", "zero")
     gates: tuple = ("none", "none", "identity")
@@ -401,10 +454,23 @@ class Cfg:
         """Width of one frame: the noisy image, the clock, and the class."""
         _, _, classes = self.shape()
         return (self.pixels() + self.t_embed + classes + 1
-                + (self.cad_embed if self.cadence else 0))
+                + (self.cad_embed if self.cadence else 0)
+                + (self.ecad_embed if self.echo_cadence else 0))
 
     def steps(self):
         return self.frames * self.echo
+
+    def step_counts(self):
+        """Every distinct K*E a training call can ask `forward` for.
+
+        Dynamo specialises the step loop on that integer, so this is also the
+        number of graphs a compiled run has to hold.
+        """
+        ks = (range(self.k_range[0], self.k_range[1] + 1) if self.k_range
+              else (self.frames,))
+        es = (range(self.e_range[0], self.e_range[1] + 1) if self.e_range
+              else (self.echo,))
+        return sorted({k * e for k in ks for e in es})
 
 
 # --------------------------------------------------------------------------- #
@@ -608,6 +674,27 @@ def cadence_embedding(t, t_prev, progress, sched, dim):
                       sinusoid(progress, dim // 2, scale=8.0)], dim=-1)
 
 
+def echo_cadence_embedding(j, E, dim):
+    """How much thinking is left, and how far along it already is. `(E, dim)`.
+
+    The clock in a frame says where the trajectory is; nothing in it says how
+    long the core has to think before the answer is read. Injection repeats the
+    same vector for every echo step of a frame, so the state can count the steps
+    taken and never the steps remaining -- and with `--e-range` the depth is
+    drawn, so the moment the answer is wanted is one the core cannot see coming.
+
+    Both halves are given because they say different things. The remaining count
+    is absolute and is what a deadline is made of; the fraction is relative and
+    is what makes E=2 and E=8 comparable walks. The count is left unnormalised
+    on purpose: 'two steps left' has to mean the same thing whatever E is, which
+    is what lets a depth outside the training range still be read.
+    """
+    left = (E - 1 - j).float()
+    progress = j.float() / max(E - 1, 1)
+    return torch.cat([sinusoid(left, dim - dim // 2, scale=1.0),
+                      sinusoid(progress, dim // 2, scale=8.0)], dim=-1)
+
+
 def class_vector(labels, classes, drop_mask=None):
     """One-hot over classes plus a null slot.
 
@@ -630,12 +717,46 @@ def null_class_vector(shape, classes, device):
     return v
 
 
-def make_frames(x_t, t, cls_vec, cfg, cad=None):
-    """Assemble (B, K, F_in): the noisy image, the clock, and the class."""
+def make_frames(x_t, t, cls_vec, cfg, cad=None, echo=None):
+    """Assemble the noisy image, the clock and the class into `(B, K, F_in)`.
+
+    With `--echo-cadence` the frame axis becomes `K*E` instead: `forward`
+    resolves `ratio = steps // seq_len`, so one entry per step is what lets each
+    echo step carry its own vector rather than repeating the frame's. The E
+    copies of a frame differ in the echo embedding alone, and the K predictions
+    are read back off the last step of each run of E.
+    """
+    if x_t.ndim == 2:
+        x_t, t, cls_vec = x_t.unsqueeze(1), t.unsqueeze(1), cls_vec.unsqueeze(1)
+        cad = cad if cad is None else cad.unsqueeze(1)
     parts = [x_t, timestep_embedding(t, cfg.t_embed), cls_vec]
     if cfg.cadence:
         parts.append(cad)
-    return torch.cat(parts, dim=-1)
+    frames = torch.cat(parts, dim=-1)
+    if not cfg.echo_cadence:
+        return frames
+
+    E = cfg.echo if echo is None else echo
+    B, K, F = frames.shape
+    ecad = echo_cadence_embedding(torch.arange(E, device=frames.device), E,
+                                  cfg.ecad_embed)
+    return torch.cat([
+        frames.unsqueeze(2).expand(B, K, E, F),
+        ecad.view(1, 1, E, -1).expand(B, K, E, cfg.ecad_embed),
+    ], dim=-1).reshape(B, K * E, F + cfg.ecad_embed)
+
+
+def read_frames(out, cfg, echo=None):
+    """The K predictions in a forward pass's output.
+
+    Without `--echo-cadence` there is one output per frame already. With it the
+    frame axis is `K*E` and the answer for a frame is the last of its E steps --
+    the same moment the recurrence reads it either way.
+    """
+    if not cfg.echo_cadence:
+        return out
+    E = cfg.echo if echo is None else echo
+    return out[:, E - 1::E]
 
 
 # --------------------------------------------------------------------------- #
@@ -693,7 +814,7 @@ class Batches:
         return self.x[idx], self.y[idx]
 
 
-def trajectory_batch(x0, labels, sched, cfg, gen=None):
+def trajectory_batch(x0, labels, sched, cfg, gen=None, echo=None):
     """One reverse trajectory per image: (frames, targets).
 
     `'iid'` draws a fresh epsilon per frame, so each frame is an independent
@@ -747,7 +868,7 @@ def trajectory_batch(x0, labels, sched, cfg, gen=None):
         prog = torch.arange(K, device=x0.device).float() / max(K - 1, 1)
         cad = cadence_embedding(t, Schedule.prev_of(grid).unsqueeze(0).expand(B, K),
                                 prog.unsqueeze(0).expand(B, K), sched, cfg.cad_embed)
-    return make_frames(x_t, t, cls, cfg, cad), target
+    return make_frames(x_t, t, cls, cfg, cad, echo), target
 
 
 # --------------------------------------------------------------------------- #
@@ -788,13 +909,13 @@ def build(cfg):
         vocab_mode="continuous",
     )
     if cfg.compile:
-        # Dynamo specialises `for t in range(steps)` on the integer, so a
-        # k-range of width W compiles W graphs. The default recompile_limit
-        # is 8; past it every new K falls back to eager. Observed at
+        # Dynamo specialises `for t in range(steps)` on the integer, so every
+        # distinct K*E is its own graph. The default recompile_limit is 8; past
+        # it every new step count falls back to eager. Observed at
         # `--k-range 12,20` (9 values) as a 272k -> 95k img/s collapse once
         # the 9th cadence appeared.
-        if cfg.k_range:
-            n = cfg.k_range[1] - cfg.k_range[0] + 1
+        n = len(cfg.step_counts())
+        if n > 1:
             torch._dynamo.config.recompile_limit = max(
                 torch._dynamo.config.recompile_limit, n + 4)
         model.forward = torch.compile(model.forward)
@@ -836,7 +957,21 @@ def wipe(model, batch):
 # Training                                                                     #
 # --------------------------------------------------------------------------- #
 
-def train_step(trainer, frames, target, cfg):
+def draw_echo(cfg, gen=None):
+    """E for one training call. Drawn per batch under `--e-range`.
+
+    It belongs here rather than in `trajectory_batch` because E leaves the
+    frames untouched: the grid decides which timesteps are visited and E only
+    decides how long the core thinks between them. Nothing in the batch has to
+    know which depth it will be run at.
+    """
+    if not cfg.e_range:
+        return cfg.echo
+    lo, hi = cfg.e_range
+    return int(torch.randint(lo, hi + 1, (1,), generator=gen).item())
+
+
+def train_step(trainer, frames, target, cfg, echo=None):
     """One optimizer step over a batch of trajectories.
 
     The two arms differ in exactly one thing: whether the denoiser is allowed to
@@ -853,26 +988,34 @@ def train_step(trainer, frames, target, cfg):
     only the memory differs, which is what makes the comparison readable.
     """
     # K comes from the batch rather than the config: with `--k-range` it changes
-    # from one batch to the next, and the step count has to follow it.
-    K = frames.shape[1]
+    # from one batch to the next, and the step count has to follow it. The
+    # targets carry it either way, while the frame axis is K*E under
+    # `--echo-cadence`.
+    K = target.shape[1]
+    E = draw_echo(cfg) if echo is None else echo
+    # How many frame entries feed one denoising step.
+    width = frames.shape[1] // K
 
     if cfg.carry == "trajectory":
-        return trainer.train_batch(frames, target,
-                                   thinking_steps=K * cfg.echo,
-                                   full_sequence=True)
+        return trainer.train_batch(
+            frames, target, thinking_steps=K * E, full_sequence=True,
+            output_transform=lambda out: read_frames(out, cfg, E))
 
     # The trainer already reports the un-normalised loss, so averaging the K
     # calls gives the same quantity the trajectory arm's single call reports:
-    # the mean squared error over every frame.
+    # the mean squared error over every frame. The accumulation count is that
+    # same K, so the optimizer steps once per trajectory rather than at a stride
+    # of its own.
     total = 0.0
     for k in range(K):
         total += trainer.train_batch(
-            frames[:, k:k + 1], target[:, k:k + 1],
-            thinking_steps=cfg.echo,
+            frames[:, k * width:(k + 1) * width], target[:, k:k + 1],
+            thinking_steps=E,
             full_sequence=True,
-            gradient_accumulation_steps=cfg.frames,
+            gradient_accumulation_steps=K,
+            output_transform=lambda out: read_frames(out, cfg, E),
         )
-    return total / cfg.frames
+    return total / K
 
 
 class Validator:
@@ -938,7 +1081,8 @@ class Validator:
                 out, _ = model(frames, steps=self.cfg.steps(),
                                current_state=torch.zeros(B, model.num_neurons,
                                                          device=model.device))
-                total += F.mse_loss(out.float(), target).item()
+                total += F.mse_loss(read_frames(out, self.cfg).float(),
+                                    target).item()
                 n += 1
         finally:
             model.train()
@@ -1096,19 +1240,22 @@ def sample(model, sched, cfg, labels, carry=True, progress=False):
             prog = torch.full_like(t, k, dtype=torch.float32) / max(cfg.frames - 1, 1)
             cad = cadence_embedding(t, t_prev, prog, sched, cfg.cad_embed)
 
+        # One denoising step, so one frame in and one prediction out whether the
+        # echo steps carry their own vectors or repeat the frame's.
+        def one(carrier, cls):
+            out = carrier.run(model, make_frames(x, t, cls, cfg, cad), cfg.echo)
+            return read_frames(out, cfg)[:, 0]
+
         if split:
-            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg, cad).unsqueeze(1),
-                                  cfg.echo)[:, 0]
-            e_u = carriers[1].run(model, make_frames(x, t, null, cfg, cad).unsqueeze(1),
-                                  cfg.echo)[:, 0]
+            e_c = one(carriers[0], cond)
+            e_u = one(carriers[1], null)
         elif guided:
             both = torch.cat([make_frames(x, t, cond, cfg, cad),
-                              make_frames(x, t, null, cfg, cad)], dim=0).unsqueeze(1)
-            out = carriers[0].run(model, both, cfg.echo)[:, 0]
+                              make_frames(x, t, null, cfg, cad)], dim=0)
+            out = read_frames(carriers[0].run(model, both, cfg.echo), cfg)[:, 0]
             e_c, e_u = out[:B], out[B:]
         else:
-            e_c = carriers[0].run(model, make_frames(x, t, cond, cfg, cad).unsqueeze(1),
-                                  cfg.echo)[:, 0]
+            e_c = one(carriers[0], cond)
             e_u = e_c
 
         # A memoryless denoiser is the control: rebuild the carriers so the next
@@ -1295,9 +1442,10 @@ def save_grid(images, cfg, path, rows=None):
 
 def memory_advisory(cfg, model):
     # An advisory has to quote the worst case that will actually occur, so
-    # under `--k-range` that is the top of the range rather than `--frames`.
+    # under `--k-range` and `--e-range` those are the tops of the ranges rather
+    # than `--frames` and `--echo`.
     frames = cfg.k_range[1] if cfg.k_range else cfg.frames
-    steps = frames * cfg.echo
+    steps = frames * (cfg.e_range[1] if cfg.e_range else cfg.echo)
     if model.hebb_type is not None:
         paths = 2 if model.hebb_type == "both" else 1
         row_gb = (26 if paths == 1 else 35) * steps * cfg.neurons * 4 / 1e9
@@ -1311,7 +1459,10 @@ def memory_advisory(cfg, model):
                   f"{max(1, int(2.0 / row_gb))}, fewer --frames, or --grad-ckpt.")
 
     if model.attn is not None:
-        writes = steps if cfg.attn_write == "step" else frames
+        # `token` means one write per input entry, and `--echo-cadence` gives
+        # every step its own entry -- so there the two settings coincide.
+        writes = (steps if cfg.attn_write == "step" or cfg.echo_cadence
+                  else frames)
         gb = model.attn.training_cache_bytes(cfg.batch, writes) / 1e9
         print(f"👁️  attention {model.attn.heads}x{model.attn.head_dim} "
               f"(kv {model.attn.kv_heads}, window {model.attn.window}) | "
@@ -1333,12 +1484,14 @@ def describe(cfg, model, training=True):
     """
     c, side, classes = cfg.shape()
 
-    # Under `--k-range` the step count is a range, and saying otherwise would
-    # name one cadence out of the nine the run actually trains on.
-    if training and cfg.k_range:
-        lo, hi = cfg.k_range
-        walk = (f"K {lo}-{hi} x {cfg.echo} echo = {lo * cfg.echo}-{hi * cfg.echo} "
-                f"steps")
+    # Under `--k-range` and `--e-range` the step count is a range, and saying
+    # otherwise would name one walk out of the many the run actually trains on.
+    if training and (cfg.k_range or cfg.e_range):
+        k_lo, k_hi = cfg.k_range if cfg.k_range else (cfg.frames, cfg.frames)
+        e_lo, e_hi = cfg.e_range if cfg.e_range else (cfg.echo, cfg.echo)
+        k_txt = f"K {k_lo}-{k_hi}" if cfg.k_range else f"{cfg.frames} frames"
+        e_txt = f"echo {e_lo}-{e_hi}" if cfg.e_range else f"{cfg.echo} echo"
+        walk = (f"{k_txt} x {e_txt} = {k_lo * e_lo}-{k_hi * e_hi} steps")
     else:
         walk = f"{cfg.frames} frames x {cfg.echo} echo = {cfg.steps()} steps"
 
@@ -1349,6 +1502,7 @@ def describe(cfg, model, training=True):
           f"{cfg.feature_width()} | predict {cfg.predict} | carry {cfg.carry} | "
           f"noise {cfg.traj_noise}"
           + (f" | cadence {cfg.cad_embed}d" if cfg.cadence else "")
+          + (f" | echo-cadence {cfg.ecad_embed}d" if cfg.echo_cadence else "")
           + (f" | hebb {cfg.hebb_type}/{cfg.hebb_res}" if cfg.hebb_type else "")
           + (f" | attn {cfg.attn_heads}h" if cfg.attn_heads else "")
           + (f" | dropout {cfg.dropout:g}" if cfg.dropout else ""))
@@ -1364,8 +1518,8 @@ def describe(cfg, model, training=True):
         print(f"   tag {cfg.tag} | seed {cfg.seed} | {budget}"
               + (f" | {cfg.train_images:,} train images"
                  if cfg.train_images > 0 else "")
-              + (f" | compile ({cfg.k_range[1] - cfg.k_range[0] + 1} K-graphs)"
-                 if cfg.compile and cfg.k_range else
+              + (f" | compile ({len(cfg.step_counts())} step-count graphs)"
+                 if cfg.compile and len(cfg.step_counts()) > 1 else
                  " | compile" if cfg.compile else "")
               + (" | grad-ckpt" if cfg.grad_ckpt else ""))
     memory_advisory(cfg, model)
@@ -1376,7 +1530,7 @@ def describe(cfg, model, training=True):
 # --------------------------------------------------------------------------- #
 
 ARCH_FIELDS = ("dataset", "neurons", "n_in", "n_out", "t_embed",
-               "cadence", "cad_embed",
+               "cadence", "cad_embed", "echo_cadence", "ecad_embed",
                "predict", "activation", "weight_init", "gates",
                "hebb_type", "hebb_res", "attn_heads", "attn_kv_heads",
                "attn_head_dim", "attn_window", "attn_write", "attn_read",
@@ -1482,8 +1636,11 @@ def run_session(cfg, data, quiet=False, eval_every=200, log_every=50,
                 break
 
             x0, labels = batches.next()
-            frames, target = trajectory_batch(x0, labels, sched, cfg)
-            window.append(train_step(trainer, frames, target, cfg))
+            # Drawn once and handed to both: with `--echo-cadence` the frames
+            # have to carry the depth they will be run at.
+            echo = draw_echo(cfg)
+            frames, target = trajectory_batch(x0, labels, sched, cfg, echo=echo)
+            window.append(train_step(trainer, frames, target, cfg, echo))
             step += 1
 
             if log_every and step % log_every == 0 and not quiet:
@@ -1562,11 +1719,13 @@ SWEEPS = {
     },
     # At a fixed step budget, is temporal depth worth more than denoising
     # resolution? No other architecture can be asked this.
+    # Both ranges are pinned off: the arms differ in the K/E split they train
+    # at, which a drawn K or E would average away.
     "depth": {
-        "k32_e2": {"frames": 32, "echo": 2},
-        "k16_e4": {"frames": 16, "echo": 4},
-        "k8_e8":  {"frames": 8, "echo": 8},
-        "k4_e16": {"frames": 4, "echo": 16},
+        "k32_e2": {"frames": 32, "echo": 2, "k_range": (), "e_range": ()},
+        "k16_e4": {"frames": 16, "echo": 4, "k_range": (), "e_range": ()},
+        "k8_e8":  {"frames": 8, "echo": 8, "k_range": (), "e_range": ()},
+        "k4_e16": {"frames": 4, "echo": 16, "k_range": (), "e_range": ()},
     },
     "size": {
         "n256": {"neurons": 256, "n_in": 96, "n_out": 96},
@@ -1590,11 +1749,32 @@ SWEEPS = {
     # `--mode flex`. The two mechanisms are separated because a win has to be
     # attributable -- widening the training distribution and telling the frame
     # what its stride is are different claims.
+    # Every arm pins `e_range` off, so the axis under test is the only one that
+    # moves -- the default draws E as well.
     "flexk": {
-        "fixed":        {"k_range": ()},
-        "rand_k":       {},
-        "cadence":      {"k_range": (), "cadence": True},
-        "rand_cadence": {"cadence": True},
+        "fixed":        {"k_range": (), "e_range": ()},
+        "rand_k":       {"e_range": ()},
+        "cadence":      {"k_range": (), "e_range": (), "cadence": True},
+        "rand_cadence": {"e_range": (), "cadence": True},
+    },
+    # The same question for the other half of the walk. `--sweep flexk` made the
+    # number of denoising steps the caller's; this asks whether the depth spent
+    # between them can be too, and whether the two compose. A 2x2 over the two
+    # ranges, because that is what makes a win attributable to one of them.
+    # Both ranges are centred on the fixed value they replace, so every arm
+    # costs the same per batch in expectation and equal wall clock stays a fair
+    # budget.
+    "flexe": {
+        "fixed":   {"k_range": (), "e_range": ()},
+        "rand_k":  {"e_range": ()},
+        "rand_e":  {"k_range": ()},
+        "rand_ke": {},
+        # Injection repeats a frame's vector across its echo steps, so a drawn
+        # depth is a deadline the core cannot see. These two arms separate the
+        # signal from the randomisation: whether telling it helps at a fixed
+        # depth, and whether it is what a drawn depth was missing.
+        "ecad":         {"k_range": (), "e_range": (), "echo_cadence": True},
+        "rand_e_ecad":  {"k_range": (), "echo_cadence": True},
     },
 }
 
@@ -1653,37 +1833,63 @@ def run_bench(cfg, data, model, sched_of, seeds, count):
 
 
 FLEX_K = (4, 6, 8, 12, 16, 24, 32, 48, 64)
+FLEX_E = (1, 2, 3, 4, 6, 8)
 
 
-def run_flex(cfg, data, model, counts, count):
-    """Score one checkpoint across step counts. The answer is the curve.
+def run_flex(cfg, data, model, counts, count, echoes=None):
+    """Score one checkpoint across the walk it is asked to take. The curve is
+    the answer.
 
-    A flat row is the result worth having, not a high one: it says the step
-    count is the caller's to choose. `--k-range` is what flattens it, so this
-    is the mode that tells a `--k-range off` checkpoint from the default.
+    A flat row is the result worth having, not a high one: it says the walk is
+    the caller's to choose. `--k-range` is what flattens the K axis and
+    `--e-range` the E axis, so this is the mode that tells such a checkpoint
+    from a fixed one. The two axes are reported as separate spans because they
+    are separate claims.
+
+    The two curves cross at `--frames` x `--echo` rather than filling the grid:
+    a span is read with the other axis held, so the corners cost samples and
+    answer nothing the crossing point does not.
     """
     _, _, xva, _, scorer = data
+    echoes = tuple(echoes) if echoes else (cfg.echo,)
+    walks = [(k, cfg.echo) for k in counts]
+    if (cfg.frames, cfg.echo) not in walks:
+        walks.append((cfg.frames, cfg.echo))
+    walks += [(cfg.frames, e) for e in echoes if e != cfg.echo]
     rows = []
     print(f"\n{'=' * 78}")
-    print(f"🎚️  FLEX-K — {len(counts)} step counts | echo {cfg.echo} "
+    print(f"🎚️  FLEX — {len(counts)} step counts, {len(echoes)} echo depths "
+          f"| crossing at K={cfg.frames} E={cfg.echo} "
           f"| cfg {cfg.cfg_scale:g} | {cfg.sampler}")
     print(f"{'=' * 78}")
-    print(f"{'frames':>7} {'steps':>7} {'fidelity':>11} {'frechet':>11}")
+    print(f"{'frames':>7} {'echo':>6} {'steps':>7} {'fidelity':>11} {'frechet':>11}")
 
-    for k in counts:
-        arm = replace(cfg, frames=k)
+    for k, e in walks:
+        arm = replace(cfg, frames=k, echo=e)
         set_seed(cfg.seed)
         got = measure_samples(model, Schedule(arm, arm.device), arm, scorer,
                               xva, count)
-        print(f"{k:>7} {k * cfg.echo:>7} {got['fidelity'] * 100:>10.1f}% "
+        print(f"{k:>7} {e:>6} {k * e:>7} {got['fidelity'] * 100:>10.1f}% "
               f"{got['frechet']:>11.3f}", flush=True)
-        rows.append({"frames": k, "steps": k * cfg.echo,
-                     "fidelity": got["fidelity"] * 100, "frechet": got["frechet"]})
+        rows.append({"frames": k, "echo": e, "steps": k * e,
+                     "fidelity": got["fidelity"] * 100,
+                     "frechet": got["frechet"]})
 
-    fid = [r["fidelity"] for r in rows]
-    print(f"\n   fidelity spans {max(fid) - min(fid):.1f} points "
-          f"({min(fid):.1f} at K={rows[fid.index(min(fid))]['frames']} to "
-          f"{max(fid):.1f} at K={rows[fid.index(max(fid))]['frames']})")
+    def span(label, key, held, held_value):
+        got = [r for r in rows if r[held] == held_value]
+        fid = [r["fidelity"] for r in got]
+        lo, hi = min(fid), max(fid)
+        print(f"   fidelity spans {hi - lo:.1f} points across {label} "
+              f"({lo:.1f} at {key}={got[fid.index(lo)][key]} to "
+              f"{hi:.1f} at {key}={got[fid.index(hi)][key]}) "
+              f"at {held}={held_value}")
+
+    print()
+    if len(counts) > 1:
+        span("step counts", "frames", "echo", cfg.echo)
+    if len(echoes) > 1:
+        span("echo depths", "echo", "frames", cfg.frames)
+
     path = os.path.join(
         CKPT_DIR,
         f"flex_diffusion_{cfg.tag}_e{cfg.echo}_cfg{cfg.cfg_scale:g}_{cfg.sampler}.json")
@@ -1691,8 +1897,8 @@ def run_flex(cfg, data, model, counts, count):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump({"tag": cfg.tag, "dataset": cfg.dataset, "echo": cfg.echo,
                    "cfg_scale": cfg.cfg_scale, "count": count,
-                   "k_range": list(cfg.k_range), "cadence": cfg.cadence,
-                   "rows": rows}, fh, indent=2)
+                   "k_range": list(cfg.k_range), "e_range": list(cfg.e_range),
+                   "cadence": cfg.cadence, "rows": rows}, fh, indent=2)
     print(f"   ↳ {os.path.relpath(path, os.getcwd())}")
     return rows
 
@@ -1780,15 +1986,53 @@ def run_smoke(cfg, data):
 
     # 1. The shape contract the whole design rests on: K frames in, K
     #    predictions out, with E echo steps of temporal depth between them.
-    #    K comes from the batch, because the default draws it per batch.
+    #    Both come from the call rather than the config, because both are drawn.
     set_seed(base.seed)
     model, trainer = build(base)
     x0, labels = data[0][:8].to(base.device), data[1][:8].to(base.device)
     frames, target = trajectory_batch(x0, labels, sched, base)
     K = frames.shape[1]
-    out, _ = model(frames, steps=K * base.echo)
-    check("frame contract", tuple(out.shape) == (8, K, base.pixels()),
-          f"{tuple(frames.shape)} -> {tuple(out.shape)} over {K * base.echo} steps")
+    for E in (1, base.echo, base.echo + 3):
+        out, _ = model(frames, steps=K * E)
+        check(f"frame contract (E={E})", tuple(out.shape) == (8, K, base.pixels()),
+              f"{tuple(frames.shape)} -> {tuple(out.shape)} over {K * E} steps")
+
+    # The drawn depth stays inside the range it was given, and a range of one
+    # value is the fixed setting -- which is what makes `--e-range` an ablation.
+    e_arm = replace(base, e_range=(1, 4))
+    drawn = {draw_echo(e_arm) for _ in range(200)}
+    check("echo drawn within range", drawn <= {1, 2, 3, 4} and len(drawn) == 4,
+          f"saw {sorted(drawn)} over 200 draws")
+    off = replace(base, e_range=())
+    check("echo range off means fixed", draw_echo(off) == off.echo,
+          f"e_range () -> E={draw_echo(off)}")
+    check("step-count graphs counted",
+          replace(base, k_range=(3, 6), e_range=(1, 4)).step_counts()
+          == sorted({k * e for k in (3, 4, 5, 6) for e in (1, 2, 3, 4)}),
+          f"{len(replace(base, k_range=(3, 6), e_range=(1, 4)).step_counts())} "
+          f"distinct K*E from 4 K x 4 E")
+
+    # With `--echo-cadence` the frame axis is K*E, the E copies of a frame
+    # differ only in the echo embedding, and the K predictions are read off the
+    # last step of each run.
+    ec = replace(base, echo_cadence=True, e_range=())
+    ec_frames, ec_target = trajectory_batch(x0, labels, sched, ec, echo=3)
+    K_ec = ec_target.shape[1]
+    check("echo-cadence widens the frame axis",
+          ec_frames.shape[1] == K_ec * 3
+          and ec_frames.shape[2] == ec.feature_width(),
+          f"{K_ec} frames x E=3 -> {tuple(ec_frames.shape)}")
+    body = base.feature_width()
+    within = ec_frames[:, :3, :body]
+    check("echo copies differ only in the embedding",
+          torch.equal(within[:, 0], within[:, 1])
+          and torch.equal(within[:, 1], within[:, 2])
+          and not torch.equal(ec_frames[:, 0, body:], ec_frames[:, 1, body:]),
+          "same image/clock/class, different echo vector")
+    fake = torch.arange(2 * K_ec * 3).reshape(2, K_ec * 3, 1).float()
+    check("predictions read off the last echo step",
+          torch.equal(read_frames(fake, ec, 3), fake[:, 2::3]),
+          f"{tuple(fake.shape)} -> {tuple(read_frames(fake, ec, 3).shape)}")
 
     # 2. Learning at all, measured against the do-nothing predictor on the same
     #    frozen grid. A run that cannot beat outputting zero has learned nothing.
@@ -1797,6 +2041,12 @@ def run_smoke(cfg, data):
                           ("independent", {"carry": "independent"}),
                           ("eps-pred", {"predict": "eps"}),
                           ("fixed-K", {"k_range": ()}),
+                          ("rand-E", {"k_range": (), "e_range": (1, 4)}),
+                          ("rand-K + rand-E", {"e_range": (1, 4)}),
+                          ("echo-cadence", {"k_range": (), "echo_cadence": True}),
+                          ("rand-E + echo-cadence",
+                           {"k_range": (), "e_range": (1, 4),
+                            "echo_cadence": True}),
                           ("cadence", {"cadence": True}),
                           ("fixed-K + cadence", {"k_range": (), "cadence": True})):
         arm = replace(base, **over)
@@ -1810,8 +2060,9 @@ def run_smoke(cfg, data):
                           arm.device, arm.seed)
         for _ in range(arm.max_steps):
             bx, by = batches.next()
-            f, t = trajectory_batch(bx, by, arm_sched, arm)
-            loss = train_step(trainer, f, t, arm)
+            e = draw_echo(arm)
+            f, t = trajectory_batch(bx, by, arm_sched, arm, echo=e)
+            loss = train_step(trainer, f, t, arm, e)
         score = val.score(model)
         check(f"learns ({variant})", score < val.trivial,
               f"val {score:.4f} < trivial {val.trivial:.3f}")
@@ -1824,6 +2075,16 @@ def run_smoke(cfg, data):
                   imgs.shape == (10, flex.pixels())
                   and torch.isfinite(imgs).all().item(),
                   f"K={flex.frames} {tuple(imgs.shape)}")
+        # Same for a drawn depth: the point of the range is a walk outside it.
+        if arm.e_range or arm.echo_cadence:
+            flex = replace(arm, echo=(arm.e_range[1] if arm.e_range
+                                      else arm.echo) * 2)
+            imgs = sample(model, Schedule(flex, flex.device), flex,
+                          torch.arange(10, device=arm.device))
+            check(f"samples at unseen E ({variant})",
+                  imgs.shape == (10, flex.pixels())
+                  and torch.isfinite(imgs).all().item(),
+                  f"E={flex.echo} {tuple(imgs.shape)}")
 
     # 3. A rollout produces finite images, guided and unguided, with and
     #    without the trajectory memory.
@@ -1935,6 +2196,17 @@ examples:
     python -u experiment_diffusion.py --mode sweep --sweep size --minutes 4
     python -u experiment_diffusion.py --mode sweep --sweep predict --minutes 4
 
+  both halves of the walk are drawn per batch, so a checkpoint samples at step
+  counts and thinking depths it never trained on. --mode flex is what shows it:
+  a flat row means the walk is yours to choose
+    python -u experiment_diffusion.py --mode flex --tag base --flex-e 1,2,4,8
+    python -u experiment_diffusion.py --mode sample --tag base --frames 8 --echo 8
+    python -u experiment_diffusion.py --mode sweep --sweep flexk --minutes 6
+    python -u experiment_diffusion.py --mode sweep --sweep flexe --minutes 6
+
+  the fixed-walk behaviour, if you want a checkpoint fitted to one cadence
+    python -u experiment_diffusion.py --mode train --k-range off --e-range off
+
   plasticity, which pays for itself in memory and step rate -- the advisory
   prints the cost before it is paid
     python -u experiment_diffusion.py --mode train --tag plastic --hebb temporal --batch 32
@@ -1965,6 +2237,9 @@ def parse_args():
     g.add_argument("--flex-k", default=None, metavar="A,B,C",
                    help="step counts for --mode flex "
                         f"(default: {','.join(str(k) for k in FLEX_K)})")
+    g.add_argument("--flex-e", default=None, metavar="A,B,C",
+                   help="echo depths for --mode flex, one curve each "
+                        "(default: just --echo)")
     g.add_argument("--seeds", default=None, metavar="A,B,C",
                    help="comma-separated seeds for --mode bench "
                         "(default: --seed, 123, 54321)")
@@ -1999,6 +2274,10 @@ def parse_args():
                    metavar="LO,HI",
                    help="draw K per batch (default: %(default)s); "
                         "'off' trains at --frames instead")
+    g.add_argument("--e-range", default=",".join(str(v) for v in d.e_range),
+                   metavar="LO,HI",
+                   help="draw E per batch (default: %(default)s); "
+                        "'off' trains at --echo instead")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons)
@@ -2010,6 +2289,11 @@ def parse_args():
                    help="give each frame the stride it is about to take; "
                         "widens the input, so it fixes a tensor shape")
     g.add_argument("--cad-embed", type=int, default=d.cad_embed)
+    g.add_argument("--echo-cadence", action=argparse.BooleanOptionalAction,
+                   default=d.echo_cadence,
+                   help="give each echo step the thinking it has left; widens "
+                        "the input, so it fixes a tensor shape")
+    g.add_argument("--ecad-embed", type=int, default=d.ecad_embed)
     g.add_argument("--activation", default=",".join(d.activation),
                    help="ENC,CORE,MEM (default: %(default)s)")
     g.add_argument("--weight-init", default=",".join(d.weight_init),
@@ -2098,6 +2382,8 @@ def parse_args():
         p.error("--t-embed must be even")
     if a.cad_embed % 4:
         p.error("--cad-embed must be a multiple of 4")
+    if a.ecad_embed % 4:
+        p.error("--ecad-embed must be a multiple of 4")
     if a.frames > a.timesteps:
         p.error("--frames cannot exceed --timesteps")
     if str(a.k_range).lower() in ("off", "none", ""):
@@ -2112,6 +2398,18 @@ def parse_args():
         if hi > a.timesteps:
             p.error("--k-range HI cannot exceed --timesteps")
         a.k_range = (lo, hi)
+    if str(a.e_range).lower() in ("off", "none", ""):
+        a.e_range = ()
+    else:
+        try:
+            lo, hi = (int(v) for v in a.e_range.split(","))
+        except ValueError:
+            p.error("--e-range takes two integers as LO,HI, or 'off'")
+        # One echo step is a valid depth -- it is the shallow end of the dial,
+        # not a degenerate walk the way a one-stop grid would be.
+        if not 1 <= lo <= hi:
+            p.error("--e-range needs 1 <= LO <= HI")
+        a.e_range = (lo, hi)
     if not 0.0 <= a.class_dropout < 1.0:
         p.error("--class-dropout must be in [0, 1)")
     if a.attn_heads and a.attn_heads % a.attn_kv_heads:
@@ -2138,8 +2436,10 @@ def cfg_from_args(a):
         timesteps=a.timesteps, frames=a.frames, echo=a.echo, predict=a.predict,
         carry=a.carry, traj_noise=a.traj_noise, class_dropout=a.class_dropout,
         k_range=tuple(a.k_range) if a.k_range else (),
+        e_range=tuple(a.e_range) if a.e_range else (),
         neurons=a.neurons, n_in=a.n_in, n_out=a.n_out, t_embed=a.t_embed,
         cadence=a.cadence, cad_embed=a.cad_embed,
+        echo_cadence=a.echo_cadence, ecad_embed=a.ecad_embed,
         activation=tuple(a.activation.split(",")),
         weight_init=tuple(a.weight_init.split(",")),
         gates=tuple(a.gates.split(",")),
@@ -2223,7 +2523,9 @@ def main():
         if a.mode == "flex":
             counts = ([int(k) for k in a.flex_k.split(",")] if a.flex_k
                       else list(FLEX_K))
-            run_flex(cfg, data, model, counts, a.sample_count)
+            echoes = ([int(e) for e in a.flex_e.split(",")] if a.flex_e
+                      else None)
+            run_flex(cfg, data, model, counts, a.sample_count, echoes)
             return
 
         got = measure_samples(model, sched, cfg, scorer, xva, a.sample_count)
