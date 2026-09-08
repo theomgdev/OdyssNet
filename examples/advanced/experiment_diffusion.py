@@ -336,6 +336,11 @@ class Cfg:
     # fixed-grid control arm does. The range is narrow because the flexibility
     # reaches well past it: 12-20 in training holds K=4 and K=64 at sampling.
     k_range: tuple = (12, 20)
+    # The same treatment for the other half of the walk. K sets which timesteps
+    # are visited; E sets how long the core thinks between them, so drawing it
+    # per batch varies the depth without touching the training distribution.
+    # () pins it to `echo`.
+    e_range: tuple = ()
 
     # architecture
     neurons: int = 512
@@ -405,6 +410,18 @@ class Cfg:
 
     def steps(self):
         return self.frames * self.echo
+
+    def step_counts(self):
+        """Every distinct K*E a training call can ask `forward` for.
+
+        Dynamo specialises the step loop on that integer, so this is also the
+        number of graphs a compiled run has to hold.
+        """
+        ks = (range(self.k_range[0], self.k_range[1] + 1) if self.k_range
+              else (self.frames,))
+        es = (range(self.e_range[0], self.e_range[1] + 1) if self.e_range
+              else (self.echo,))
+        return sorted({k * e for k in ks for e in es})
 
 
 # --------------------------------------------------------------------------- #
@@ -788,13 +805,13 @@ def build(cfg):
         vocab_mode="continuous",
     )
     if cfg.compile:
-        # Dynamo specialises `for t in range(steps)` on the integer, so a
-        # k-range of width W compiles W graphs. The default recompile_limit
-        # is 8; past it every new K falls back to eager. Observed at
+        # Dynamo specialises `for t in range(steps)` on the integer, so every
+        # distinct K*E is its own graph. The default recompile_limit is 8; past
+        # it every new step count falls back to eager. Observed at
         # `--k-range 12,20` (9 values) as a 272k -> 95k img/s collapse once
         # the 9th cadence appeared.
-        if cfg.k_range:
-            n = cfg.k_range[1] - cfg.k_range[0] + 1
+        n = len(cfg.step_counts())
+        if n > 1:
             torch._dynamo.config.recompile_limit = max(
                 torch._dynamo.config.recompile_limit, n + 4)
         model.forward = torch.compile(model.forward)
@@ -836,7 +853,21 @@ def wipe(model, batch):
 # Training                                                                     #
 # --------------------------------------------------------------------------- #
 
-def train_step(trainer, frames, target, cfg):
+def draw_echo(cfg, gen=None):
+    """E for one training call. Drawn per batch under `--e-range`.
+
+    It belongs here rather than in `trajectory_batch` because E leaves the
+    frames untouched: the grid decides which timesteps are visited and E only
+    decides how long the core thinks between them. Nothing in the batch has to
+    know which depth it will be run at.
+    """
+    if not cfg.e_range:
+        return cfg.echo
+    lo, hi = cfg.e_range
+    return int(torch.randint(lo, hi + 1, (1,), generator=gen).item())
+
+
+def train_step(trainer, frames, target, cfg, echo=None):
     """One optimizer step over a batch of trajectories.
 
     The two arms differ in exactly one thing: whether the denoiser is allowed to
@@ -855,10 +886,11 @@ def train_step(trainer, frames, target, cfg):
     # K comes from the batch rather than the config: with `--k-range` it changes
     # from one batch to the next, and the step count has to follow it.
     K = frames.shape[1]
+    E = draw_echo(cfg) if echo is None else echo
 
     if cfg.carry == "trajectory":
         return trainer.train_batch(frames, target,
-                                   thinking_steps=K * cfg.echo,
+                                   thinking_steps=K * E,
                                    full_sequence=True)
 
     # The trainer already reports the un-normalised loss, so averaging the K
@@ -870,7 +902,7 @@ def train_step(trainer, frames, target, cfg):
     for k in range(K):
         total += trainer.train_batch(
             frames[:, k:k + 1], target[:, k:k + 1],
-            thinking_steps=cfg.echo,
+            thinking_steps=E,
             full_sequence=True,
             gradient_accumulation_steps=K,
         )
@@ -1297,9 +1329,10 @@ def save_grid(images, cfg, path, rows=None):
 
 def memory_advisory(cfg, model):
     # An advisory has to quote the worst case that will actually occur, so
-    # under `--k-range` that is the top of the range rather than `--frames`.
+    # under `--k-range` and `--e-range` those are the tops of the ranges rather
+    # than `--frames` and `--echo`.
     frames = cfg.k_range[1] if cfg.k_range else cfg.frames
-    steps = frames * cfg.echo
+    steps = frames * (cfg.e_range[1] if cfg.e_range else cfg.echo)
     if model.hebb_type is not None:
         paths = 2 if model.hebb_type == "both" else 1
         row_gb = (26 if paths == 1 else 35) * steps * cfg.neurons * 4 / 1e9
@@ -1335,12 +1368,14 @@ def describe(cfg, model, training=True):
     """
     c, side, classes = cfg.shape()
 
-    # Under `--k-range` the step count is a range, and saying otherwise would
-    # name one cadence out of the nine the run actually trains on.
-    if training and cfg.k_range:
-        lo, hi = cfg.k_range
-        walk = (f"K {lo}-{hi} x {cfg.echo} echo = {lo * cfg.echo}-{hi * cfg.echo} "
-                f"steps")
+    # Under `--k-range` and `--e-range` the step count is a range, and saying
+    # otherwise would name one walk out of the many the run actually trains on.
+    if training and (cfg.k_range or cfg.e_range):
+        k_lo, k_hi = cfg.k_range if cfg.k_range else (cfg.frames, cfg.frames)
+        e_lo, e_hi = cfg.e_range if cfg.e_range else (cfg.echo, cfg.echo)
+        k_txt = f"K {k_lo}-{k_hi}" if cfg.k_range else f"{cfg.frames} frames"
+        e_txt = f"echo {e_lo}-{e_hi}" if cfg.e_range else f"{cfg.echo} echo"
+        walk = (f"{k_txt} x {e_txt} = {k_lo * e_lo}-{k_hi * e_hi} steps")
     else:
         walk = f"{cfg.frames} frames x {cfg.echo} echo = {cfg.steps()} steps"
 
@@ -1366,8 +1401,8 @@ def describe(cfg, model, training=True):
         print(f"   tag {cfg.tag} | seed {cfg.seed} | {budget}"
               + (f" | {cfg.train_images:,} train images"
                  if cfg.train_images > 0 else "")
-              + (f" | compile ({cfg.k_range[1] - cfg.k_range[0] + 1} K-graphs)"
-                 if cfg.compile and cfg.k_range else
+              + (f" | compile ({len(cfg.step_counts())} step-count graphs)"
+                 if cfg.compile and len(cfg.step_counts()) > 1 else
                  " | compile" if cfg.compile else "")
               + (" | grad-ckpt" if cfg.grad_ckpt else ""))
     memory_advisory(cfg, model)
@@ -1598,6 +1633,19 @@ SWEEPS = {
         "cadence":      {"k_range": (), "cadence": True},
         "rand_cadence": {"cadence": True},
     },
+    # The same question for the other half of the walk. `--sweep flexk` made the
+    # number of denoising steps the caller's; this asks whether the depth spent
+    # between them can be too, and whether the two compose. A 2x2 over the two
+    # ranges, because that is what makes a win attributable to one of them.
+    # Both ranges are centred on the fixed value they replace, so every arm
+    # costs the same per batch in expectation and equal wall clock stays a fair
+    # budget.
+    "flexe": {
+        "fixed":   {"k_range": ()},
+        "rand_k":  {},
+        "rand_e":  {"k_range": (), "e_range": (2, 6)},
+        "rand_ke": {"e_range": (2, 6)},
+    },
 }
 
 RANK_KEY = "frechet"
@@ -1655,37 +1703,58 @@ def run_bench(cfg, data, model, sched_of, seeds, count):
 
 
 FLEX_K = (4, 6, 8, 12, 16, 24, 32, 48, 64)
+FLEX_E = (1, 2, 3, 4, 6, 8)
 
 
-def run_flex(cfg, data, model, counts, count):
-    """Score one checkpoint across step counts. The answer is the curve.
+def run_flex(cfg, data, model, counts, count, echoes=None):
+    """Score one checkpoint across the walk it is asked to take. The curve is
+    the answer.
 
-    A flat row is the result worth having, not a high one: it says the step
-    count is the caller's to choose. `--k-range` is what flattens it, so this
-    is the mode that tells a `--k-range off` checkpoint from the default.
+    A flat row is the result worth having, not a high one: it says the walk is
+    the caller's to choose. `--k-range` is what flattens the K axis and
+    `--e-range` the E axis, so this is the mode that tells such a checkpoint
+    from a fixed one. The two axes are reported as separate spans because they
+    are separate claims.
     """
     _, _, xva, _, scorer = data
+    echoes = tuple(echoes) if echoes else (cfg.echo,)
     rows = []
     print(f"\n{'=' * 78}")
-    print(f"🎚️  FLEX-K — {len(counts)} step counts | echo {cfg.echo} "
+    print(f"🎚️  FLEX — {len(counts)} step counts x {len(echoes)} echo depths "
           f"| cfg {cfg.cfg_scale:g} | {cfg.sampler}")
     print(f"{'=' * 78}")
-    print(f"{'frames':>7} {'steps':>7} {'fidelity':>11} {'frechet':>11}")
+    print(f"{'frames':>7} {'echo':>6} {'steps':>7} {'fidelity':>11} {'frechet':>11}")
 
-    for k in counts:
-        arm = replace(cfg, frames=k)
-        set_seed(cfg.seed)
-        got = measure_samples(model, Schedule(arm, arm.device), arm, scorer,
-                              xva, count)
-        print(f"{k:>7} {k * cfg.echo:>7} {got['fidelity'] * 100:>10.1f}% "
-              f"{got['frechet']:>11.3f}", flush=True)
-        rows.append({"frames": k, "steps": k * cfg.echo,
-                     "fidelity": got["fidelity"] * 100, "frechet": got["frechet"]})
+    for e in echoes:
+        for k in counts:
+            arm = replace(cfg, frames=k, echo=e)
+            set_seed(cfg.seed)
+            got = measure_samples(model, Schedule(arm, arm.device), arm, scorer,
+                                  xva, count)
+            print(f"{k:>7} {e:>6} {k * e:>7} {got['fidelity'] * 100:>10.1f}% "
+                  f"{got['frechet']:>11.3f}", flush=True)
+            rows.append({"frames": k, "echo": e, "steps": k * e,
+                         "fidelity": got["fidelity"] * 100,
+                         "frechet": got["frechet"]})
 
-    fid = [r["fidelity"] for r in rows]
-    print(f"\n   fidelity spans {max(fid) - min(fid):.1f} points "
-          f"({min(fid):.1f} at K={rows[fid.index(min(fid))]['frames']} to "
-          f"{max(fid):.1f} at K={rows[fid.index(max(fid))]['frames']})")
+    def span(label, key, held, held_value):
+        got = [r for r in rows if r[held] == held_value]
+        fid = [r["fidelity"] for r in got]
+        lo, hi = min(fid), max(fid)
+        print(f"   fidelity spans {hi - lo:.1f} points across {label} "
+              f"({lo:.1f} at {key}={got[fid.index(lo)][key]} to "
+              f"{hi:.1f} at {key}={got[fid.index(hi)][key]}) "
+              f"at {held}={held_value}")
+
+    print()
+    if len(counts) > 1:
+        span("step counts", "frames", "echo", echoes[0])
+    if len(echoes) > 1:
+        # The K held here is the one the file's fixed grid uses, so the two
+        # spans are read at the same reference point.
+        span("echo depths", "echo", "frames",
+             cfg.frames if cfg.frames in counts else counts[0])
+
     path = os.path.join(
         CKPT_DIR,
         f"flex_diffusion_{cfg.tag}_e{cfg.echo}_cfg{cfg.cfg_scale:g}_{cfg.sampler}.json")
@@ -1693,8 +1762,8 @@ def run_flex(cfg, data, model, counts, count):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump({"tag": cfg.tag, "dataset": cfg.dataset, "echo": cfg.echo,
                    "cfg_scale": cfg.cfg_scale, "count": count,
-                   "k_range": list(cfg.k_range), "cadence": cfg.cadence,
-                   "rows": rows}, fh, indent=2)
+                   "k_range": list(cfg.k_range), "e_range": list(cfg.e_range),
+                   "cadence": cfg.cadence, "rows": rows}, fh, indent=2)
     print(f"   ↳ {os.path.relpath(path, os.getcwd())}")
     return rows
 
@@ -1782,15 +1851,30 @@ def run_smoke(cfg, data):
 
     # 1. The shape contract the whole design rests on: K frames in, K
     #    predictions out, with E echo steps of temporal depth between them.
-    #    K comes from the batch, because the default draws it per batch.
+    #    Both come from the call rather than the config, because both are drawn.
     set_seed(base.seed)
     model, trainer = build(base)
     x0, labels = data[0][:8].to(base.device), data[1][:8].to(base.device)
     frames, target = trajectory_batch(x0, labels, sched, base)
     K = frames.shape[1]
-    out, _ = model(frames, steps=K * base.echo)
-    check("frame contract", tuple(out.shape) == (8, K, base.pixels()),
-          f"{tuple(frames.shape)} -> {tuple(out.shape)} over {K * base.echo} steps")
+    for E in (1, base.echo, base.echo + 3):
+        out, _ = model(frames, steps=K * E)
+        check(f"frame contract (E={E})", tuple(out.shape) == (8, K, base.pixels()),
+              f"{tuple(frames.shape)} -> {tuple(out.shape)} over {K * E} steps")
+
+    # The drawn depth stays inside the range it was given, and a range of one
+    # value is the fixed setting -- which is what makes `--e-range` an ablation.
+    e_arm = replace(base, e_range=(1, 4))
+    drawn = {draw_echo(e_arm) for _ in range(200)}
+    check("echo drawn within range", drawn <= {1, 2, 3, 4} and len(drawn) == 4,
+          f"saw {sorted(drawn)} over 200 draws")
+    check("echo range off means fixed", draw_echo(base) == base.echo,
+          f"e_range () -> E={draw_echo(base)}")
+    check("step-count graphs counted",
+          replace(base, k_range=(3, 6), e_range=(1, 4)).step_counts()
+          == sorted({k * e for k in (3, 4, 5, 6) for e in (1, 2, 3, 4)}),
+          f"{len(replace(base, k_range=(3, 6), e_range=(1, 4)).step_counts())} "
+          f"distinct K*E from 4 K x 4 E")
 
     # 2. Learning at all, measured against the do-nothing predictor on the same
     #    frozen grid. A run that cannot beat outputting zero has learned nothing.
@@ -1799,6 +1883,8 @@ def run_smoke(cfg, data):
                           ("independent", {"carry": "independent"}),
                           ("eps-pred", {"predict": "eps"}),
                           ("fixed-K", {"k_range": ()}),
+                          ("rand-E", {"k_range": (), "e_range": (1, 4)}),
+                          ("rand-K + rand-E", {"e_range": (1, 4)}),
                           ("cadence", {"cadence": True}),
                           ("fixed-K + cadence", {"k_range": (), "cadence": True})):
         arm = replace(base, **over)
@@ -1826,6 +1912,15 @@ def run_smoke(cfg, data):
                   imgs.shape == (10, flex.pixels())
                   and torch.isfinite(imgs).all().item(),
                   f"K={flex.frames} {tuple(imgs.shape)}")
+        # Same for a drawn depth: the point of the range is a walk outside it.
+        if arm.e_range:
+            flex = replace(arm, echo=arm.e_range[1] * 2)
+            imgs = sample(model, Schedule(flex, flex.device), flex,
+                          torch.arange(10, device=arm.device))
+            check(f"samples at unseen E ({variant})",
+                  imgs.shape == (10, flex.pixels())
+                  and torch.isfinite(imgs).all().item(),
+                  f"E={flex.echo} {tuple(imgs.shape)}")
 
     # 3. A rollout produces finite images, guided and unguided, with and
     #    without the trajectory memory.
@@ -1967,6 +2062,9 @@ def parse_args():
     g.add_argument("--flex-k", default=None, metavar="A,B,C",
                    help="step counts for --mode flex "
                         f"(default: {','.join(str(k) for k in FLEX_K)})")
+    g.add_argument("--flex-e", default=None, metavar="A,B,C",
+                   help="echo depths for --mode flex, one curve each "
+                        "(default: just --echo)")
     g.add_argument("--seeds", default=None, metavar="A,B,C",
                    help="comma-separated seeds for --mode bench "
                         "(default: --seed, 123, 54321)")
@@ -2001,6 +2099,10 @@ def parse_args():
                    metavar="LO,HI",
                    help="draw K per batch (default: %(default)s); "
                         "'off' trains at --frames instead")
+    g.add_argument("--e-range", default=",".join(str(v) for v in d.e_range),
+                   metavar="LO,HI",
+                   help="draw E per batch (default: off); "
+                        "'off' trains at --echo instead")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons)
@@ -2114,6 +2216,18 @@ def parse_args():
         if hi > a.timesteps:
             p.error("--k-range HI cannot exceed --timesteps")
         a.k_range = (lo, hi)
+    if str(a.e_range).lower() in ("off", "none", ""):
+        a.e_range = ()
+    else:
+        try:
+            lo, hi = (int(v) for v in a.e_range.split(","))
+        except ValueError:
+            p.error("--e-range takes two integers as LO,HI, or 'off'")
+        # One echo step is a valid depth -- it is the shallow end of the dial,
+        # not a degenerate walk the way a one-stop grid would be.
+        if not 1 <= lo <= hi:
+            p.error("--e-range needs 1 <= LO <= HI")
+        a.e_range = (lo, hi)
     if not 0.0 <= a.class_dropout < 1.0:
         p.error("--class-dropout must be in [0, 1)")
     if a.attn_heads and a.attn_heads % a.attn_kv_heads:
@@ -2140,6 +2254,7 @@ def cfg_from_args(a):
         timesteps=a.timesteps, frames=a.frames, echo=a.echo, predict=a.predict,
         carry=a.carry, traj_noise=a.traj_noise, class_dropout=a.class_dropout,
         k_range=tuple(a.k_range) if a.k_range else (),
+        e_range=tuple(a.e_range) if a.e_range else (),
         neurons=a.neurons, n_in=a.n_in, n_out=a.n_out, t_embed=a.t_embed,
         cadence=a.cadence, cad_embed=a.cad_embed,
         activation=tuple(a.activation.split(",")),
@@ -2225,7 +2340,9 @@ def main():
         if a.mode == "flex":
             counts = ([int(k) for k in a.flex_k.split(",")] if a.flex_k
                       else list(FLEX_K))
-            run_flex(cfg, data, model, counts, a.sample_count)
+            echoes = ([int(e) for e in a.flex_e.split(",")] if a.flex_e
+                      else None)
+            run_flex(cfg, data, model, counts, a.sample_count, echoes)
             return
 
         got = measure_samples(model, sched, cfg, scorer, xva, a.sample_count)
