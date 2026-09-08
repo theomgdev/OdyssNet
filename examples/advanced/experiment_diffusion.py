@@ -339,8 +339,10 @@ class Cfg:
     # The same treatment for the other half of the walk. K sets which timesteps
     # are visited; E sets how long the core thinks between them, so drawing it
     # per batch varies the depth without touching the training distribution.
-    # () pins it to `echo`.
-    e_range: tuple = ()
+    # () pins it to `echo`. Centred on `echo` so the expected cost per batch is
+    # unchanged, and narrow for the same reason `k_range` is: what is learned
+    # is that depth is a quantity, not the range it was shown.
+    e_range: tuple = (2, 6)
 
     # architecture
     neurons: int = 512
@@ -1677,11 +1679,13 @@ SWEEPS = {
     },
     # At a fixed step budget, is temporal depth worth more than denoising
     # resolution? No other architecture can be asked this.
+    # Both ranges are pinned off: the arms differ in the K/E split they train
+    # at, which a drawn K or E would average away.
     "depth": {
-        "k32_e2": {"frames": 32, "echo": 2},
-        "k16_e4": {"frames": 16, "echo": 4},
-        "k8_e8":  {"frames": 8, "echo": 8},
-        "k4_e16": {"frames": 4, "echo": 16},
+        "k32_e2": {"frames": 32, "echo": 2, "k_range": (), "e_range": ()},
+        "k16_e4": {"frames": 16, "echo": 4, "k_range": (), "e_range": ()},
+        "k8_e8":  {"frames": 8, "echo": 8, "k_range": (), "e_range": ()},
+        "k4_e16": {"frames": 4, "echo": 16, "k_range": (), "e_range": ()},
     },
     "size": {
         "n256": {"neurons": 256, "n_in": 96, "n_out": 96},
@@ -1705,11 +1709,13 @@ SWEEPS = {
     # `--mode flex`. The two mechanisms are separated because a win has to be
     # attributable -- widening the training distribution and telling the frame
     # what its stride is are different claims.
+    # Every arm pins `e_range` off, so the axis under test is the only one that
+    # moves -- the default draws E as well.
     "flexk": {
-        "fixed":        {"k_range": ()},
-        "rand_k":       {},
-        "cadence":      {"k_range": (), "cadence": True},
-        "rand_cadence": {"cadence": True},
+        "fixed":        {"k_range": (), "e_range": ()},
+        "rand_k":       {"e_range": ()},
+        "cadence":      {"k_range": (), "e_range": (), "cadence": True},
+        "rand_cadence": {"e_range": (), "cadence": True},
     },
     # The same question for the other half of the walk. `--sweep flexk` made the
     # number of denoising steps the caller's; this asks whether the depth spent
@@ -1719,10 +1725,16 @@ SWEEPS = {
     # costs the same per batch in expectation and equal wall clock stays a fair
     # budget.
     "flexe": {
-        "fixed":   {"k_range": ()},
-        "rand_k":  {},
-        "rand_e":  {"k_range": (), "e_range": (2, 6)},
-        "rand_ke": {"e_range": (2, 6)},
+        "fixed":   {"k_range": (), "e_range": ()},
+        "rand_k":  {"e_range": ()},
+        "rand_e":  {"k_range": ()},
+        "rand_ke": {},
+        # Injection repeats a frame's vector across its echo steps, so a drawn
+        # depth is a deadline the core cannot see. These two arms separate the
+        # signal from the randomisation: whether telling it helps at a fixed
+        # depth, and whether it is what a drawn depth was missing.
+        "ecad":         {"k_range": (), "e_range": (), "echo_cadence": True},
+        "rand_e_ecad":  {"k_range": (), "echo_cadence": True},
     },
 }
 
@@ -1951,8 +1963,9 @@ def run_smoke(cfg, data):
     drawn = {draw_echo(e_arm) for _ in range(200)}
     check("echo drawn within range", drawn <= {1, 2, 3, 4} and len(drawn) == 4,
           f"saw {sorted(drawn)} over 200 draws")
-    check("echo range off means fixed", draw_echo(base) == base.echo,
-          f"e_range () -> E={draw_echo(base)}")
+    off = replace(base, e_range=())
+    check("echo range off means fixed", draw_echo(off) == off.echo,
+          f"e_range () -> E={draw_echo(off)}")
     check("step-count graphs counted",
           replace(base, k_range=(3, 6), e_range=(1, 4)).step_counts()
           == sorted({k * e for k in (3, 4, 5, 6) for e in (1, 2, 3, 4)}),
@@ -2212,7 +2225,7 @@ def parse_args():
                         "'off' trains at --frames instead")
     g.add_argument("--e-range", default=",".join(str(v) for v in d.e_range),
                    metavar="LO,HI",
-                   help="draw E per batch (default: off); "
+                   help="draw E per batch (default: %(default)s); "
                         "'off' trains at --echo instead")
 
     g = p.add_argument_group("architecture")
