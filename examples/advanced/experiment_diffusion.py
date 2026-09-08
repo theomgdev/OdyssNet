@@ -863,16 +863,18 @@ def train_step(trainer, frames, target, cfg):
 
     # The trainer already reports the un-normalised loss, so averaging the K
     # calls gives the same quantity the trajectory arm's single call reports:
-    # the mean squared error over every frame.
+    # the mean squared error over every frame. The accumulation count is that
+    # same K, so the optimizer steps once per trajectory rather than at a stride
+    # of its own.
     total = 0.0
     for k in range(K):
         total += trainer.train_batch(
             frames[:, k:k + 1], target[:, k:k + 1],
             thinking_steps=cfg.echo,
             full_sequence=True,
-            gradient_accumulation_steps=cfg.frames,
+            gradient_accumulation_steps=K,
         )
-    return total / cfg.frames
+    return total / K
 
 
 class Validator:
