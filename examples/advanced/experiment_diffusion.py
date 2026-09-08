@@ -63,8 +63,8 @@ Usage
     python -u experiment_diffusion.py --mode sweep --sweep memory --max-steps 600 --minutes 25
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 3
     python -u experiment_diffusion.py --mode sample --tag base --cfg 3.0
-    python -u experiment_diffusion.py --mode flex --tag base
-    python -u experiment_diffusion.py --mode train --k-range off
+    python -u experiment_diffusion.py --mode flex --tag base --flex-e 1,2,4,8
+    python -u experiment_diffusion.py --mode train --k-range off --e-range off
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
 What the memory is worth
@@ -228,6 +228,46 @@ Read the val MSE column against this table and it disagrees, ranking `fixed`
 first. It is scored on the fixed `--frames` grid, which is that arm's own
 training distribution and one cadence out of many for the others. The sample
 columns decide; the loss column is the fixed-K probe beside them.
+
+So is the thinking depth
+------------------------
+K says which timesteps are visited; E says how long the core thinks between
+them, and it was the other value baked into the weights. `--e-range LO,HI`
+draws it per call, default 2-6. Same protocol as above, echo 4, two seeds,
+reported as the span across nine step counts at E=4 and across six echo depths
+at K=16:
+
+    arm            span 42       span 123
+                   K axis / E    K axis / E
+    fixed          17.6 / 10.2   16.6 /  6.2
+    rand_k         10.8 /  8.0    7.2 /  5.2
+    rand_e          9.2 /  5.8    3.6 /  2.6
+    rand_ke         5.2 /  3.0    6.0 /  3.2
+    ecad           20.8 / 16.6   18.0 / 10.4
+    rand_e_ecad     8.8 /  2.8    6.4 /  3.2
+
+A drawn E beats the fixed control on both axes at both seeds and keeps the
+Frechet distance flat, which is why it is on by default. It also flattens the K
+axis while drawing only E -- the two are not independent knobs, and `rand_ke`
+is no better than either alone while its Frechet distance is worse everywhere.
+
+`--echo-cadence` is here because the mechanism has a hole worth naming. A frame
+is injected once and repeated for every echo step of its run, byte for byte, so
+the core can count the steps it has taken and never the ones it has left: the
+last step of an E=2 run and the second step of an E=6 run are the same input to
+the same state, and a drawn E asks for the answer at a moment it cannot see
+coming. The flag widens the frame axis to K*E and gives each step a sinusoidal
+embedding of the steps remaining and the fraction elapsed. Run the same frame
+for two steps, built once for E=2 and once for E=6: without it the hidden
+states are bit-identical, with it they differ by 2.3e-1.
+
+It is off, because the measurement does not support turning it on. Alone it is
+*worse* than the control at both seeds -- at a fixed E the remaining-step
+signal is the same constant sequence every batch, so it pins the model to that
+depth harder rather than freeing it. Paired with a drawn E it leads the E axis
+at one seed (2.8 against 5.8) and trails at the other (3.2 against 2.6), which
+is not a separation. It also costs: K*E entries make the frame tensor E times
+larger, and the arm reached 18% fewer gradient steps in the same wall clock.
 
 Which sampler, and where the stops go
 -------------------------------------
@@ -2155,6 +2195,17 @@ examples:
     python -u experiment_diffusion.py --mode sweep --sweep depth --minutes 4
     python -u experiment_diffusion.py --mode sweep --sweep size --minutes 4
     python -u experiment_diffusion.py --mode sweep --sweep predict --minutes 4
+
+  both halves of the walk are drawn per batch, so a checkpoint samples at step
+  counts and thinking depths it never trained on. --mode flex is what shows it:
+  a flat row means the walk is yours to choose
+    python -u experiment_diffusion.py --mode flex --tag base --flex-e 1,2,4,8
+    python -u experiment_diffusion.py --mode sample --tag base --frames 8 --echo 8
+    python -u experiment_diffusion.py --mode sweep --sweep flexk --minutes 6
+    python -u experiment_diffusion.py --mode sweep --sweep flexe --minutes 6
+
+  the fixed-walk behaviour, if you want a checkpoint fitted to one cadence
+    python -u experiment_diffusion.py --mode train --k-range off --e-range off
 
   plasticity, which pays for itself in memory and step rate -- the advisory
   prints the cost before it is paid
