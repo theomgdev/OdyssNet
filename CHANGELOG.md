@@ -4,6 +4,29 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.0] — 2026-09-09
+
+### Changed
+- **The diffusion example walks the rectified-flow straight path by default, `--interpolant rf`.** Everything downstream of the schedule — `q_sample`, the targets, the parameterisation conversions, all five samplers, the cadence embedding — reads it through `alpha_bar` and `sigma`, so an interpolant is a table here and nothing else. `x_u = (1-u) x_0 + u eps` divided by its own norm is exactly `sqrt(ab) x_0 + sqrt(1-ab) eps` at `ab = (1-u)²/((1-u)² + u²)`, with `sigma = u/(1-u)`; both identities are checked in `--mode smoke`, and `_step_euler` turned out to already be rectified-flow Euler written in sigma coordinates.
+
+  That settles the parameterisation question a flow interpolant usually raises. The rank ceiling documented since 3.2 belongs to *what the network is asked to output*, not to the path it walks, so a velocity target would carry epsilon at full rank and hit the same ceiling `--predict eps` does. `x_0` stays and the flow lives in the schedule, where it costs nothing.
+
+  MNIST cannot answer which path is better: all four arms sit at 96–98% at K=4, and the `cosine` arm's own Frechet distance moved 17.1 to 10.5 between seeds, wider than the gaps under test. CIFAR-10 separates them — 768 neurons, 10 minutes per arm at equal wall clock, two seeds, averaged over K=8 to 64 since K=4 is the degenerate end of every curve:
+
+      arm             frechet 42/123   fidelity 42/123
+      cosine             7.48 / 8.25      48.3 / 48.3
+      rf                 7.22 / 6.13      48.0 / 49.1
+      logitnorm          8.03 / 7.30      39.2 / 37.9
+      rf_logitnorm       5.01 / 7.70      45.5 / 45.8
+
+  `rf` gives the same conditioning fidelity as cosine with a better Frechet distance at both seeds. `--interpolant cosine` restores the old schedule, and `--sweep flowmatch` is the grid.
+
+### Added
+- **`--t-density logit_normal`, off by default.** It draws `--k-range`'s interior stops from a logistic rather than uniformly, concentrating them where the image is decided rather than spreading them over an axis whose ends are nearly settled (Esser et al. 2024). It does what it claims — measured in the smoke test, the middle half of the schedule holds 52% of uniform stops and 73% of these — and it costs nine to eleven points of conditioning fidelity at both seeds, which is why it is off. The likely reason is a constraint this file has and that paper does not: here the training grid *is* the sampling grid, so thinning the noisy end leaves the sampler walking through timesteps training barely visited. Untested. `rf_logitnorm` has the best Frechet distance in the table on one seed and does not reproduce it on the other, which is the pattern `--cadence` and `--echo-cadence` both showed.
+
+### Fixed
+- **A checkpoint older than a config field was scored under today's default for it.** `adopt_saved_arch` only adopted fields the saved payload actually carried, so when `--interpolant` changed default the `base` checkpoint — written before the field existed — sampled at 89.2% instead of its measured 91.2%, silently, since nothing about the state dict disagrees. Adopted fields now fall back to what the default was when the checkpoint could have been written, and the smoke test strips a field from a payload to prove it.
+
 ## [3.5.0] — 2026-09-09
 
 ### Changed

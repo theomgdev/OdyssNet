@@ -682,6 +682,23 @@ K decides which timesteps are visited; **E decides how long the core thinks betw
 
 A drawn E beats the fixed control on both axes at both seeds and keeps the Frechet distance flat. It also flattens the K axis while drawing only E, so the two are not independent knobs — `rand_ke` is no better than either alone and its Frechet distance is worse everywhere.
 
+### Which path between noise and image
+
+Everything downstream of the schedule reads it through `alpha_bar` and `sigma`, so an interpolant is a table and nothing else. The rectified-flow straight path `x_u = (1-u) x_0 + u eps`, divided by its own norm, is exactly this file's `sqrt(ab) x_0 + sqrt(1-ab) eps` at `ab = (1-u)²/((1-u)² + u²)`, with `sigma = u/(1-u)`; both identities are checked in `--mode smoke`, and `_step_euler` was already rectified-flow Euler written in sigma. The rank ceiling belongs to what the network outputs rather than to the path it walks, so `--predict x0` stays — a velocity target carries epsilon at full rank and hits the same ceiling `eps` does.
+
+MNIST cannot answer this. All four arms sit at 96–98% at K=4, and the `cosine` arm's own Frechet distance moved 17.1 to 10.5 between seeds, wider than the gaps under test. CIFAR-10 separates them — 768 neurons, 10 minutes per arm at equal wall clock, two seeds, averaged over K=8 to 64:
+
+| arm | frechet (s42) | frechet (s123) | fidelity (s42) | fidelity (s123) |
+|---|---|---|---|---|
+| cosine | 7.48 | 8.25 | 48.3% | 48.3% |
+| **rf** (default) | **7.22** | **6.13** | 48.0% | **49.1%** |
+| logitnorm | 8.03 | 7.30 | 39.2% | 37.9% |
+| rf_logitnorm | 5.01 | 7.70 | 45.5% | 45.8% |
+
+`--interpolant rf` is the default: the same fidelity as cosine with a better Frechet distance at both seeds. `--t-density logit_normal` draws `--k-range`'s interior stops from a logistic instead of uniformly, concentrating them where the image is decided (Esser et al. 2024). It does what it claims — the middle half of the schedule holds 52% of uniform stops and 73% of these — and it costs nine to eleven points of fidelity at both seeds, so it stays off. The likely reason is a constraint this file has and that paper does not: here the training grid *is* the sampling grid, so thinning the noisy end leaves the sampler walking timesteps training barely visited. Untested. `rf_logitnorm` leads the Frechet column on one seed and not the other, which is not a lead.
+
+### Telling the core how much thinking is left
+
 `--echo-cadence` names a hole in the mechanism. A frame is injected once and repeated for every echo step of its run, byte for byte, so the core can count the steps it has taken and never the ones it has left: the last step of an E=2 run and the second step of an E=6 run are the same input to the same state. The flag widens the frame axis to K\*E and gives each step a sinusoidal embedding of the steps remaining and the fraction elapsed — run the same frame for two steps, built once for E=2 and once for E=6, and the hidden states go from bit-identical to 2.3e-1 apart. It is off because the measurement does not support turning it on: alone it is *worse* than the control at both seeds, since at a fixed E the signal is the same constant sequence every batch and pins the model to that depth harder. Paired with a drawn E it leads the E axis at one seed and trails at the other, which is not a separation, and K\*E entries make the frame tensor E times larger for 18% fewer gradient steps.
 
 ---

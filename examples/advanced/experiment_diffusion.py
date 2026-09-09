@@ -269,6 +269,47 @@ at one seed (2.8 against 5.8) and trails at the other (3.2 against 2.6), which
 is not a separation. It also costs: K*E entries make the frame tensor E times
 larger, and the arm reached 18% fewer gradient steps in the same wall clock.
 
+Which path between noise and image
+----------------------------------
+Everything downstream of the schedule reads it through `alpha_bar` and `sigma`,
+so an interpolant is a table and nothing else. The rectified-flow straight path
+`x_u = (1-u) x_0 + u eps`, divided by its own norm, is exactly this file's
+`sqrt(ab) x_0 + sqrt(1-ab) eps` at `ab = (1-u)^2/((1-u)^2 + u^2)`, and `sigma`
+comes out `u/(1-u)`. Both identities are checked in `--mode smoke`. Nothing
+else moves: `_step_euler` was already rectified-flow Euler written in sigma.
+
+That also settles the parameterisation. The rank ceiling belongs to what the
+network is asked to output, not to the path it walks, so a velocity target
+would carry epsilon at full rank and hit the same ceiling `--predict eps` does.
+`x_0` stays and the flow lives in the schedule, where it costs nothing.
+
+MNIST cannot answer this: all four arms sit at 96-98% at K=4, and the Frechet
+distance of the `cosine` arm alone moved 17.1 to 10.5 between seeds, which is
+wider than the gaps being measured. CIFAR-10 separates them. 768 neurons,
+10 minutes per arm at equal wall clock, two seeds, averaged over K=8 to 64
+(K=4 is the degenerate end of the curve everywhere):
+
+    arm             frechet 42/123   fidelity 42/123
+    cosine             7.48 / 8.25      48.3 / 48.3
+    rf                 7.22 / 6.13      48.0 / 49.1
+    logitnorm          8.03 / 7.30      39.2 / 37.9
+    rf_logitnorm       5.01 / 7.70      45.5 / 45.8
+
+`rf` is the default: same fidelity as cosine, better Frechet at both seeds.
+
+`--t-density logit_normal` draws `--k-range`'s interior stops from a logistic
+rather than uniformly, concentrating them where the image is decided (Esser et
+al. 2024). It does what it says -- the middle half of the schedule holds 52% of
+uniform stops and 73% of these -- and it costs nine to eleven points of
+fidelity at both seeds. It stays off. The likely reason is a constraint this
+file has and that paper does not: here the training grid *is* the sampling
+grid, so thinning the noisy end leaves the sampler walking through timesteps
+training barely visited. Untested.
+
+`rf_logitnorm` has the best Frechet distance in the table on one seed and does
+not reproduce it on the other, which is the pattern `--cadence` and
+`--echo-cadence` both showed. One seed of a Frechet lead is not a lead.
+
 Which sampler, and where the stops go
 -------------------------------------
 `--sampler` and `--sigma-schedule` are separate axes, so "DPM++ 2M Karras" is
@@ -368,7 +409,11 @@ class Cfg:
     frames: int = 16                # K, denoising steps actually visited
     echo: int = 4                   # E, echo steps per denoising step
     predict: str = "x0"             # x0 | eps | v
-    interpolant: str = "cosine"     # cosine | rf
+    # The straight path, and stops drawn evenly along it. `rf` is the default
+    # because it leads the Frechet distance at equal fidelity on CIFAR-10 at
+    # both seeds; `logit_normal` is not, because concentrating the stops costs
+    # nine to eleven points of fidelity there.
+    interpolant: str = "rf"         # cosine | rf
     t_density: str = "uniform"      # uniform | logit_normal
     carry: str = "trajectory"       # trajectory | independent
     traj_noise: str = "iid"         # iid | shared
@@ -1616,6 +1661,13 @@ def guard_overwrite(cfg, overwrite, resume):
             f"   --overwrite  discard it and start over\n")
 
 
+# What an adopted field meant before it existed. A checkpoint written before a
+# field was added carries no value for it, and falling through to today's
+# default would score those weights on a schedule they never trained on --
+# silently, since nothing about the state dict disagrees.
+LEGACY_DEFAULTS = {"interpolant": "cosine", "t_density": "uniform"}
+
+
 def adopt_saved_arch(cfg, path, grid_from_cli=()):
     """Re-adopt the architecture a checkpoint was trained with.
 
@@ -1631,8 +1683,11 @@ def adopt_saved_arch(cfg, path, grid_from_cli=()):
     # save_checkpoint merges extra_data into the top level rather than nesting it.
     saved = payload.get("cfg") or {}
     adopt = ARCH_FIELDS + tuple(f for f in GRID_FIELDS if f not in grid_from_cli)
-    changed = {f: saved[f] for f in adopt
-               if f in saved and saved[f] != getattr(cfg, f)}
+    changed = {}
+    for f in adopt:
+        was = saved.get(f, LEGACY_DEFAULTS.get(f, getattr(cfg, f)))
+        if was != getattr(cfg, f):
+            changed[f] = was
     for f in ("activation", "weight_init", "gates"):
         if f in changed:
             changed[f] = tuple(changed[f])
@@ -2185,6 +2240,23 @@ def run_smoke(cfg, data):
         fresh.output_decoder.weight, model.output_decoder.weight)
     check("checkpoint round-trip", same, os.path.basename(latest))
 
+    # A checkpoint written before a field existed carries no value for it, and
+    # today's default is the wrong answer -- the weights trained on what the
+    # default used to be. Nothing about the state dict disagrees, so this is
+    # the only place it can be caught.
+    payload = torch.load(latest, map_location="cpu", weights_only=False)
+    stripped = latest.replace("_latest", "_legacy")
+    payload["cfg"] = {k: v for k, v in (payload.get("cfg") or {}).items()
+                      if k not in LEGACY_DEFAULTS}
+    torch.save(payload, stripped)
+    try:
+        adopted = adopt_saved_arch(replace(base, interpolant="rf"), stripped)
+        check("a checkpoint older than a field keeps that field's old default",
+              adopted.interpolant == LEGACY_DEFAULTS["interpolant"],
+              f"no saved value -> {adopted.interpolant}")
+    finally:
+        os.remove(stripped)
+
     # 5. The invariant the whole library is built on.
     check("W diagonal pinned to zero",
           float(model.W.diagonal().abs().max()) == 0.0)
@@ -2317,6 +2389,12 @@ examples:
 
   the fixed-walk behaviour, if you want a checkpoint fitted to one cadence
     python -u experiment_diffusion.py --mode train --k-range off --e-range off
+
+  which path between noise and image, and where the drawn stops fall. MNIST is
+  too easy to separate these -- the sweep is written for CIFAR-10
+    python -u experiment_diffusion.py --mode sweep --sweep flowmatch --dataset cifar10 --neurons 768 --n-in 288 --n-out 288 --minutes 10
+    python -u experiment_diffusion.py --mode train --interpolant cosine
+    python -u experiment_diffusion.py --mode train --t-density logit_normal
 
   plasticity, which pays for itself in memory and step rate -- the advisory
   prints the cost before it is paid
