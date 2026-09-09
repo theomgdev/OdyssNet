@@ -234,7 +234,7 @@ model = OdyssNet(
 *   **Transplantation:** `attn_head_dim` defaults to a value derived from `num_neurons`, so pin it explicitly when transplanting between cores of different sizes, or the attention geometry moves with the neuron count.
 *   **Compatibility:** works with `gradient_checkpointing=True`, AMP, neurogenesis and Hebbian plasticity; tested for all of them.
 *   **Precision:** attention runs with autocast off, so the cache is single-dtype and the softmax accumulates in fp32; half precision measured ~0.017 of loss worse. `attend`/`write` carry `@torch._dynamo.disable` because Inductor miscompiles that region — **do not remove it**, every compiled run with attention on dies on `Half != float`. The resulting graph break is free when the step has other work to fuse and costs the speedup when attention is the only thing switched on, so measure before assuming `torch.compile` pays there.
-*   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` being the 2.x architecture exactly. On TinyStories at 2 min/arm it is the 2.x architecture that wins — see the sweep's own notes.
+*   **Measure before you believe:** `examples/advanced/experiment_llm.py --mode sweep --sweep attn` gives every arm the same wall-clock, with `off` building no attention at all. On TinyStories at 2 min/arm the `off` arm wins — see [docs/LIBRARY.md](docs/LIBRARY.md#language-modeling-examplesadvancedexperiment_llmpy).
 
 ---
 

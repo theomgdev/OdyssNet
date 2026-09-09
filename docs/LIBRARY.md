@@ -507,7 +507,7 @@ The knob that remains yours is `attn_read`: at `think_gap=1` querying once per t
 
 ### Does it help? Measured, on TinyStories
 
-`examples/advanced/experiment_llm.py` exposes every knob on the command line and ships an ablation preset whose `off` arm is the 2.x architecture exactly — same seed, same `W`:
+`examples/advanced/experiment_llm.py` exposes every knob on the command line and ships an ablation preset whose `off` arm builds no attention at all — same seed, same `W`:
 
 ```bash
 python -u experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128     # equal wall-clock
@@ -524,7 +524,53 @@ The two questions have opposite answers, and both are worth knowing. 1024 neuron
 | 4 heads, `attn_read='token'` | 19.75 ppl | 17.75 ppl on 4.19M tokens |
 | 4 heads, multi-head | 21.40 ppl | 27.38 ppl on 3.06M tokens |
 
-**Attention learns more per token — 16% better perplexity at the default heads — and costs more per second.** Which fact decides a run depends on whether it is token-limited or time-limited. On a 2.6M-parameter core on a consumer GPU, the clock binds and the 2.x architecture still wins the wall-clock comparison; the per-token advantage is the half that scales with hardware and with core width, since the throughput cost is launch overhead rather than arithmetic. `0.0%` collapsed cold starts in every arm, attention on or off.
+**Attention learns more per token — 16% better perplexity at the default heads — and costs more per second.** Which fact decides a run depends on whether it is token-limited or time-limited. On a 2.6M-parameter core on a consumer GPU, the clock binds and the no-attention arm still wins the wall-clock comparison; the per-token advantage is the half that scales with hardware and with core width, since the throughput cost is launch overhead rather than arithmetic. `0.0%` collapsed cold starts in every arm, attention on or off.
+
+---
+
+## Language Modeling (`examples/advanced/experiment_llm.py`)
+
+Tokens are injected one at a time, the signal echoes for `think_gap` extra steps, and the readout neurons are decoded to vocabulary logits. Depth is temporal, so the question is not how many layers but how many steps per token, and whether that is worth the wall clock. Every figure below is RTX 3060 Ti, 1024 neurons, 2.6M parameters, vocab 2048, on TinyStories.
+
+### Choosing a tokenizer
+
+The industrial answer is a large vocabulary — Llama 3 at 128k, Qwen ~151k, Gemma 256k, and even the deliberately small models at 32k–49k. It does not transfer here: those models are 2048 wide or more, so an embedding table amortizes against a large body of compute, while a 1024-neuron core would *become* the table. Measured on a held-out 906 KB slice of `tinystories.txt`:
+
+| tokenizer | vocabulary | bytes/token | embed+decoder |
+|---|---|---|---|
+| `byte` | 256 | 1.000 | 0.20M |
+| trained BPE | 1,024 | 3.079 | 0.79M |
+| **trained BPE (default)** | **2,048** | **3.601** | **1.57M** |
+| trained BPE | 4,096 | 3.908 | 3.15M |
+| tiktoken `gpt2` | 50,257 | 3.914 | 38.6M |
+| tiktoken `cl100k_base` | 100,277 | 4.146 | 77.1M |
+| tiktoken `o200k_base` | 200,019 | 4.190 | 153.8M |
+
+A 4,096-token BPE trained on this corpus matches GPT-2's 50k vocabulary to within 0.2% at one twelfth the ids, because an in-domain vocabulary spends every merge on text the model will actually see. `cl100k_base` buys 6% more compression for 24x the embedding parameters — 2.6M becomes 78M, 98% of it lookup table — and is unrunnable at the documented batch, since the `batch x chunk x vocab` logits tensor alone is 4.9 GB in fp32 at 256 x 48 x 100,277. `--tokenizer <encoding>` is there for a standard vocabulary to compare against, a larger core, or skipping the training pass; bits-per-byte is reported so those runs stay comparable, since perplexity is not across vocabularies.
+
+`--tokenizer byte` is chosen for a different reason than cost. It is the only option under which a character is reliably its own token, which is what character-level work needs — a model that has only ever seen `100` as one id has learned nothing about the three digits in it. The price is sequence length: one byte per token against the BPE's 3.6, and this architecture is latency-bound on sequential steps.
+
+### How many steps per token
+
+`--sweep gap`, 1.3 min/arm, batch 128 — temporal depth pays, but only the first step of it. `gap=1` reached val ppl 16.85 on 5.68M tokens while `gap=0` reached only 48.04 on 11.85M: one extra echo step per token beat twice the data. `gap=3` and `gap=5` cost 4-6x per token and never got far enough to compete (ppl ~410-415 at 1.5-2.3M tokens) — a verdict about wall clock, not about depth per token.
+
+### Cold starts, and the state that never resets
+
+`--sweep coldstart`, 1500 steps, batch 128. The default `gap=1` configuration develops a degenerate absorbing state that only cold starts reveal. With state carried indefinitely (`cold_start_every=0`), 15.6% of held-out shards collapsed to ~240 nats/token and pooled val loss read 39.55 while *training* loss looked healthy at 2.689. With staggered per-row resets (`cold_start_every=32`), 0% collapsed and pooled val loss was 2.68 (ppl 14.60) at a training loss of 2.706. Same seed, same steps, same tokens — the failure is removed at no measurable cost in fit quality.
+
+This is also why eval batch size matters: it sets how many shards the val split is cut into and therefore which corpus positions each shard starts at, and only some starting positions fall into the absorbing state.
+
+### Speed
+
+The echo loop issues thousands of small kernels per step and is bound by launching them — profiled on a 10-neuron core at batch 32 over 16 steps, ~5,800 launches for about 20 ms of GPU work. So `--compile` is the largest speedup on offer: 2.2x on a bare core, 4.0x with `--hebb both`, 3.6x with plasticity and attention together. It is what makes plasticity affordable, adding 132% to the step eager against 26% compiled. The price is a warmup of a minute or two, longer with plasticity and attention on; the graph is stable across the train/eval alternation afterwards.
+
+Batch is nearly free for the same reason: throughput scaled ~linearly from 6k to 274k tok/s between batch 8 and 512.
+
+One trap if you compile your own loop rather than using this one: give the model fixed shapes. A ragged final batch is a new shape, and enough recompiles exhaust Dynamo's budget and silently drop the process back to eager for good, the only symptom being a step time that never improved. This script feeds fixed-size batches from the token cache.
+
+### Reference run
+
+`--mode train --minutes 25 --batch 256` at the defaults, 2,625,280 parameters: held-out **loss 2.2009, ppl 9.03, bits/byte 0.8764**, median cold start 2.3154, **0.0% collapsed cold starts**, 226.15M tokens at 150,761 tok/s. `--mode eval --tag base` re-scores the saved checkpoint. These figures are defined against the exact token cache that run was trained on — a rebuilt cache moves the held-out split and the score with it.
 
 ---
 

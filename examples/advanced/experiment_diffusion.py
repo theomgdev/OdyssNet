@@ -33,27 +33,10 @@ answer is read off `n_out` neurons, so whatever the network outputs is a
 rank-`n_out` view of a P-dimensional image, and the parameterisation decides
 whether that rank is enough. Epsilon is white noise -- isotropic, full rank,
 incompressible -- so a rank-192 view of it keeps 192/784 of the variance and
-pins the achievable MSE at 0.755 however long training runs. A 573k-parameter
-run measured 0.791: saturated, not undertrained. Natural images are low rank,
-and the same 192 directions carry all but 3.4% of MNIST's variance. Measured at
-3 minutes per arm, as a fraction of the do-nothing predictor on the same frozen
-grid:
-
-    x_0     10.2%      falls 0.215 -> 0.048 from pure noise to nearly clean
-    v       56.3%      x_0-like at high t, epsilon-like at low t, so it
-                       inherits the rank problem over half the range
-    eps     79.2%      flat across every timestep, at the bound
-
-`--sweep size` carries epsilon arms at four widths, and they behave as the rank
-argument says they must -- always above the bound, monotone in `n_out`, and
-closing on it with training. All four
-sample at chance:
-
-    n_out    bound 1 - n_out/P    measured
-       96                0.878       0.896  (2,200 steps)
-      144                0.816       0.845  (2,115 steps)
-      192                0.755       0.791  (3,003 steps)
-      288                0.633       0.681  (3,643 steps)
+pins the achievable MSE at 0.755 however long training runs. Natural images are
+low rank, and the same 192 directions carry all but 3.4% of MNIST's variance.
+`--sweep size` carries epsilon arms at four widths to check that the bound is
+where the argument puts it.
 
 Usage
 -----
@@ -67,296 +50,21 @@ Usage
     python -u experiment_diffusion.py --mode train --k-range off --e-range off
     python -u experiment_diffusion.py --dataset cifar10 --neurons 768
 
-What the memory is worth
-------------------------
-Measured, not claimed. `--sweep memory` at equal wall clock -- 3 minutes per arm,
-MNIST, seed 54321, guidance 2.0, and the Frechet distance taken in a fixed
-classifier's feature space:
+What the numbers say
+--------------------
+`docs/LIBRARY.md` carries the measurements and the tables: what the trajectory
+memory is worth against a memoryless control, whether temporal depth beats
+denoising resolution at a fixed step budget, the width curve, the samplers and
+stop placements, the step count and thinking depth as dials, and which
+interpolant walks between noise and image.
 
-    arm                    val MSE   fidelity   frechet     params
-    trajectory              0.0967      83.6%    19.921    573,376
-    traj_attn               0.1250      83.0%    30.423    901,184
-    traj_noise_shared       0.1762      83.4%    18.912    573,376
-    traj_full               0.1980      19.6%   169.113    902,720
-    traj_hebb_spatial       0.2037      11.6%   202.660    574,912
-    traj_hebb_temporal      0.2059      10.8%   214.899    574,912
-    traj_hebb_both          0.2142      16.8%   149.040    576,448
-    independent             0.3054      10.4%   152.321    573,376
-
-`independent` is the control that matters: the same frames, the same targets and
-the same gradient budget, issued as K separate calls so the denoiser begins every
-frame with nothing -- which is what a UNet sampler does. Carrying the trajectory
-instead takes conditioning fidelity from chance to 83.6% and the Frechet
-distance from 152.3 to 19.9 at an identical parameter count. That is what this
-file was written to test, and it survived its control.
-
-The cleanest form of the same measurement needs no second training run at all.
-`--mode eval` samples one checkpoint twice, with the carry on and with it wiped
-between denoising steps -- identical weights, identical guidance, one line of
-difference at inference:
-
-    carried            fidelity 91.4%   frechet  9.8
-    wiped each step    fidelity 53.6%   frechet 40.8
-
-That run also reports sampling-batch sensitivity, because the plastic buffer is
-a batch mean and a batch generated together would share one memory. With
-plasticity off, which is the default, there is nothing to share and fidelity
-holds between 90.8% and 92.8% from batch 10 to batch 100. Turn `--hebb` on and
-the question becomes live again, which is why the probe is printed rather than
-argued.
-
-The rest is worth reading for what it costs.
-
-`traj_noise_shared` is the arm the validation grid decides. One epsilon per
-trajectory leaves two frames enough to recover x_0 by linear algebra, so the
-model can learn an inversion instead of a denoiser, and an inversion cannot
-follow it into sampling, where the frames come from its own predictions. Scored
-on the iid grid it sits at 0.1762 against `trajectory`'s 0.0967 -- the shortcut
-does not survive contact with independent noise, which is the theory holding.
-Its samples are a different story: 83.4% fidelity and the best Frechet in the
-table on this seed, against 54.2% and 76.8 on seed 42. `--traj-noise iid` is the
-default because it has never been worse on the sample columns, which are the
-ones that decide; the loss column is reported beside them so an arm that trades
-one for the other stays visible.
-
-`traj_attn` is behind `trajectory` on all three columns here for 57% more
-parameters, and it reached only 862 steps in the same three minutes. On one seed
-at 500 samples that is not a separation, and per parameter it is a loss, so
-attention is available and is not the default. Data harder than MNIST is the
-case for `--attn-heads 4`, and that case is not measured here.
-
-`traj_hebb_temporal` is behind on every column, and `traj_full` does not recover
-what attention alone had. Plasticity is also slow: at equal wall clock rather
-than equal gradients the plastic arms reach roughly 6% of the plain arm's step
-count and attention roughly 28%, because the retained trace grows with the step
-count, the batch and the neuron count together. On either budget, plasticity
-loses on this task -- which is what `hebb_type=None` costing nothing is for.
-
-A note on what the batch means here: the plastic buffer is a batch mean, so a
-batch of images generated together share one plastic memory -- the hive mind
-applied to generation. Sample quality can therefore depend on the sampling batch
-size, which is why `--sample-batch` exists and why eval reports it.
-
-What temporal depth is worth
-----------------------------
-The K frames and the E echo steps between them multiply into the same compute,
-so `--sweep depth` holds K*E = 64 fixed and asks which of the two the budget
-should buy. Only this architecture can ask it: on a UNet the number of denoising
-steps and the depth spent inside one are different resources, and here they are
-the same one. MNIST, seed 54321, x_0, guidance 2.0, 3 minutes per arm:
-
-    arm      frames  echo   val MSE   fidelity   frechet    steps
-    k32_e2       32     2    0.0860      73.0%    13.059    3,593
-    k16_e4       16     4    0.0914      83.6%    15.968    3,800
-    k8_e8         8     8    0.0947      88.0%    13.963    3,932
-    k4_e16        4    16    0.0999      95.0%    15.657    4,004
-
-Conditioning fidelity climbs monotonically with echo depth at identical compute,
-while the Frechet distance stays flat across all four -- 13.1 to 16.0, in no
-order -- so what improves is the conditioning rather than the sample
-distribution narrowing onto a few modes. Held-out loss runs the other way, and
-that is the denoising grid rather than the model: fewer frames means coarser
-timesteps, so each one is a harder prediction. The deepest arm also samples in
-four denoising steps instead of thirty-two, which is the cheapest inference in
-the table by a factor of eight.
-
-Two things to hold against it. The arms are equal wall clock rather than equal
-gradients, and the step counts spread 11% in the deepest arm's favour. And the
-ranked table crowns k32_e2, because `RANK_KEY` is Frechet and Frechet is the one
-column that does not separate here -- read the fidelity column for this sweep.
-The default stays 16 x 4 on one seed of evidence; trading denoising resolution
-for echo depth is a change worth a second seed first.
-
-What width is worth
--------------------
-`--sweep size` at the same budget, the x_0 arms:
-
-    arm    neurons  n_out     params   val MSE   fidelity   frechet
-    n256       256     96    221,152    0.1107      75.6%    27.633
-    n384       384    144    380,880    0.0959      83.0%    21.165
-    n512       512    192    573,376    0.0918      85.8%    14.732
-    n768       768    288  1,056,672    0.0866      87.6%    11.523
-
-Returns are still positive at a million parameters and already shallow: 4.8x the
-parameters of n256 buys twelve points of fidelity. `n_out` scales with the width
-in this grid, so the curve mixes capacity with output rank -- which is the pair
-the epsilon arms above separate, since those move only rank and stay at chance
-whatever the width.
-
-The step count is a dial
-------------------------
-A fixed grid makes it one. The training grid is the sampling grid, so weights
-trained that way are fitted to a single cadence and every other K asks for a
-walk they never saw. Measured on a fixed-grid checkpoint, conditioning fidelity
-falls monotonically from 97.2% at K=6 to 68.8% at K=64 on MNIST, and 77.6% to
-32.6% at K=32 on CIFAR-10, while the Frechet distance is best near the trained
-grid. Everywhere else in diffusion the step count is the caller's to choose;
-here it was part of the architecture.
-
-`--k-range LO,HI` draws K per batch over a random monotone grid, so the weights
-see many cadences instead of one. It is the default at 12-20, and it is the one
-change that makes the dial work. MNIST, 6 minutes per arm at equal wall clock,
-echo 2, 500 samples at each of nine step counts, over two seeds:
-
-    arm            K=4    K=16    K=64    span 42   span 123
-    fixed         98.4    88.6    55.8       42.8       45.4
-    rand_k        97.4    92.2    82.6       14.8       10.4
-    cadence       99.2    93.0    68.0       31.2       41.6
-    rand_cadence  99.8    94.8    83.4       16.4       19.6
-
-The span across step counts is the result, and `--k-range` cuts it by three to
-four times while holding the Frechet distance flat from K=12 to K=64, where the
-fixed arm's climbs from 9.3 to 15.7. It costs one to three points at K=4, which
-is the trade the table is here to show. Note where the arms were trained: K is
-drawn from 12 to 20 and the flexibility reaches K=4 and K=64 either side of it,
-so what is learned is not the range but that cadence is a quantity to be read.
-A narrow range is enough, which is why the default is narrow.
-
-`--cadence` is the other half of the idea and it did not survive its second
-seed. It widens each frame with the log-sigma stride about to be taken and the
-fraction of the walk behind it, on the reasoning that a frame cannot infer its
-own stride until it has seen two of them. It does lift fidelity at every K --
-93.0% against 89.0% at K=16 on the first seed -- but its apparent flexibility
-gain (31.2 against 42.8) came back at 41.6 against 45.4 on the second, which is
-the fixed arm's own number. Worse, adding it to `--k-range` makes flexibility
-consistently *worse* (16.4 and 19.6 against 14.8 and 10.4) and the Frechet
-distance worse everywhere. It stays available and off: telling the model the
-stride is not what taught it to read the stride, and the two signals appear to
-interfere. Why is not measured.
-
-Read the val MSE column against this table and it disagrees, ranking `fixed`
-first. It is scored on the fixed `--frames` grid, which is that arm's own
-training distribution and one cadence out of many for the others. The sample
-columns decide; the loss column is the fixed-K probe beside them.
-
-So is the thinking depth
-------------------------
-K says which timesteps are visited; E says how long the core thinks between
-them, and it was the other value baked into the weights. `--e-range LO,HI`
-draws it per call, default 2-6. Same protocol as above, echo 4, two seeds,
-reported as the span across nine step counts at E=4 and across six echo depths
-at K=16:
-
-    arm            span 42       span 123
-                   K axis / E    K axis / E
-    fixed          17.6 / 10.2   16.6 /  6.2
-    rand_k         10.8 /  8.0    7.2 /  5.2
-    rand_e          9.2 /  5.8    3.6 /  2.6
-    rand_ke         5.2 /  3.0    6.0 /  3.2
-    ecad           20.8 / 16.6   18.0 / 10.4
-    rand_e_ecad     8.8 /  2.8    6.4 /  3.2
-
-A drawn E beats the fixed control on both axes at both seeds and keeps the
-Frechet distance flat, which is why it is on by default. It also flattens the K
-axis while drawing only E -- the two are not independent knobs, and `rand_ke`
-is no better than either alone while its Frechet distance is worse everywhere.
-
-`--echo-cadence` is here because the mechanism has a hole worth naming. A frame
-is injected once and repeated for every echo step of its run, byte for byte, so
-the core can count the steps it has taken and never the ones it has left: the
-last step of an E=2 run and the second step of an E=6 run are the same input to
-the same state, and a drawn E asks for the answer at a moment it cannot see
-coming. The flag widens the frame axis to K*E and gives each step a sinusoidal
-embedding of the steps remaining and the fraction elapsed. Run the same frame
-for two steps, built once for E=2 and once for E=6: without it the hidden
-states are bit-identical, with it they differ by 2.3e-1.
-
-It is off, because it loses. Alone it is *worse* than the control at both seeds
--- at a fixed E the remaining-step signal is the same constant sequence every
-batch, so it pins the model to that depth harder rather than freeing it. Paired
-with a drawn E it split the seeds on MNIST, so the pair was re-run on CIFAR-10,
-where the arms actually separate:
-
-    E-axis span      seed 42   seed 123
-    rand_e               3.8        2.4
-    rand_e_ecad          7.2        4.0
-
-Behind at both seeds on the one axis it exists to improve, and costing 9.6
-points of fidelity at one of them. It also costs before that: K*E entries make
-the frame tensor E times larger, and the arm reached 18% fewer gradient steps
-in the same wall clock.
-
-So the signal is real -- the hidden states prove it moves -- and giving it to a
-diffusion model does not help. Whether a model with a harder use for its own
-depth would do better is a different question and not this file's.
-
-Which path between noise and image
-----------------------------------
-Everything downstream of the schedule reads it through `alpha_bar` and `sigma`,
-so an interpolant is a table and nothing else. The rectified-flow straight path
-`x_u = (1-u) x_0 + u eps`, divided by its own norm, is exactly this file's
-`sqrt(ab) x_0 + sqrt(1-ab) eps` at `ab = (1-u)^2/((1-u)^2 + u^2)`, and `sigma`
-comes out `u/(1-u)`. Both identities are checked in `--mode smoke`. Nothing
-else moves: `_step_euler` was already rectified-flow Euler written in sigma.
-
-That also settles the parameterisation. The rank ceiling belongs to what the
-network is asked to output, not to the path it walks, so a velocity target
-would carry epsilon at full rank and hit the same ceiling `--predict eps` does.
-`x_0` stays and the flow lives in the schedule, where it costs nothing.
-
-MNIST cannot answer this: all four arms sit at 96-98% at K=4, and the Frechet
-distance of the `cosine` arm alone moved 17.1 to 10.5 between seeds, which is
-wider than the gaps being measured. CIFAR-10 separates them. 768 neurons,
-10 minutes per arm at equal wall clock, two seeds, averaged over K=8 to 64
-(K=4 is the degenerate end of the curve everywhere):
-
-    arm             frechet 42/123   fidelity 42/123
-    cosine             7.48 / 8.25      48.3 / 48.3
-    rf                 7.22 / 6.13      48.0 / 49.1
-    logitnorm          8.03 / 7.30      39.2 / 37.9
-    rf_logitnorm       5.01 / 7.70      45.5 / 45.8
-
-`rf` is the default: same fidelity as cosine, better Frechet at both seeds.
-
-`--t-density logit_normal` draws `--k-range`'s interior stops from a logistic
-rather than uniformly, concentrating them where the image is decided (Esser et
-al. 2024). It does what it says -- the middle half of the schedule holds 52% of
-uniform stops and 73% of these -- and it costs nine to eleven points of
-fidelity at both seeds. It stays off. The likely reason is a constraint this
-file has and that paper does not: here the training grid *is* the sampling
-grid, so thinning the noisy end leaves the sampler walking through timesteps
-training barely visited. Untested.
-
-`rf_logitnorm` has the best Frechet distance in the table on one seed and does
-not reproduce it on the other, which is the pattern `--cadence` and
-`--echo-cadence` both showed. One seed of a Frechet lead is not a lead.
-
-Which sampler, and where the stops go
--------------------------------------
-`--sampler` and `--sigma-schedule` are separate axes, so "DPM++ 2M Karras" is
-`--sampler dpmpp_2m --sigma-schedule karras`. Every sampler here calls the model
-exactly once per denoising step, which is not a coincidence: a second call
-inside one step would advance the recurrent state twice, and the state is the
-thing this file exists to test. That rules out the multistage solvers and keeps
-the multistep ones, whose history is their own previous output.
-
-`--mode bench` scores one checkpoint across the grid without training anything.
-MNIST `base`, 500 samples, mean over seeds 42/123/54321, cfg 3.0, eta 0:
-
-    sampler     uniform fid   uniform fre   karras fid   karras fre
-    ddim              92.3         9.522         57.1       19.396
-    ddpm              92.6        10.304         69.9       18.424
-    euler             92.1         9.522         57.1       19.396
-    euler_a           92.5         9.182         56.5       20.260
-    dpmpp_2m          90.7         9.517         54.9       18.853
-
-`euler` and `ddim` agree to three decimals, which is the arithmetic checking
-itself: at eta=0 both integrate the same probability-flow ODE, one written in
-alpha_bar and one in sigma.
-
-Two results worth keeping. The second-order solver is *behind* the first-order
-ones -- `dpmpp_2m` trails `ddim` by 1.6 points of fidelity on MNIST and 2.5 on
-CIFAR-10. Its correction extrapolates through the previous step's `x_0` on the
-assumption that the denoiser is a pure function of `(x_t, t)`, and here it is
-not: the model already carries its own history, so the solver's history is a
-second, redundant memory built on an assumption the architecture breaks.
-
-And `karras` loses everywhere, by 20 to 50 points. The placement is not wrong --
-it is the standard one -- but it moves the stops onto timesteps the model never
-trained on, and this file trains on the grid it samples. That is a property of
-the design rather than a bug in the placement, which is why the axis is exposed
-rather than hidden: on a model trained over the full schedule it should behave
-as it does elsewhere.
+Two constraints those results rest on, because they shape what can be added
+here. Every sampler calls the model exactly once per denoising step: a second
+call inside one step would advance the recurrent state twice, and the state is
+the thing this file exists to test -- which rules out multistage solvers and
+keeps the multistep ones, whose history is their own previous output. And the
+training grid is the sampling grid, so any stop placement the model was not
+trained on is off-distribution by construction.
 """
 
 import sys
@@ -2252,9 +1960,9 @@ def run_smoke(cfg, data):
     check("checkpoint round-trip", same, os.path.basename(latest))
 
     # A checkpoint written before a field existed carries no value for it, and
-    # today's default is the wrong answer -- the weights trained on what the
-    # default used to be. Nothing about the state dict disagrees, so this is
-    # the only place it can be caught.
+    # the current default is the wrong answer -- those weights were trained
+    # under the value in LEGACY_DEFAULTS. Nothing about the state dict
+    # disagrees, so this is the only place it can be caught.
     payload = torch.load(latest, map_location="cpu", weights_only=False)
     stripped = latest.replace("_latest", "_legacy")
     payload["cfg"] = {k: v for k, v in (payload.get("cfg") or {}).items()

@@ -26,8 +26,9 @@ Design notes
 * **Two tokenizers, one flag.** ``--tokenizer bpe`` (the default) trains a
   byte-level BPE on the corpus itself, once, and pins it. ``--tokenizer
   cl100k_base`` (or any other tiktoken encoding) skips that step entirely —
-  nothing to train, nothing to cache, no ``tokenizers`` dependency. See
-  "Choosing a tokenizer" below for why the default is the small trained one.
+  nothing to train, nothing to cache, no ``tokenizers`` dependency. A small
+  in-domain vocabulary is the default because at a 1024-neuron core a large
+  table would become the model.
 * **Offline + instant restart.** The corpus is tokenized once, streaming, into
   a flat integer memmap next to ``data/`` (element width chosen from the
   vocabulary size); later runs mmap it in milliseconds. Peak memory during
@@ -37,195 +38,40 @@ Design notes
   walking its own contiguous shard of the corpus. Hidden state carries across
   chunks (``keep_state=True``) and the model detaches it internally, which is
   textbook truncated BPTT — the model effectively sees unbounded context
-  instead of restarting cold every 512 tokens.
+  instead of restarting cold every 512 tokens. ``--cold-start-every`` staggers
+  per-row resets, without which a degenerate absorbing state goes unseen.
 * **Honest metrics.** Validation is a fixed held-out tail of the corpus, and
   perplexity is always computed from *unsmoothed* cross-entropy. Bits-per-byte
   is reported alongside, because per-token perplexity is not comparable across
   tokenizers and bits-per-byte is.
 * **Budget-matched comparison.** Sweep arms are given equal wall-clock, and
   both val PPL and tokens-consumed are reported, so "learns more per token"
-  can be told apart from "simply runs faster".
+  can be told apart from "simply runs faster". ``--max-steps N`` compares at
+  equal tokens instead; the two questions have different answers.
 * **Attention is a flag, not a fork.** ``--attn-heads 4`` gives every thinking
   step a query over the states before it; at zero (the default) nothing is
   built. Its output projection starts at zero and the module is constructed
   after the core, so an attention run and a non-attention run at the same seed
-  begin from the same W — the comparison has one variable in it. See
-  "Attention" below.
+  begin from the same W — the comparison has one variable in it.
 
-Choosing a tokenizer
---------------------
-The industrial answer to "which vocabulary" is a large one: Llama 3 uses a
-128k tiktoken-style BPE, Qwen ~151k, Gemma a 256k SentencePiece, and even the
-deliberately small models (Mistral, Phi-3, SmolLM) sit at 32k-49k. That answer
-does not transfer here, and the reason is arithmetic rather than taste. Those
-models carry a hidden width of 2048 or more, so an embedding table amortizes
-against a large body of compute; this one is a 1024-neuron core, and the table
-would *become* the model.
-
-Measured on a held-out 906 KB slice of ``tinystories.txt`` — bytes per token,
-higher is better compression:
-
-    tokenizer                vocabulary   bytes/token   embed+decoder
-    -----------------------------------------------------------------
-    byte                            256         1.000          0.20M
-    trained BPE                   1,024         3.079          0.79M
-    trained BPE (the default)     2,048         3.601          1.57M
-    trained BPE                   4,096         3.908          3.15M
-    tiktoken gpt2                50,257         3.914         38.6M
-    tiktoken cl100k_base        100,277         4.146         77.1M
-    tiktoken o200k_base         200,019         4.190        153.8M
-
-A 4,096-token BPE trained on this corpus matches GPT-2's 50k vocabulary to
-within 0.2% (3.908 vs 3.914 bytes/token) at one twelfth the ids, because an
-in-domain vocabulary spends every merge on text the model will actually see.
-``cl100k_base`` buys 6% more compression for 24x the embedding parameters: at
-the defaults that is 2.6M parameters (1.05M of them the chaos core) becoming
-78M, 98% of it lookup table — and unrunnable at the documented batch, since
-the logits tensor alone is ``batch x chunk x vocab``, or 4.9 GB in fp32 at
-256 x 48 x 100,277.
-
-So the default stays ``--tokenizer bpe --vocab-size 2048``, and the reference
-run below is defined against it. The tiktoken path is for the cases where the
-trade goes the other way: skipping the training step, comparing against a
-standard vocabulary, or scaling the core up to where a large table pays for
-itself. Bits-per-byte is reported so those runs stay comparable — perplexity
-is not, across vocabularies.
-
-``--tokenizer byte`` sits at the opposite end and is chosen for a different
-reason than cost. It is the only option under which a character is reliably
-its own token, which is what character-level work needs: a subword merge hides
-the units the model has to manipulate, so a model that has only ever seen
-``100`` as one id has learned nothing about the three digits in it. The
-vocabulary table nearly vanishes (0.20M against a 1.05M core), leaving the
-chaos core as most of what is being measured. The price is sequence length —
-one byte per token against the BPE's 3.6, so the same text is ~3.6x more
-timesteps, and this architecture is latency-bound on sequential steps. Reach
-for it when the token boundary matters, not as a general default.
-
-Attention
----------
-A transformer stacks attention between layers. This model has none, so
-attention goes along the axis it does have: at every thinking step the state
-queries a cache of the states that came before it, and what comes back is
-added to the same pre-activation signal the recurrence and the token embedding
-feed. What the core does by mixing everything through one matrix, attention
-does by naming what it wants.
-
-The flags that matter, in the order they usually matter:
+The attention flags, in the order they usually matter:
 
     --attn-heads 4          switch it on (0, the default, builds nothing)
     --attn-kv-heads 1       multi-query; the cache is what OOMs, not the weights
     --attn-window 256       how far back a query can see
     --attn-write token      one entry per token, not per thinking step
 
-The cost is not the parameters. A query is issued every step, so `--think-gap`
-multiplies the *reads*; `--attn-write token` keeps the cache measured in tokens
-so it does not also multiply the *entries*. And the keys and values a backward
-pass has to keep are quadratic in the writes inside one truncated-BPTT window
-— chunk², not run length — which is the number this script prints before
+The cost is not the parameters. A query is issued every step, so ``--think-gap``
+multiplies the *reads*; ``--attn-write token`` keeps the cache measured in
+tokens so it does not also multiply the *entries*. The keys and values a
+backward pass has to keep are quadratic in the writes inside one truncated-BPTT
+window — chunk², not run length — which is the number this script prints before
 training starts rather than after the OOM.
 
-One more thing the branch does not cost you: its output projection starts at
-zero and is divided by the square root of its own width, so switching attention
-on — or widening it — changes nothing until training decides otherwise. Without
-that division a wide branch drowns the recurrence (`docs/LIBRARY.md` carries
-the measurement).
-
-`--sweep attn` is the measurement: seven arms, equal wall-clock, `off` being
-the 2.x architecture exactly. Add `--max-steps N` to compare at equal *tokens*
-instead — the two questions have different answers.
-
-Speed
------
-The echo loop issues thousands of small kernels per step and is bound by
-launching them, not by the arithmetic inside any of them: profiled on a
-10-neuron core at batch 32 over 16 steps, ~5,800 launches for about 20 ms of
-GPU work. So `--compile` is the largest speedup on offer, by a wide margin:
-
-    --compile               2.2x on a bare core
-                            4.0x with --hebb both
-                            3.6x with --hebb both and attention
-
-It is also what makes plasticity affordable — eager it adds 132% to the step,
-compiled 26%. The price is a warmup of a minute or two before the first step,
-longer with plasticity and attention on; after that the graph is stable across
-the train/eval alternation.
-
-One trap worth knowing if you compile your own loop rather than using this one:
-give the model fixed shapes. A ragged final batch is a new shape, and enough
-recompiles exhaust Dynamo's budget and silently drop the process back to eager
-for good — the only symptom is a step time that never improved. This script
-feeds fixed-size batches from the token cache and does not have the problem.
-
-What the sweeps measured (RTX 3060 Ti, 1024 neurons, 2.6M params, vocab 2048)
-----------------------------------------------------------------------------
-* ``--sweep gap``, 1.3 min/arm, batch 128 — temporal depth pays, but only the
-  first step of it. ``gap=1`` reached val ppl 16.85 on 5.68M tokens while
-  ``gap=0`` reached only 48.04 on 11.85M: one extra echo step per token beat
-  twice the data. ``gap=3``/``gap=5`` cost 4-6x per token and, at equal
-  wall-clock, never got far enough to compete (ppl ~410-415 at 1.5-2.3M
-  tokens) — a verdict about wall-clock, not about depth per token.
-* ``--sweep coldstart``, 1500 steps, batch 128 — the default ``gap=1``
-  configuration develops a degenerate absorbing state that only cold starts
-  reveal. With state carried indefinitely (``cold_start_every=0``): 15.6% of
-  held-out shards collapsed to ~240 nats/token and pooled val loss read 39.55,
-  while *training* loss looked healthy at 2.689. With staggered per-row resets
-  (``cold_start_every=32``): 0% collapsed, pooled val loss 2.68 (ppl 14.60),
-  training loss 2.706. Same seed, same steps, same tokens — the failure is
-  removed at no measurable cost in fit quality.
-* Batch is nearly free: throughput scaled ~linearly 6k -> 274k tok/s from
-  batch 8 to 512, because the model is latency-bound on sequential steps.
-* ``--sweep attn``, 2 min/arm, batch 128 — **at equal wall-clock the 2.x
-  architecture wins**, by median cold-start shard ppl:
-
-      arm          p50 ppl   bits/byte   Mtokens    tok/s
-      ---------------------------------------------------
-      off            14.55      1.0765     10.91   90,853
-      read_token     17.75      1.1736      4.19   34,901
-      mqa4           20.11      1.2302      3.16   26,280
-      no_rope        21.27      1.2469      3.58   29,847
-      window32       23.47      1.2911      2.94   24,481
-      mha4           27.38      1.3553      3.06   25,436
-      write_step     32.16      1.4171      2.30   19,125
-
-  Every attention arm ran 2.6-4.7x slower per token, so every one of them
-  spent the budget on a third of the data — the ranking among them is mostly
-  a ranking of how cheap they are. ``--attn-read token`` is the clearest
-  example: identical attention, queried once per token instead of once per
-  step, 1.33x the throughput and the best attention result here. 0% collapsed
-  cold starts everywhere, attention on or off.
-  Read that as a verdict about wall-clock on a 2.6M-parameter core, not about
-  attention. The cost is kernel-launch overhead per *step*, which shrinks with
-  batch (3.45x at batch 64, 2.79x at 512) and would shrink further on a core
-  large enough for the launches to disappear behind real arithmetic. Compare
-  at equal *tokens* with ``--max-steps`` for the other half of the picture,
-  and note that the tok/s column inside a long sweep drifts downward as the
-  GPU heats; the controlled throughput numbers are in ``docs/LIBRARY.md``.
-* ``--sweep attn --max-steps 600``, batch 128 — **at equal tokens the verdict
-  reverses, and every attention arm wins.** Same seed, same 3.69M tokens:
-
-      arm          val ppl   bits/byte    tok/s
-      -----------------------------------------
-      mqa4           18.57      1.1778   26,302
-      read_token     19.75      1.2027   34,811
-      mha4           21.40      1.2351   25,169
-      off            22.19      1.2497   90,007
-
-  So attention learns more per token (16% better perplexity at the default
-  four multi-query heads) and costs more per second, and which of those two
-  facts decides your run depends on whether you are token-limited or
-  time-limited. On a corpus this size, on this GPU, at this core width, the
-  clock is the binding constraint and ``off`` still wins the wall-clock sweep
-  above — but the learning-per-token claim is the one that scales with
-  hardware, and it points the other way.
-
-Reference run — ``--mode train --minutes 25 --batch 256`` at the defaults
-above, 2,625,280 parameters: held-out **loss 2.2009, ppl 9.03,
-bits/byte 0.8764**, median cold start 2.3154, **0.0% collapsed cold starts**,
-226.15M tokens at 150,761 tok/s. Reproduce with that command; `--mode eval
---tag base` re-scores the saved checkpoint. Those figures are defined against
-the exact token cache that run was trained on: a rebuilt cache moves the
-held-out split, and the score with it (see CHANGELOG 2.6.4).
+``docs/LIBRARY.md`` carries what the sweeps measured: the tokenizer table, the
+``--sweep gap`` and ``--sweep coldstart`` results, ``--compile`` speedups, the
+attention comparison at equal wall clock and at equal tokens, and the reference
+run this script's defaults are defined against.
 """
 
 import sys
@@ -370,9 +216,8 @@ class Cfg:
 # --------------------------------------------------------------------------- #
 
 #: Ready-made tiktoken encodings offered by `--tokenizer`: no training pass,
-#: and a vocabulary fixed by the encoding rather than chosen. See "Choosing a
-#: tokenizer" in the module docstring for why the default is a small in-domain
-#: BPE instead.
+#: and a vocabulary fixed by the encoding rather than chosen. `docs/LIBRARY.md`
+#: carries why the default is a small in-domain BPE instead.
 TIKTOKEN_ENCODINGS = ("gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base")
 
 
@@ -840,9 +685,9 @@ def load_corpus(cfg, verbose=True):
     # Token ids are only meaningful next to the tokenizer that produced them,
     # and a trained BPE lives in a file that can go missing (cleaning ckpt/ is
     # enough). Retraining it is not a repair: nothing records what an existing
-    # cache's tokenizer was trained on, and a retrained one measurably differs
-    # (CHANGELOG 2.6.4). A missing tokenizer therefore invalidates the cache,
-    # and the two are rebuilt together.
+    # cache's tokenizer was trained on, and a retrained one measurably differs.
+    # A missing tokenizer therefore invalidates the cache, and the two are
+    # rebuilt together.
     usable = cfg.tokenizer != "bpe" or os.path.exists(bpe_path(cfg))
     if not usable and any(os.path.exists(p) for p in (train_bin, train_npy)):
         print(f"⚠️  Token cache found, but the tokenizer that built it "
@@ -1358,9 +1203,8 @@ def guard_overwrite(cfg, overwrite=False):
     you. Checked before the batch autotune so it fails in a second rather than
     after a two-minute probe.
 
-    Deliberately a hard exit and not an interactive prompt: the blocking
-    input() this rewrite removed is exactly what made the old script
-    unusable from a script or a CI job.
+    Deliberately a hard exit and not an interactive prompt, so the script
+    stays usable from another script or a CI job.
     """
     latest, best = ckpt_paths(cfg)
     existing = [p for p in (latest, best) if os.path.exists(p)]
@@ -1482,10 +1326,10 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
 
     # Report the mode the optimizer is ACTUALLY in, not what the CLI asked
     # for. Under the default `--lr keep`, a resumed checkpoint keeps its own
-    # mode (`load_checkpoint(lr=None)` means "don't touch"), so printing
-    # cfg.lr here once claimed "lr auto" over a run that was really
-    # fixed-rate. Explicit `--lr auto` / `--lr <float>` do override, and the
-    # resume path above already announced any switch.
+    # mode (`load_checkpoint(lr=None)` means "don't touch"), so cfg.lr can
+    # say "auto" over a run that is really fixed-rate. Explicit `--lr auto` /
+    # `--lr <float>` do override, and the resume path above already announced
+    # any switch.
     live_lr = trainer.optimizer.param_groups[0].get('lr') \
         if trainer.optimizer.param_groups else cfg.lr
     if not quiet:
@@ -1681,7 +1525,7 @@ SWEEPS = {
         ("b1024", dict(batch=1024)),
     ],
     # Does letting the state query its own past pay for the step it costs?
-    # `off` is the 2.x architecture and the only arm without a KV cache; the
+    # `off` builds no attention and is the only arm without a KV cache; the
     # rest hold everything else fixed, so a difference here is attention's.
     "attn": [
         ("off",        dict(attn_heads=0)),
@@ -1905,7 +1749,7 @@ examples:
   # temporal attention: every step queries the states before it
   %(prog)s --mode train --tag attn --attn-heads 4 --batch 256 --minutes 25
 
-  # is it worth what it costs? 'off' is the 2.x architecture, same seed, same W
+  # is it worth what it costs? 'off' builds no attention, same seed, same W
   %(prog)s --mode sweep --sweep attn --minutes 3 --batch 128
   %(prog)s --mode sweep --sweep attn --arms off,mqa4 --minutes 5
 
@@ -1979,8 +1823,8 @@ def parse_args():
                         "rest are ready-made tiktoken encodings. The default is "
                         "small and in-domain on purpose -- a 4096-token corpus "
                         "BPE matches gpt2's 50k vocabulary on TinyStories at "
-                        "1/12 the embedding cost; see 'Choosing a tokenizer' in "
-                        "--help's description. (default: %(default)s)")
+                        "1/12 the embedding cost; the table is in "
+                        "docs/LIBRARY.md. (default: %(default)s)")
     g.add_argument("--vocab-size", type=int, default=None, metavar="N",
                    help="BPE vocabulary size; trained once and pinned per size. "
                         "Ignored for tiktoken tokenizers, which bring their own. "

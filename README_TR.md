@@ -24,10 +24,10 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
-- **3.0 ile gelen yenilik:** çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
+- Çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - **634 parametre** ile **%89.89 MNIST doğruluğu**, 4,669 parametre ile 7x7 MNIST'te **%96.05** elde eder.
-- **3.1.1 ile gelen yenilik:** bir *kovan*. Sekiz beden aynı çekirdeği koşuyor ve birbirine hiç değmiyor — ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri — tek bir havuzlanmış Hebbian izi paylaşıyorlar. Her bedene her bölümde yeniden çizilen bir halkanın tek bir kenarı gösteriliyor; sonrasında her beden hiç görmediği kenarları hatırlıyor ve dört kenara kadar uzanan zincirleri birleştiriyor: **0.125 şansa karşı 1.000**, üstelik çalışma anında tek bir gradyan adımı olmadan. Ayrı ayrı koşulduklarında aynı ağırlıklar aynı girdilerle şansa düşüyor.
+- Bir *kovan* olarak koşar. Sekiz beden aynı çekirdeği koşuyor ve birbirine hiç değmiyor — ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri — tek bir havuzlanmış Hebbian izi paylaşıyorlar. Her bedene her bölümde yeniden çizilen bir halkanın tek bir kenarı gösteriliyor; sonrasında her beden hiç görmediği kenarları hatırlıyor ve dört kenara kadar uzanan zincirleri birleştiriyor: **0.125 şansa karşı 1.000**, üstelik çalışma anında tek bir gradyan adımı olmadan. Ayrı ayrı koşulduklarında aynı ağırlıklar aynı girdilerle şansa düşüyor.
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
 - Kanıtlar için [örnekler](examples), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 

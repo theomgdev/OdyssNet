@@ -255,10 +255,10 @@ class TestStepping:
         assert abs(w_at - w_below) < 1e-3
         assert abs(w_above - w_at) < 1e-3
 
-    def test_trust_cap_no_jump_sweeping_through_old_boundaries(self):
-        # A fixed, clearly-anchoring group (rms0=0.02, deep inside the old
-        # hard-included region) plus a probe group swept finely across every
-        # old cutoff (0.001, 0.9, 1.0, 1.1). A hard cutoff concentrates its
+    def test_trust_cap_no_jump_sweeping_through_ramp_boundaries(self):
+        # A fixed, clearly-anchoring group (rms0=0.02, well inside the trusted
+        # region) plus a probe group swept finely across every ramp edge
+        # (0.001, 0.9, 1.0, 1.1). A hard cutoff concentrates its
         # whole effect into a single infinitesimal step; a smooth ramp spreads
         # it across the transition width instead -- so no single step should
         # account for more than a modest share of the total range the sweep
@@ -437,12 +437,10 @@ class TestBrake:
         assert t.optimizer._loss_ema is not None
 
     def test_ceiling_holds_while_loss_stays_elevated(self):
-        # The failure this exists for (observed on an LLM run): the brake
-        # fired, then the old unconditional geometric release handed the full
-        # step size back within ~200 calls while the loss was still climbing,
-        # and the run diverged. A slow climb that never re-trips the 1.2x
-        # ratio test must stay braked, not get released by the passage of
-        # time.
+        # A slow climb that never re-trips the 1.2x ratio test must stay
+        # braked. An unconditional geometric release hands the full step size
+        # back within ~200 calls while the loss is still climbing, which
+        # diverges the run.
         m = _model()
         opt = ChaosGrad.from_model(m)
         _train_steps(m, opt, steps=20)
@@ -590,9 +588,8 @@ class TestPersistence:
     def test_old_checkpoint_without_new_keys_backfills(self):
         # Simulates loading a checkpoint written by an older ChaosGrad that
         # predates brake_ref: torch replaces group dicts wholesale, so
-        # without backfill the missing key would explode as a KeyError on
-        # the next report_loss/step (the exact gap that shipped once with
-        # the brake-config fields).
+        # without backfill the missing key raises a KeyError on the next
+        # report_loss/step.
         m = _model()
         opt = ChaosGrad.from_model(m)
         _train_steps(m, opt, steps=5)

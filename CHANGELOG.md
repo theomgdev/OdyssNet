@@ -4,6 +4,13 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.6.1] — 2026-09-09
+
+### Changed
+- **The two experiment docstrings point at `docs/LIBRARY.md` instead of repeating it.** `experiment_diffusion.py` carried seven benchmark tables that `docs/LIBRARY.md` already held verbatim, and `experiment_llm.py` carried four more; together they were 589 lines of module docstring in front of the code they describe, which is the case AGENTS.md rules out. The diffusion tables were duplicates and are gone; the LLM ones had no home, so the tokenizer comparison, the `--sweep gap` and `--sweep coldstart` results, the `--compile` speedups and the reference run moved into a new **Language Modeling** section in `docs/LIBRARY.md` before the docstring was cut. Every figure is the one that was already published — nothing re-measured, nothing dropped. The docstrings keep the mechanism, the usage lines and the constraints a reader needs before touching the file. Verified with 370 pytest and both `--mode smoke` runs.
+
+- **Version and history references out of the code and the READMEs.** "New in 3.0" / "New in 3.1.1" bullets, "the 2.x architecture" as a name for the no-attention arm, and inline "see CHANGELOG 2.6.4" pointers stated the project's history in files meant to describe it as it is. The claims and their numbers stay; only the dates leave. Same for a handful of comments that explained a line by narrating the bug it replaced.
+
 ## [3.6.0] — 2026-09-09
 
 ### Changed

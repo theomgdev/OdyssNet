@@ -27,7 +27,6 @@ class Neurogenesis:
         new_n = old_n + amount
         device = model.device
         
-        # Preserve old parameters
         old_W_param = model.W
         old_B_param = model.B
         old_memory_param = model.memory_feedback

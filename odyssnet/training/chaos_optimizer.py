@@ -476,7 +476,8 @@ class ChaosGrad(torch.optim.Optimizer):
     #: yet (see there) — a second, unrelated role that happens to reuse this
     #: constant rather than invent another one.
     _TRUST_RMS_FLOOR_HIGH = _TRUST_RMS_FLOOR * 10
-    #: Same half-width as the old hard band ([0.9, 1.1] around 1.0).
+    #: Half-width of the neutral band around rms0 = 1.0, where an init is a
+    #: multiplier rather than connective structure and should not anchor.
     _TRUST_RMS_NEUTRAL_BAND = 0.1
 
     @staticmethod

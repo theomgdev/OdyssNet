@@ -146,8 +146,7 @@ class TestBranchScale:
     """`o_proj` starts at zero and Adam-family updates move it by ~lr per step
     whatever its width, so without the 1/sqrt(heads*head_dim) factor a wide
     branch reaches a destructive contribution in the same number of steps a
-    narrow one takes to reach a useful one. Measured on associative recall:
-    unscaled, 4x64 collapsed to chance while 1x16 matched the baseline."""
+    narrow one takes to reach a useful one."""
 
     def _contribution(self, heads, head_dim, seed=3):
         set_seed(seed)

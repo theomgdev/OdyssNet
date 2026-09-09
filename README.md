@@ -24,10 +24,10 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 ## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
-- **New in 3.0:** optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
+- Optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **89.89% MNIST accuracy** with **634 parameters**, and **96.05%** on 7x7 MNIST with 4,669.
-- **New in 3.1.1:** a *hive*. Eight bodies run the same core with no contact between them — separate states, separate caches, separate forward passes — and share one pooled Hebbian trace. Each is shown one edge of a ring drawn fresh per episode; every body then recalls edges it never observed and composes chains up to four edges long, **1.000 against 0.125 chance**, with no gradient step at run time. Run apart, the same weights on the same inputs fall to chance.
+- It runs as a *hive*. Eight bodies run the same core with no contact between them — separate states, separate caches, separate forward passes — and share one pooled Hebbian trace. Each is shown one edge of a ring drawn fresh per episode; every body then recalls edges it never observed and composes chains up to four edges long, **1.000 against 0.125 chance**, with no gradient step at run time. Run apart, the same weights on the same inputs fall to chance.
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
 - Start with [examples](examples) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
@@ -218,7 +218,7 @@ Resonance is memory *without* an index. Version 3.0 adds the other kind as an op
 *   **Query length is always 1.** The core cannot be unrolled in parallel, so a forward pass is a sequence of single-query attentions — a transformer's decode phase, never its prefill. Every cached entry is already in the past and softmax over keys is order-blind, so no mask and no reordering are ever needed.
 *   **A real KV cache:** grouped-query / multi-query heads, RoPE applied to each key when it is written, a sliding window, and two representations — a preallocated ring written in place for inference, a segmented graph cache for training — that are tested to produce identical numbers.
 *   **Free to try:** the output projection is zero-initialized and the module is built after the core, so an attention model and a plain one at the same seed start from the same $W$ and the same output. The ablation has one variable in it.
-*   **Measure it:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128`, whose `off` arm is exactly the 2.x architecture. Full mechanics, cost model and knobs: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
+*   **Measure it:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128`, whose `off` arm builds no attention at all. Full mechanics, cost model and knobs: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
 
 ### Mathematical Model
 The network state $h_t$ evolves as:
