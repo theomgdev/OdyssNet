@@ -261,13 +261,24 @@ embedding of the steps remaining and the fraction elapsed. Run the same frame
 for two steps, built once for E=2 and once for E=6: without it the hidden
 states are bit-identical, with it they differ by 2.3e-1.
 
-It is off, because the measurement does not support turning it on. Alone it is
-*worse* than the control at both seeds -- at a fixed E the remaining-step
-signal is the same constant sequence every batch, so it pins the model to that
-depth harder rather than freeing it. Paired with a drawn E it leads the E axis
-at one seed (2.8 against 5.8) and trails at the other (3.2 against 2.6), which
-is not a separation. It also costs: K*E entries make the frame tensor E times
-larger, and the arm reached 18% fewer gradient steps in the same wall clock.
+It is off, because it loses. Alone it is *worse* than the control at both seeds
+-- at a fixed E the remaining-step signal is the same constant sequence every
+batch, so it pins the model to that depth harder rather than freeing it. Paired
+with a drawn E it split the seeds on MNIST, so the pair was re-run on CIFAR-10,
+where the arms actually separate:
+
+    E-axis span      seed 42   seed 123
+    rand_e               3.8        2.4
+    rand_e_ecad          7.2        4.0
+
+Behind at both seeds on the one axis it exists to improve, and costing 9.6
+points of fidelity at one of them. It also costs before that: K*E entries make
+the frame tensor E times larger, and the arm reached 18% fewer gradient steps
+in the same wall clock.
+
+So the signal is real -- the hidden states prove it moves -- and giving it to a
+diffusion model does not help. Whether a model with a harder use for its own
+depth would do better is a different question and not this file's.
 
 Which path between noise and image
 ----------------------------------
