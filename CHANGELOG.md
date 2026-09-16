@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.7.0] — 2026-09-16
+
+### Fixed
+- **`get_num_params()` under-counted a network whose core is frozen.** The zero diagonal is not a parameter, so the count subtracts it — but it did so unconditionally, and once `W.requires_grad` is false the N² are already out of the sum, leaving the total N short. The subtraction is now tied to `W` being trained. This is what a frozen-core experiment reports as its own size, which is the one number such a run exists to state.
+
 ## [3.6.1] — 2026-09-09
 
 ### Changed

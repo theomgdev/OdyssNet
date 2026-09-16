@@ -242,7 +242,7 @@ output = model(tokens, steps=640)
 ### Key Methods
 
 #### `model.get_num_params()`
-Returns the **effective** parameter count of the network. It accounts for the `memory_feedback` separation by properly discounting the inactive diagonal of the `W` matrix to give you a true representation of learning capacity.
+Returns the **effective** trainable parameter count of the network. It accounts for the `memory_feedback` separation by discounting the inactive diagonal of the `W` matrix — and only while `W` is being trained, so a frozen core is counted as zero rather than as minus its diagonal.
 
 #### `model.compile()`
 Optimizes the model using `torch.compile` (PyTorch 2.0+) for faster execution. Returns the compiled model.

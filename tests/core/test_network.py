@@ -492,6 +492,12 @@ class TestUtilityMethods:
         raw = sum(p.numel() for p in model.parameters() if p.requires_grad)
         assert n_params == raw - model.W.shape[0]
 
+    def test_get_num_params_frozen_core(self):
+        model = _make(4)
+        model.W.requires_grad_(False)
+        raw = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert model.get_num_params() == raw
+
     def test_regenerate_weak_weights_returns_counts(self):
         model = _make(6)
         with torch.no_grad():

@@ -423,7 +423,9 @@ class OdyssNet(nn.Module):
             
     def get_num_params(self):
         total = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        if hasattr(self, 'W'):
+        # The zero diagonal is not a parameter, but it only counts against the
+        # total while W itself is being trained.
+        if hasattr(self, 'W') and self.W.requires_grad:
             total -= self.W.shape[0]
         return total
 
