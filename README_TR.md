@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğe** (üst üste yığılan katmanlar) dayanır. OdyssNet bu ortodoksiyi reddederek **Zamansal Derinliğin** (zaman içinde evrimleşen kaos) çok daha verimli bir alternatif olduğunu kanıtlar.
+Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğe** (üst üste yığılan katmanlar) dayanır. OdyssNet bu ortodoksiyi reddeder: **Zamansal Derinlik** (zaman içinde evrimleşen kaos) çok daha verimli bir alternatiftir.
 
 > **Sıfır-Gizli Atılım**
 >
@@ -15,19 +15,19 @@ Geleneksel Derin Öğrenme, karmaşıklığı çözmek için **Uzamsal Derinliğ
 >
 > Ağı bir **Eğitilebilir Dinamik Sistem** olarak ele alarak OdyssNet, **0 Gizli Katman** ile doğrusal olmayan problemleri (XOR, MNIST) çözüyor. Uzamsal nöronların yerini zamansal düşünme adımları alıyor.
 
-OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris, onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırarak zamansal adımlarda yeniden kullanılır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
+OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağlar. Derinlik oluşturmak için binlerce yeni nöron eklemek (Uzay) yerine, mevcut nöronları daha fazla adım boyunca çalıştırır (Zaman). Tek bir fiziksel matris zamansal adımlarda yeniden kullanılır ve onlarca katmana eşdeğer hesaplamayı mikroskobik bir parametrik ayak izine sıkıştırır. Bu, zekanın statik bir yapı değil, dinamik bir süreç olduğunu kanıtlar.
 
 > **DÜNYA REKORU: Parametrik Zeka Yoğunluğu**
 >
-> OdyssNet, MNIST üzerinde **634 parametre** ile **%89.89 doğruluk** elde ediyor — parametre başına %0.14 doğruluk, bir kartvizite sığacak kadar küçük bir modelde.
+> OdyssNet, MNIST üzerinde **634 parametre** ile **%89.89 doğruluk** elde ediyor. Parametre başına %0.14 doğruluk, bir kartvizite sığacak kadar küçük bir modelde.
 
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
-- Çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat — gerçek bir KV önbelleğiyle birlikte — katmanlar arasına değil zaman eksenine bağlanır ve varsayılan olarak kapalıdır.
+- Çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat (gerçek bir KV önbelleğiyle birlikte) katmanlar arasına değil zaman eksenine bağlanır. Varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - **634 parametre** ile **%89.89 MNIST doğruluğu**, 4,669 parametre ile 7x7 MNIST'te **%96.05** elde eder.
-- Bir *kovan* olarak koşar. Sekiz beden aynı çekirdeği koşuyor ve birbirine hiç değmiyor — ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri — tek bir havuzlanmış Hebbian izi paylaşıyorlar. Her bedene her bölümde yeniden çizilen bir halkanın tek bir kenarı gösteriliyor; sonrasında her beden hiç görmediği kenarları hatırlıyor ve dört kenara kadar uzanan zincirleri birleştiriyor: **0.125 şansa karşı 1.000**, üstelik çalışma anında tek bir gradyan adımı olmadan. Ayrı ayrı koşulduklarında aynı ağırlıklar aynı girdilerle şansa düşüyor.
+- Bir *kovan* olarak koşar. Sekiz beden aynı çekirdeği koşuyor ve birbirine hiç değmiyor (ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri), tek bir havuzlanmış Hebbian izi paylaşıyorlar. Her bedene her bölümde yeniden çizilen bir halkanın tek bir kenarı gösteriliyor; sonrasında her beden hiç görmediği kenarları hatırlıyor ve dört kenara kadar uzanan zincirleri birleştiriyor: **0.125 şansa karşı 1.000**, üstelik çalışma anında tek bir gradyan adımı olmadan. Ayrı ayrı koşulduklarında aynı ağırlıklar aynı girdilerle şansa düşüyor.
 - Bellek, ritim, çekici kararlılığı ve görevler arası beceri transferi sergiler.
 - Kanıtlar için [örnekler](examples), kendi kullanımınız için [odyssnet kütüphanesi](odyssnet) başlangıç noktasıdır.
 
@@ -38,15 +38,15 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 *   **Uzay-Zaman Dönüşümü:** Milyonlarca parametrenin yerini birkaç "Düşünme Adımı" alıyor.
 *   **Katmansız Mimari:** Tek bir $N \times N$ matris. Gizli katman yok.
 *   **Eğitilebilir Kaos:** Kaotik sinyalleri dizginlemek için **StepNorm** ve **Tanh** kullanır.
-*   **Zamansal Dikkat (3.0):** Çekirdeğin *kendi durum geçmişi* üzerinde isteğe bağlı çok başlı dikkat (`attn_heads=4`) — arasına dikkat yerleştirilecek katman olmadığı için zaman ekseninde çalışır. Baştan sona modern KV önbellekleme: gruplanmış sorgu başlıkları, RoPE, kayan pencere ve tahsis yapmadan çözümleme (decoding) için önceden ayrılmış halka tampon. Çıkış izdüşümü sıfırdan başlar; yani açmak, eğitim aksine karar verene kadar hiçbir şeyi değiştirmez.
-*   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='neuron'|'global'`) — ağ korelasyonları *örnek başına* biriktirir ve global veya nöron başına çözünürlükte tamamen türevlenebilir logit parametreleri (`t_hebb_factor`, `s_hebb_decay`, vb.) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir. Plastik katkı sıfırdan başlayan öğrenilebilir bir kazançla ölçeklenir; yani plastisiteyi açmak, eğitim aksine karar verene dek hiçbir şeyi değiştirmez — bu da `hebb_type`'ı tam bir kontrol hâline getirir. İz, bir matris olarak değil kendisini oluşturan yazımlar olarak tutulur; maliyeti `adım x batch x N`'dir ve matris hiç kurulmaz. Ablasyonunu yapın: ölçümlerde ardışık görevlerde kazandırıyor, attention'ın zaten kapladığı yerde kaybettiriyor.
-*   **Bedenler Arası Kolektif Bellek:** Kalıcı Hebbian tamponu, canlı izlerin batch ortalamasını tutar ve bir sonraki çağrıda her satıra geri verir; yani bir batch *koloni* olarak koşulabilir — özel girdi ve çıktıları olan bağımsız bedenler, çekirdeğin üzerinde duran tek bir ortak bellek. Bir bedenin çalışma anında öğrendiğini (gradyan yok, ağırlık güncellemesi yok) diğer bütün bedenler okuyabilir; sonradan inşa edilmiş bir beden dahil. `convergence_hive_mind.py` içinde ölçülüyor.
+*   **Zamansal Dikkat (3.0):** Çekirdeğin *kendi durum geçmişi* üzerinde isteğe bağlı çok başlı dikkat (`attn_heads=4`). Arasına dikkat yerleştirilecek katman olmadığı için zaman ekseninde çalışır. Baştan sona modern KV önbellekleme: gruplanmış sorgu başlıkları, RoPE, kayan pencere ve tahsis yapmadan çözümleme (decoding) için önceden ayrılmış halka tampon. Çıkış izdüşümü sıfırdan başlar; yani açmak, eğitim aksine karar verene kadar hiçbir şeyi değiştirmez.
+*   **Heterojen Sinaptik Plastisitesi:** İsteğe bağlı çevrimiçi Hebbian öğrenmesi (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='neuron'|'global'`): ağ korelasyonları *örnek başına* biriktirir ve global veya nöron başına çözünürlükte tamamen türevlenebilir logit parametreleri (`t_hebb_factor`, `s_hebb_decay`, vb.) aracılığıyla *ne kadar hızlı öğreneceğini* öğrenir. Plastik katkı sıfırdan başlayan öğrenilebilir bir kazançla ölçeklenir; yani plastisiteyi açmak, eğitim aksine karar verene dek hiçbir şeyi değiştirmez; bu da `hebb_type`'ı tam bir kontrol hâline getirir. İz, bir matris olarak değil kendisini oluşturan yazımlar olarak tutulur; maliyeti `adım x batch x N`'dir ve matris hiç kurulmaz. Ablasyonunu yapın: ölçümlerde ardışık görevlerde kazandırıyor, attention'ın zaten kapladığı yerde kaybettiriyor.
+*   **Bedenler Arası Kolektif Bellek:** Kalıcı Hebbian tamponu, canlı izlerin batch ortalamasını tutar ve bir sonraki çağrıda her satıra geri verir; yani bir batch *koloni* olarak koşulabilir: özel girdi ve çıktıları olan bağımsız bedenler, çekirdeğin üzerinde duran tek bir ortak bellek. Bir bedenin çalışma anında öğrendiğini (gradyan yok, ağırlık güncellemesi yok) diğer bütün bedenler okuyabilir; sonradan inşa edilmiş bir beden dahil. `convergence_hive_mind.py` içinde ölçülüyor.
 *   **Transplant ile Beceri Transferi:** Öğrenilmiş zamansal beceriler model boyutları arasında taşınabilir ve yeni görevlerde yeniden kullanılabilir.
 *   **Canlı Dinamikler:** **İrade** (Mandal), **Ritim** (Kronometre) ve **Rezonans** (Sinüs Dalgası) gösterir.
 
 ## Kanıt: Sıfır-Gizli Kıyaslamalar
 
-OdyssNet'i teorik limite — **Sıfır Gizli Nöron**'a — kadar zorladık.
+OdyssNet'i teorik limite, **Sıfır Gizli Nöron**'a kadar zorladık.
 Bu testlerde Giriş Katmanı doğrudan Çıkış Katmanına (ve kendisine) bağlıdır. Ara katman yoktur.
 
 | Görev | Geleneksel Kısıt | OdyssNet Çözümü | Sonuç | Script |
@@ -74,11 +74,11 @@ OdyssNet, tam ölçekli MNIST'i (28x28) **Sıfır Gizli Katman** ile çözüyor 
 *   **Gizli Katmanlar:** **0**
 *   **Düşünme Süresi:** 10 Adım
 
-Giriş katmanı 10 adım boyunca "kendisiyle konuşur". Kaotik geri besleme döngüleri, uzamsal katmanların işini yaparak zamanla özellikleri (kenarlar, döngüler) dinamik olarak çıkarır. Bu, **Zamansal Derinliğin Uzamsal Derinliğin Yerini Alabileceğini** kanıtlar.
+Giriş katmanı 10 adım boyunca "kendisiyle konuşur". Kaotik geri besleme döngüleri zamanla özellikleri (kenarlar, döngüler) dinamik olarak çıkarır ve uzamsal katmanların işini yapar. Bu, **Zamansal Derinliğin Uzamsal Derinliğin Yerini Alabileceğini** kanıtlar.
 
 ### Tek Bellek, Çok Beden
 
-Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor ve başka hiçbir noktada temas etmiyor: ayrı gizli durumlar, ayrı dikkat önbellekleri, ayrı forward geçişleri, özel girdiler ve özel çıktılar. Her bedene, her bölümde yeniden çizilen 8 düğümlük bir halkanın **tek bir kenarı** gösteriliyor. Ardından her özel taşıyıcı siliniyor — durum sıfırlanıyor, dikkat önbelleği resetleniyor — ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor; kenar başına bir yankı adımı.
+Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor ve başka hiçbir noktada temas etmiyor: ayrı gizli durumlar, ayrı dikkat önbellekleri, ayrı forward geçişleri, özel girdiler ve özel çıktılar. Her bedene, her bölümde yeniden çizilen 8 düğümlük bir halkanın **tek bir kenarı** gösteriliyor. Ardından her özel taşıyıcı siliniyor (durum sıfırlanıyor, dikkat önbelleği resetleniyor) ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor; kenar başına bir yankı adımı.
 
 | sütun başına 320 sorgu | hop 1 | hop 2 | hop 3 |
 | :--- | :--- | :--- | :--- |
@@ -86,9 +86,9 @@ Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor ve başka hiçbi
 | ayrı, tek başına bir beden | 0.297 | 0.134 | 0.094 |
 | birlikte, bellek boş | 0.147 | 0.141 | 0.112 |
 
-Şans 0.125. Hop 1, başka bir bedenin gözlediği bir kenar; hop 2 ve hop 3, farklı bedenlerde duran kenarları birleştiriyor — hiçbir beden bunları kendi girdilerinden cevaplayamaz. Halka yalnızca o bölüm için var olduğundan cevap ağırlıklarda olamaz; çalışma anında da hiçbir şey eğitilmiyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazmayı mimarinin kendi plastisitesi yapıyor.
+Şans 0.125. Hop 1, başka bir bedenin gözlediği bir kenar; hop 2 ve hop 3, farklı bedenlerde duran kenarları birleştiriyor; hiçbir beden bunları kendi girdilerinden cevaplayamaz. Halka yalnızca o bölüm için var olduğundan cevap ağırlıklarda olamaz; çalışma anında da hiçbir şey eğitilmiyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazmayı mimarinin kendi plastisitesi yapıyor.
 
-Bedenler arasındaki tek şey, paylaşılan çekirdeğe bıraktıkları plastik iz — kütüphane bunu batch ortalaması olarak havuzluyor. Kontroller bunu her yönden söylüyor: bir bedenin kenarı değiştirildiğinde *başka* bir bedenin cevabı bunu izliyor (1.000), aynı beden tek başına koşturulduğunda ise cevabı bit-bit aynı kalıyor; başka bir koloninin belleği takıldığında cevaplar *o* halkayı izliyor (1.000); bedenler ayrı koşulup bellekler sonradan havuzlandığında sonuç batch'li hâliyle 3.0e-08'e kadar örtüşüyor; `hebb_type=None` ile her şey şansa düşüyor. Üç yerine yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra düşüyor (0.884, 0.775, 0.228) — kenar başına bir yankı adımı, yani bileşim derinliği zamansal derinliktir. Tam protokol **M bölümünde**.
+Bedenler arasındaki tek şey, paylaşılan çekirdeğe bıraktıkları plastik iz; kütüphane bunu batch ortalaması olarak havuzluyor. Kontroller bunu her yönden söylüyor: bir bedenin kenarı değiştirildiğinde *başka* bir bedenin cevabı bunu izliyor (1.000), aynı beden tek başına koşturulduğunda ise cevabı bit-bit aynı kalıyor; başka bir koloninin belleği takıldığında cevaplar *o* halkayı izliyor (1.000); bedenler ayrı koşulup bellekler sonradan havuzlandığında sonuç batch'li hâliyle 3.0e-08'e kadar örtüşüyor; `hebb_type=None` ile her şey şansa düşüyor. Üç yerine yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra düşüyor (0.884, 0.775, 0.228). Bir yankı adımı bir kenar yürüyor, yani bileşim derinliği zamansal derinliktir. Tam protokol **M bölümünde**.
 
 ---
 
@@ -130,14 +130,14 @@ trainer.fit(inputs, inputs, epochs=50)
 
 #### Başlatma Protokolleri
 
-`weight_init=['quiet', 'resonant', 'quiet', 'zero']` varsayılan stratejidir ve encoder/decoder, çekirdek matris, bellek geri beslemesi ve gate parametreleri için sırasıyla uygun başlatmaları sağlar. `'resonant'` gibi tek string değerler otomatik olarak akıllıca genişletilir.
+`weight_init=['quiet', 'resonant', 'quiet', 'zero']` varsayılan stratejidir: sırasıyla encoder/decoder, çekirdek matris, bellek geri beslemesi ve gate parametreleri için birer giriş. `'resonant'` gibi tek bir string tüm alanlara genişletilir.
 
 `activation=['none', 'tanh', 'tanh', 'none']` varsayılan aktivasyon düzenidir. İlk 3 giriş encoder/decoder, core ve memory yollarına karşılık gelir. 4. alan konfigürasyon simetrisi için ayrılmıştır.
 
-`gate=None` artık varsayılan gate düzeni olan `['none', 'none', 'identity']` anlamına gelir (encoder/decoder kapalı, core kapalı, memory identity gate açık). Tüm dalları gate etmek için `gate='sigmoid'`, sadece memory için `['none', 'none', 'sigmoid']`, tüm gating'i kapatmak için `['none', 'none', 'none']` kullanılabilir.
+`gate=None`, varsayılan gate düzeni olan `['none', 'none', 'identity']` anlamına gelir (encoder/decoder kapalı, core kapalı, memory identity gate açık). Tüm dalları gate etmek için `gate='sigmoid'`, sadece memory için `['none', 'none', 'sigmoid']`, tüm gating'i kapatmak için `['none', 'none', 'none']` kullanılabilir.
 
 *   **Tüm Ağlar (Varsayılan Çekirdek):**
-    *   `weight_init='resonant'` ve `activation='tanh'` kullanın. Çekirdek baştan Kaosun Kıyısına (ρ(W) = 1.0) yerleştirilerek, zamansal adımlarda sinyal kalitesi garanti edilir.
+    *   `weight_init='resonant'` ve `activation='tanh'` kullanın. Çekirdek baştan Kaosun Kıyısına (ρ(W) = 1.0) yerleşir; bu, zamansal adımlarda sinyal kalitesini korur.
     *   Kutupsal Rademacher iskeleti + ρ = 1.0'a spektral normalizasyon.
 *   **Alternatif — Büyük Ağlar (>10 Nöron):**
     *   `weight_init='orthogonal'` saf kararlılık için sağlam bir geri dönüş seçeneği olarak kalır.
@@ -151,7 +151,7 @@ trainer.fit(inputs, inputs, epochs=50)
 
 ## Mimariye Genel Bakış
 
-## Nasıl Çalışır: Fırtınanın İçinde
+### Nasıl Çalışır: Fırtınanın İçinde
 
 OdyssNet bir ileri-besleme mekanizması değil; bir **Rezonans Odasıdır**.
 
@@ -178,8 +178,8 @@ Sinyal her nörondan diğer her nörona ($N \times N$) yolculuk eder.
 Kontrolsüz geri besleme döngüleri patlamaya yol açar. OdyssNet kaosun mühendisliğini yaparak kararlı **Çekiciler** oluşturur.
 *   **StepNorm** yerçekimi gibi davranır, enerjiyi sınırlı tutar.
 *   **Tanh** anlamlı sinyalleri filtreler ve sinyal simetrisini korur.
-*   **ChaosGrad Optimizer (varsayılan):** OdyssNet'in kendi sıfır-konfigürasyon optimizatörü. Adım ölçeğini çevrimiçi tahmin eder (D-adaptation sınıfı matematik), mimariye duyarlı aile politikası uygular ve kaotik dinamikleri çapa bağlı çekiş limiti ile kayıp-sıçraması freniyle korur. Öğrenme hızı gerekmez — tekrarlanabilir sabit-hız modu için açık bir `lr` geçilebilir.
-*   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda korelasyonlar (zamansal $h_t \otimes h_{t-1}$ veya uzamsal $h_t \otimes h_t$) biriktirilir ve enjekte edilir — `t_hebb_factor` gibi faktörler global bir skaler veya nöron başına vektör olabilir. İkisi de öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
+*   **ChaosGrad Optimizer (varsayılan):** OdyssNet'in kendi sıfır-konfigürasyon optimizatörü. Adım ölçeğini çevrimiçi tahmin eder (D-adaptation sınıfı matematik), mimariye duyarlı aile politikası uygular ve kaotik dinamikleri çapa bağlı çekiş limiti ile kayıp-sıçraması freniyle korur. Öğrenme hızı gerekmez; tekrarlanabilir sabit-hız modu için açık bir `lr` geçilebilir.
+*   **Heterojen Sinaptik Plastisitesi:** `hebb_type` ayarlandığında her adımda korelasyonlar (zamansal $h_t \otimes h_{t-1}$ veya uzamsal $h_t \otimes h_t$) biriktirilir ve enjekte edilir. `t_hebb_factor` gibi faktörler global bir skaler veya nöron başına vektör olabilir. İkisi de öğrenilebilir olduğundan ağ, her sinaptik yolun ne kadar plastik olması gerektiğini keşfeder.
 *   **Mandal Deneyi** OdyssNet'in gürültüye karşı bir kararı sonsuza kadar tutmak için kararlı bir çekici oluşturabileceğini kanıtladı.
 
 ### 5. Neden RNN veya LSTM Değil?
@@ -197,11 +197,11 @@ OdyssNet kâğıt üzerinde Tekrarlayan Sinir Ağına (RNN) benzese de felsefesi
 *   **OdyssNet iç sesini dinler.** Probleme **bir** bakış atar ve sonra gözlerini kapatır, 15 adım boyunca üzerine "düşünür". Kendi zamansal derinliğini yaratır.
 
 ### 6. Biyolojik Gerçeklik: Canlı Zeka
-OdyssNet, yalnızca yapı değil, **davranış** bakımından da katmanlı ağlardan çok daha fazla beyne benzer:
+OdyssNet, katmanlı ağlardan hem yapı hem de **davranış** bakımından çok daha fazla beyne benzer:
 
 *   **Katman Yok:** Beynin "1. Katmanı" ve "2. Katmanı" yoktur. Birbirine bağlı nöronların bölgeleri vardır. OdyssNet tek bir bölgedir.
 *   **İrade (Mandal):** Sönümlenen (fading) standart RNN'lerin aksine OdyssNet bir karara kilitlenebilir ve onu entropiye karşı tutabilir, "Bilişsel Kalıcılık" sergiler.
-*   **Ritim (Kronometre):** Herhangi bir dış saat olmadan OdyssNet zamanı öznel olarak deneyimler ve tam anlarda saymasına, beklemesine ve hareket etmesine izin verir.
+*   **Ritim (Kronometre):** Herhangi bir dış saat olmadan OdyssNet zamanı öznel olarak deneyimler; sayabilir, bekleyebilir ve tam anında hareket edebilir.
 *   **Sabır (Dedektif):** "Düşünme Süresinden" yararlanır. Tıpkı insanların karmaşık mantığı işlemek için bir ana ihtiyaç duyması gibi, OdyssNet olası çözümleri sindirmek için birkaç sessizlik adımı verildiğinde imkânsız problemleri çözer.
 
 ### 7. Örtülü Dikkat (Zamansal Rezonans)
@@ -214,18 +214,18 @@ OdyssNet varsayılan olarak hiçbir geçmiş tamponu taşımaz. Açık $Q \times
 ### 8. Açık Dikkat (Zamansal Dikkat, 3.0)
 Rezonans, *indekssiz* bir bellektir. 3.0 sürümü diğer türü seçenek olarak ekliyor: `attn_heads=4`, her düşünme adımına kendisinden önce gelen durumlar üzerinde bir sorgu hakkı verir.
 
-*   **Nereye bağlanır:** Arasına dikkat konulacak katman yok; bu yüzden dikkat, mimarinin sahip olduğu tek eksende — kendi geçmişi boyunca — çalışır. Sonuç, yinelemenin ve girdinin beslediği aynı aktivasyon-öncesi sinyale eklenir; adımın aktivasyonu ve StepNorm'u onu da diğer her şey gibi sınırlar.
-*   **Sorgu uzunluğu daima 1'dir.** Çekirdek paralel açılamaz; dolayısıyla bir ileri geçiş, tek sorgulu dikkatlerin dizisidir — bir Transformer'ın decode aşaması, asla prefill'i değil. Önbellekteki her giriş zaten geçmiştedir ve anahtarlar üzerindeki softmax sıraya duyarsızdır; bu yüzden ne maske ne de yeniden sıralama gerekir.
-*   **Gerçek bir KV önbelleği:** gruplanmış sorgu / çoklu sorgu başlıkları, her anahtara yazıldığı anda uygulanan RoPE, kayan pencere ve aynı sayıları ürettiği testlerle sabitlenmiş iki temsil — çıkarım için yerinde yazılan önceden ayrılmış halka, eğitim için parçalı graf önbelleği.
+*   **Nereye bağlanır:** Arasına dikkat konulacak katman yok; bu yüzden dikkat, mimarinin sahip olduğu tek eksende, kendi geçmişi boyunca çalışır. Sonuç, yinelemenin ve girdinin beslediği aynı aktivasyon-öncesi sinyale eklenir; adımın aktivasyonu ve StepNorm'u onu da diğer her şey gibi sınırlar.
+*   **Sorgu uzunluğu daima 1'dir.** Çekirdek paralel açılamaz; dolayısıyla bir ileri geçiş, tek sorgulu dikkatlerin dizisidir: bir Transformer'ın decode aşaması, asla prefill'i değil. Önbellekteki her giriş zaten geçmiştedir ve anahtarlar üzerindeki softmax sıraya duyarsızdır; bu yüzden ne maske ne de yeniden sıralama gerekir.
+*   **Gerçek bir KV önbelleği:** gruplanmış sorgu / çoklu sorgu başlıkları, her anahtara yazıldığı anda uygulanan RoPE, kayan pencere ve aynı sayıları ürettiği testlerle sabitlenmiş iki temsil: çıkarım için yerinde yazılan önceden ayrılmış halka, eğitim için parçalı graf önbelleği.
 *   **Denemesi bedava:** çıkış izdüşümü sıfır başlatılır ve modül çekirdekten sonra kurulur; böylece aynı tohumdaki dikkatli ve dikkatsiz model aynı $W$'den ve aynı çıktıdan başlar. Ablasyonun içinde tek bir değişken kalır.
-*   **Ölç:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128` — buradaki `off` kolu tam olarak 2.x mimarisidir. Tüm mekanik, maliyet modeli ve ayar düğmeleri: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
+*   **Ölç:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128`; buradaki `off` kolu hiç dikkat kurmaz. Tüm mekanik, maliyet modeli ve ayar düğmeleri: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
 
 ### Matematiksel Model
 Ağ durumu $h_t$ şu şekilde evrimleşir:
 
 $$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
 
-Zamansal dikkat açıkken aynı toplama bir terim daha katılır — daha önce yazılmış durumların önbelleği $\mathcal{C}_t$ üzerinde bir sorgu:
+Zamansal dikkat açıkken aynı toplama bir terim daha katılır: daha önce yazılmış durumların önbelleği $\mathcal{C}_t$ üzerinde bir sorgu:
 
 $$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
@@ -271,7 +271,7 @@ OdyssNet'in temel hipotezini doğrulamak için kapsamlı testler yürüttük: **
 *   **Çıkarım:** OdyssNet **Zamanı Gizli Katman Olarak** kullanır. Girişi yalnızca 5 zaman adımına katlayarak tek bir fiziksel katmanda doğrusal olmayan bir karar sınırı oluşturur; 3 kaos-bağlantılı nöronun XOR'u çözebileceğini kanıtlar.
 
 ### C. MNIST Maratonu (Görsel Zeka)
-OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği kanıtlamak için dört farklı koşulda test edildi.
+OdyssNet'in görme yeteneğini dört koşulda test ettik: tam ölçek, sürekli yenileme, küçültülmüş ve ölçekli.
 
 #### 1. Ana Kıyaslama (Saf Sıfır-Gizli)
 *   **Hedef:** Tam 28x28 MNIST (784 Piksel).
@@ -303,11 +303,11 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_revive.py`
-*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeye** olanak tanır ve %98.70 doğruluk elde eder.
+*   **Çıkarım:** Kapasiteyi küçülten standart budamanın aksine OdyssNet, zayıf bağlantıları sürekli geri dönüştürerek tam kapasiteyi koruyabilir. Bu, doyma olmadan **Sürekli Öğrenmeyi** mümkün kılar; sonuç %98.70 doğruluk.
 
 #### 3. Küçük Meydan Okuma (Aşırı Kısıtlar)
 *   **Hedef:** 7x7'ye Küçültülmüş MNIST. (Bir simgeden daha az.)
-*   **Mimari:** Toplam **59 Nöron**. 4,669 parametre — 3,717 parametrelik çekirdek ve genişliği 4 olan tek bir attention başlığı.
+*   **Mimari:** Toplam **59 Nöron**. 4,669 parametre: 3,717 parametrelik çekirdek ve genişliği 4 olan tek bir attention başlığı.
 *   **Sonuç:** **%96.05 Doğruluk**.
     <details>
     <summary>Küçük Sonuçları Gör</summary>
@@ -318,7 +318,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
-*   **Çıkarım:** Bir önyükleyiciden daha küçük parametre sayılarıyla bile sistem sağlam özellikler öğrenir. Koşu 23. epoch'ta %96.05'e ulaşıp kalan 77 epoch boyunca bu değeri basamağına kadar koruyor — gürültülü bir plato değil, sabit nokta.
+*   **Çıkarım:** Bir önyükleyiciden daha küçük parametre sayılarıyla bile sistem sağlam özellikler öğrenir. Koşu 23. epoch'ta %96.05'e ulaşıp kalan 77 epoch boyunca bu değeri basamağına kadar koruyor; gürültülü bir plato değil, sabit nokta.
 
 #### 4. Ölçekli Test (Orta Kısıtlar)
 *   **Hedef:** 14x14'e Küçültülmüş MNIST.
@@ -357,7 +357,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     *   **Mimari:** 4 temporal attention başlıklı 10 çekirdek nöron.
     *   **Strateji:** 7x7'lik 16 spiral yama, düşünme adımı başına bir yama.
     *   **Projeksiyonlar:** 4 nöronluk giriş gömmesi ve 10 sınıflı çıkış çözümleyici.
-    *   **Toplam Parametre:** **634** — 430 çekirdek, 204 attention.
+    *   **Toplam Parametre:** **634** (430 çekirdek, 204 attention).
 *   **Sonuç:** 100 epoch sonunda **Doğ: %89.89**, zirve **%90.91** (epoch 68).
     <details>
     <summary>"Parametrik Verimlilik" Günlüğünü Gör</summary>
@@ -373,13 +373,13 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 *   **Çıkarım:** Parametre başına %0.14 doğruluk. Zamansal düşünme adımlarıyla yüksek seviyeli zeka mikroskobik bir parametrik alana sıkıştırılıyor; modern yapay zekada **Entropi Sıkıştırma Limitlerine** en yakın şey bu. 634 parametrenin 204'ü attention dalına ait ve erken bir yamayı geç bir yamaya taşıyan da o; kontrollü iki seedli bir karşılaştırma bu görevde onu Hebbian plastisitenin önüne koydu.
 
 ### F. Ters Üreteç (728-Param Görsel Sentezi)
-*   **Hedef:** MNIST GÖREVİNİ TERSLE—dijital etiketlerden (0-9) 28×28 görseller üret.
+*   **Hedef:** MNIST GÖREVİNİ TERSLE: dijital etiketlerden (0-9) 28×28 görseller üret.
 *   **Yön:** Rakam (Skaler) → Görsel (784 Piksel).
 *   **Kurulum:**
     *   **Mimari:** 12 nöronlu OdyssNet (2 giriş, 6 çıkış, 4 gizli).
     *   **Strateji:** 5 ısınma adımı + 16 çıkış adımı = toplam 21 düşünme adımı.
     *   **Parçalar:** 16 parça (7×7 her biri) 28×28 ızgarada döşenmiş.
-    *   **Toplam Parametre:** **728** — 484 parametrelik çekirdek ve 4 temporal attention başlığı.
+    *   **Toplam Parametre:** **728** (484 parametrelik çekirdek ve 4 temporal attention başlığı).
     *   **Sıkıştırma:** 10×784 = 7,840 değer vs. 728 parametre = **≈%90.71 Nöral Sıkıştırma**.
 *   **Sonuç:** Eğitim sırasında tüm MNIST rakamlarının mükemmel görsel rekonstruksiyonu.
     <details>
@@ -387,7 +387,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     ![MNIST Ters Üretim](img/convergence_mnist_reverse_record_summary.png)
 
-    Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamının görsel desenine başarıyla eşlemeyi öğrendi. Çıkış, tüm 10 rakamın öğrenilmiş dinamiklerden temiz bir şekilde rekonstruksiyon ettiğini gösteriyor.
+    Ağ, her skaler girişi (0.0, 0.1, ..., 0.9) karşılık gelen rakamın görsel desenine eşlemeyi öğrendi. Çıkışta on rakamın hepsi öğrenilmiş dinamiklerden temiz biçimde yeniden kuruluyor.
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_reverse_record.py`
 *   **Çıkarım:** OdyssNet'in **çift yönlü eşlemeleri** çözebildiğini kanıtlar. Üretim, temporal attention'ın tam da tasarlandığı durum: her yama daha önce çizilenlerle tutarlı olmak zorunda ve bunların tek kaydı çekirdeğin kendi durum geçmişi. 634 parametreli sınıflandırıcı ile bu 728 parametreli üreteç birlikte, **1,400 parametrenin altında tam çift yönlü bir MNIST modeli** oluşturuyor.
@@ -515,11 +515,11 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
-*   **Çıkarım:** OdyssNet yalnızca görev ezberlemiyor; içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Büyük modelin parametrelerinin yalnızca %6.7'si vericiden geliyor ve bu oran eğitimin nerede bittiğini değiştirmeye yetiyor. Bu, bileşimsel öğrenme yönünde somut bir adım.
+*   **Çıkarım:** OdyssNet içsel beceri yapısını görev ve ölçek değişiminde taşıyabiliyor. Büyük modelin parametrelerinin yalnızca %6.7'si vericiden geliyor ve bu oran eğitimin nerede bittiğini değiştirmeye yetiyor. Bu, bileşimsel öğrenme yönünde somut bir adım.
 
 ### M. Kovan Zihni (Tek Bellek, Çok Beden)
-*   **Hedef:** Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor. Her birine, her bölümde yeniden çizilen 8 sembollük bir halkanın **tek bir kenarı** gösteriliyor, başka hiçbir şey. Ardından her bedenin gizli durumu ve dikkat önbelleği siliniyor ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor — kenar başına bir yankı adımı.
-*   **Meydan Okuma:** Silme sonrasında hiçbir bedende özel olarak tutulan bir şey kalmıyor. Bedenler birbirine değmiyor: ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri, özel girdi ve çıktılar. Bir bedenin kendi kenarının ötesinde verdiği her cevap, kovanın paylaşılan çekirdek üzerinde bıraktığı plastik izden gelmek zorunda — kütüphane bu izi batch ortalaması olarak havuzlayıp bir sonraki çağrıda her bedene geri veriyor.
+*   **Hedef:** Sekiz beden tek bir 21.280 parametreli çekirdeği paylaşıyor. Her birine, her bölümde yeniden çizilen 8 sembollük bir halkanın **tek bir kenarı** gösteriliyor, başka hiçbir şey. Ardından her bedenin gizli durumu ve dikkat önbelleği siliniyor ve her bedenden bir sorgu sembolünden başlayarak halkayı yürümesi isteniyor; kenar başına bir yankı adımı.
+*   **Meydan Okuma:** Silme sonrasında hiçbir bedende özel olarak tutulan bir şey kalmıyor. Bedenler birbirine değmiyor: ayrı durumlar, ayrı önbellekler, ayrı forward geçişleri, özel girdi ve çıktılar. Bir bedenin kendi kenarının ötesinde verdiği her cevap, kovanın paylaşılan çekirdek üzerinde bıraktığı plastik izden gelmek zorunda; kütüphane bu izi batch ortalaması olarak havuzlayıp bir sonraki çağrıda her bedene geri veriyor.
 *   **Sonuç:** **Hiçbir bedenin görmediği kenarların kusursuz hatırlanması ve iki farklı bedende duran kenarların kusursuz bileşimi.** Aynı ağırlıklarla, aynı girdilerle ama ayrı ayrı koşulduğunda hepsi şansa düşüyor.
     <details>
     <summary>Kovan ile Yalnız Arıyı Karşılaştır</summary>
@@ -549,7 +549,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_hive_mind.py`
-*   **Mekanizma:** `hebb_type='temporal'`, aynı protokolde alternatiflerine karşı ölçüldü (1.000 adım, CPU). Bir kenar yönlüdür ve `h_prev` ile `h_t` eşleşmesi de yönlüdür; `h_t`'nin kendisiyle eşleşmesi değildir — `hebb_type='spatial'` tek başına şanstan hiç ayrılmıyor (hop 1'de 0.169). Attention burada bir kanal değil: önbellek beden başınadır ve sorgudan önce siliniyor, kovan attention kapalıyken birebir aynı ölçülüyor.
+*   **Mekanizma:** `hebb_type='temporal'`, aynı protokolde alternatiflerine karşı ölçüldü (1.000 adım, CPU). Bir kenar yönlüdür ve `h_prev` ile `h_t` eşleşmesi de yönlüdür; `h_t`'nin kendisiyle eşleşmesi değildir; `hebb_type='spatial'` tek başına şanstan hiç ayrılmıyor (hop 1'de 0.169). Attention burada bir kanal değil: önbellek beden başınadır ve sorgudan önce siliniyor, kovan attention kapalıyken birebir aynı ölçülüyor.
 
     | | hop 1 | hop 2 | hop 3 |
     | :--- | :--- | :--- | :--- |
@@ -559,17 +559,17 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
     | `'spatial'` | 0.169 | 0.134 | 0.122 |
     | `None` | 0.125 | — | — |
 
-*   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini — gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde — diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için bileşim derinliği zamansal derinliktir: yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra 0.884, 0.775, 0.228.
+*   **Çıkarım:** Paylaşılan bir checkpoint değil, **kolektif bir zihin**. Bir bedenin çalışma anında öğrendiğini (gradyan adımı yok, ağırlık güncellemesi yok, üstelik yalnızca o bölümde var olan bir halka üzerinde) diğer bütün bedenler okuyabiliyor; kovan yiyecek ararken henüz var olmayan bir beden dahil. Yalnızca *okuma* eğitiliyor: çalışma geçişi `torch.no_grad()` altında koşuyor, yani yazma kuralı mimarinin kendi plastisitesi. Ve bir yankı adımı bir kenar yürüdüğü için bileşim derinliği zamansal derinliktir: yedi hop'a eğitildiğinde aynı koloni dört kenar boyunca 1.000'i koruyor, sonra 0.884, 0.775, 0.228.
 
 ### N. Görüntü Difüzyonu (573k Parametre, UNet Yok, VAE Yok)
 *   **Hedef:** Difüzyonla sınıf-koşullu MNIST üretimi.
 *   **Yön:** Gürültü + sınıf + saat → 28×28 görüntü, 16 gürültü giderme adımında.
 *   **Kurulum:**
     *   **Mimari:** 512 nöronlu OdyssNet (192 giriş, 192 çıkış, 128 gizli).
-    *   **Strateji:** 16 difüzyon karesi × 4 yankı adımı = 64 düşünme adımı, **tek türevlenebilir ileri geçiş** olarak — böylece gizli durum, attention önbelleği ve plastik iz her difüzyon adımını aşar.
+    *   **Strateji:** 16 difüzyon karesi × 4 yankı adımı = 64 düşünme adımı, **tek türevlenebilir ileri geçiş** olarak; böylece gizli durum, attention önbelleği ve plastik iz her difüzyon adımını aşar.
     *   **VAE yok:** `vocab_mode='continuous'` ile modelin kendi projeksiyonları kodlayıcı ve kod çözücü olur. Öğrenilen her parametre OdyssNet'in içindedir.
-    *   **Toplam Parametre:** **573,376** — Stable Diffusion'ın ~860M parametreli UNet'ine karşı.
-*   **Sonuç:** RTX 3060 Ti'de 15 dakikada, `--mode eval` ile yeniden puanlanan **%91.2 koşullama sadakati**, doğrulama x₀-MSE 0.0800 — hiçbir şey yapmayan tahmin edicinin %8.6'sı. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %90.8–%92.8.
+    *   **Toplam Parametre:** **573,376**; Stable Diffusion'ın ~860M parametreli UNet'ine karşı.
+*   **Sonuç:** RTX 3060 Ti'de 15 dakikada, `--mode eval` ile yeniden puanlanan **%91.2 koşullama sadakati**, doğrulama x₀-MSE 0.0800, yani hiçbir şey yapmayan tahmin edicinin %8.6'sı. Örnekleme rastlantısal olduğu için bu değer oynar: 10–100 örnekleme yığın boyutları arasında %90.8–%92.8.
     <details>
     <summary>Üretilmiş Görselleri Gör (sınıf başına 10 örnek)</summary>
 
@@ -577,7 +577,7 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     Her sütun bir sınıf, her satır bağımsız bir örnek. Yönlendirme ölçeği 2.0, DDIM, 16 adım.
     </details>
-*   **Mekanizma:** eşleştirilmiş, belleği olmayan bir kontrole karşı ölçüldü — aynı kareler, aynı hedefler, aynı gradyan bütçesi, ancak ayrı çağrılar hâlinde verilerek gürültü gidericinin her kareye sıfırdan başladığı durum; bir UNet örnekleyicisinin yaptığı tam olarak budur.
+*   **Mekanizma:** eşleştirilmiş, belleği olmayan bir kontrole karşı ölçüldü: aynı kareler, aynı hedefler, aynı gradyan bütçesi, ancak ayrı çağrılar hâlinde verilerek gürültü gidericinin her kareye sıfırdan başladığı durum; bir UNet örnekleyicisinin yaptığı tam olarak budur.
 
     | Kol başına 3 dk, tohum 54321 | doğrulama MSE | sadakat | Fréchet | parametre |
     | :--- | :--- | :--- | :--- | :--- |
@@ -588,11 +588,11 @@ OdyssNet'in görme yetenekleri sağlamlık, ölçeklenebilirlik ve verimliliği 
 
     Paylaşımlı-epsilon satırı yerleşmiş bir sonuç değil, bir uyarıdır: her kareyi tek bir epsilondan türetmek modelin gürültü giderici yerine bir ters çevirme öğrenmesine izin verir ve iid ızgarası bunu yakalar (0.0967'ye karşı 0.1762); örnek kalitesindeki cezası ise 42 tohumunda görülüp bu tohumda kayboldu (%83.4'e karşı %83.6). `--traj-noise iid` varsayılandır çünkü örnek sütunlarında hiçbir zaman daha kötü olmadı.
 
-*   **Yürüyüş bir kadrandır:** sabit ızgarada değildir — ağırlıklar tek bir kadansa göre oturur ve sadakat 6 adımda %97.2 iken 64 adımda %68.8'e düşer. Adım sayısını her batch'te çekmek (`--k-range`, 12–20 ile varsayılan) bu yayılımı bir tohumda 42.8'den 14.8'e, diğerinde 45.4'ten 10.4'e indirir ve Fréchet mesafesini düz tutar. 12–20 aralığında eğitilmesine rağmen aralığın iki yanında, K=4 ve K=64'te de tutar: öğrendiği şey gördüğü aralık değil, kadansın okunacak bir büyüklük olduğudur. Düşünme derinliğini de çekmek (`--e-range`, 2–6 ile varsayılan) aynısını eko ekseni için yapar; yayılımı 10.2'den 5.8'e ve 6.2'den 2.6'ya indirir, üstelik adım sayısı eksenini de düzleştirir — yani ikisi bağımsız kadranlar değildir. Bkz. `--mode flex`.
-*   **Gürültüyle görüntü arasındaki yol bir tablodur:** her örnekleyici ve hedef çizelgeyi `alpha_bar` ve `sigma` üzerinden okur, dolayısıyla rectified-flow'un düz yolu yalnızca tablonun değişmesidir — `_step_euler` zaten başka koordinatlarda yazılmış flow-matching Euler'ıydı. `--interpolant rf` varsayılandır ve dayanağı CIFAR-10'dur: cosine ile aynı koşullama sadakati, iki tohumda da daha iyi Fréchet mesafesi. MNIST ikisini ayırt edemedi; bu da hangi ölçütün hangi soruyu yanıtladığına dair kendi başına bir sonuçtur.
+*   **Yürüyüş bir kadrandır:** sabit ızgarada değildir, çünkü ağırlıklar tek bir kadansa göre oturur ve sadakat 6 adımda %97.2 iken 64 adımda %68.8'e düşer. Adım sayısını her batch'te çekmek (`--k-range`, 12–20 ile varsayılan) bu yayılımı bir tohumda 42.8'den 14.8'e, diğerinde 45.4'ten 10.4'e indirir ve Fréchet mesafesini düz tutar. 12–20 aralığında eğitilmesine rağmen aralığın iki yanında, K=4 ve K=64'te de tutar: öğrendiği şey gördüğü aralık değil, kadansın okunacak bir büyüklük olduğudur. Düşünme derinliğini de çekmek (`--e-range`, 2–6 ile varsayılan) aynısını eko ekseni için yapar; yayılımı 10.2'den 5.8'e ve 6.2'den 2.6'ya indirir, üstelik adım sayısı eksenini de düzleştirir; yani ikisi bağımsız kadranlar değildir. Bkz. `--mode flex`.
+*   **Gürültüyle görüntü arasındaki yol bir tablodur:** her örnekleyici ve hedef çizelgeyi `alpha_bar` ve `sigma` üzerinden okur, dolayısıyla rectified-flow'un düz yolu yalnızca tablonun değişmesidir; `_step_euler` zaten başka koordinatlarda yazılmış flow-matching Euler'ıydı. `--interpolant rf` varsayılandır ve dayanağı CIFAR-10'dur: cosine ile aynı koşullama sadakati, iki tohumda da daha iyi Fréchet mesafesi. MNIST ikisini ayırt edemedi; bu da hangi ölçütün hangi soruyu yanıtladığına dair kendi başına bir sonuçtur.
 
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir — ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini rastlantı seviyesinden %83.6'ya çıkarır. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır — beyaz gürültü tam ranklıdır ve ölçülen 0.791, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı sekiz katı azaltır. Ayrıca sabit `K*E` hesap bütçesinde, bu bütçeyi gürültü giderme adımları yerine yankı derinliğine harcamak sadakati %73.0'ten **%95.0**'e çıkarır — bunu ancak derinliği zaman olan bir mimari sorabilir.
+*   **Çıkarım:** Difüzyon zaman üzerinde bir döngüdür, OdyssNet ise derinliği *zaman olan* bir ağdır; dolayısıyla gürültü giderme yörüngesi ile düşünme yörüngesi aynı nesnedir ve onu taşımak, aynı parametre sayısında belleksiz bir gürültü gidericiye göre koşullama sadakatini rastlantı seviyesinden %83.6'ya çıkarır. Örnek, mimarinin **yapamadığını** da gösterir: çıktı, görüntünün rank-`n_out` boyutlu bir izdüşümüdür, bu yüzden epsilon tahmini yapısal olarak imkânsızdır: beyaz gürültü tam ranklıdır ve ölçülen 0.791, bu rankın dayattığı 0.755 tabanında oturur. Bunun yerine x₀ tahmin etmek varyansın %3.4'üne mal olur ve kaybı sekiz katı azaltır. Ayrıca sabit `K*E` hesap bütçesinde, bu bütçeyi gürültü giderme adımları yerine yankı derinliğine harcamak sadakati %73.0'ten **%95.0**'e çıkarır; bunu ancak derinliği zaman olan bir mimari sorabilir.
 
 ---
 

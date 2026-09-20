@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![follows Keel](https://img.shields.io/badge/follows-Keel-1f6feb)](https://github.com/theomgdev/keel)
 
-Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of each other) to solve complexity. OdyssNet discards this orthodoxy, proving that **Temporal Depth** (chaos evolving over time) is a vastly more efficient substitute.
+Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of each other) to solve complexity. OdyssNet discards this orthodoxy: **Temporal Depth** (chaos evolving over time) is a vastly more efficient substitute.
 
 > **The Zero-Hidden Breakthrough**
 >
@@ -15,19 +15,19 @@ Traditional Deep Learning relies on **Spatial Depth** (layers stacked on top of 
 >
 > By treating the network as a **Trainable Dynamic System**, OdyssNet solves non-linear problems (XOR, MNIST) using **0 Hidden Layers**. It replaces spatial neurons with temporal thinking steps.
 
-OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of adding thousands of new neurons (Space) to build depth, it executes existing neurons for more steps (Time). A single physical matrix is reused across temporal steps, folding tens of layers worth of computation into a microscopic parametric footprint. This proves that intelligence is a dynamic process, not a static structure.
+OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of adding thousands of new neurons (Space) to build depth, it executes existing neurons for more steps (Time). A single physical matrix is reused across temporal steps and folds tens of layers worth of computation into a microscopic parametric footprint. This proves that intelligence is a dynamic process, not a static structure.
 
 > **WORLD RECORD: Parametric Intelligence Density**
 >
-> OdyssNet reaches **89.89% accuracy** on MNIST with **634 parameters** — 0.14% accuracy per parameter, in a model small enough to print on a business card.
+> OdyssNet reaches **89.89% accuracy** on MNIST with **634 parameters**. That is 0.14% accuracy per parameter, in a model small enough to print on a business card.
 
 ## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
-- Optional multi-head attention over the core's own state history — with a real KV cache — attached along time instead of between layers, and off by default.
+- Optional multi-head attention over the core's own state history, with a real KV cache, attached along time instead of between layers. Off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **89.89% MNIST accuracy** with **634 parameters**, and **96.05%** on 7x7 MNIST with 4,669.
-- It runs as a *hive*. Eight bodies run the same core with no contact between them — separate states, separate caches, separate forward passes — and share one pooled Hebbian trace. Each is shown one edge of a ring drawn fresh per episode; every body then recalls edges it never observed and composes chains up to four edges long, **1.000 against 0.125 chance**, with no gradient step at run time. Run apart, the same weights on the same inputs fall to chance.
+- It runs as a *hive*. Eight bodies run the same core with no contact between them (separate states, separate caches, separate forward passes) and share one pooled Hebbian trace. Each is shown one edge of a ring drawn fresh per episode; every body then recalls edges it never observed and composes chains up to four edges long, **1.000 against 0.125 chance**, with no gradient step at run time. Run apart, the same weights on the same inputs fall to chance.
 - Demonstrates memory, rhythm, attractor stability, and transferable skills across tasks.
 - Start with [examples](examples) for proofs, then use the library API in [odyssnet](odyssnet) for your own workloads.
 
@@ -38,9 +38,9 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 *   **Space-Time Conversion:** Replaces millions of parameters with a few "Thinking Steps".
 *   **Layerless Architecture:** A single $N \times N$ matrix. No hidden layers.
 *   **Trainable Chaos:** Uses **StepNorm** and **Tanh** to tame chaotic signals.
-*   **Temporal Attention (3.0):** Optional multi-head attention over the core's *own state history* (`attn_heads=4`) — no layers to stack it between, so it attends along time. Modern KV caching throughout: grouped-query heads, RoPE, a sliding window, and a preallocated ring buffer for allocation-free decoding. Its output projection starts at zero, so switching it on changes nothing until training says otherwise.
-*   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='neuron'|'global'`) — the network accumulates correlations *per example* and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.). The plastic contribution is scaled by a zero-initialized gain, so switching it on changes nothing until training decides otherwise — which makes `hebb_type` an exact control. The trace is kept as the writes it is made of rather than as a matrix, so it costs `steps x batch x N` and never assembles one. Ablate it: measured, it helps on sequential tasks and hurts where attention already covers the same ground.
-*   **Collective Memory Across Bodies:** The persistent Hebbian buffer holds the batch mean of the live traces and is handed back to every row on the next call, so a batch can be run as a *colony* — independent bodies with private inputs and outputs, one shared memory living on the core. What one body learns at run time (no gradient, no weight update) every other body can read, including a body built after the fact. Measured in `convergence_hive_mind.py`.
+*   **Temporal Attention (3.0):** Optional multi-head attention over the core's *own state history* (`attn_heads=4`). There are no layers to stack it between, so it attends along time. Modern KV caching throughout: grouped-query heads, RoPE, a sliding window, and a preallocated ring buffer for allocation-free decoding. Its output projection starts at zero, so switching it on changes nothing until training says otherwise.
+*   **Heterogeneous Synaptic Plasticity:** Optional online Hebbian learning (`hebb_type='temporal'|'spatial'|'both'`, `hebb_res='neuron'|'global'`): the network accumulates correlations *per example* and learns *how fast to learn* via fully differentiable logit parameters (`t_hebb_factor`, `s_hebb_decay`, etc.). The plastic contribution is scaled by a zero-initialized gain, so switching it on changes nothing until training decides otherwise, which makes `hebb_type` an exact control. The trace is kept as the writes it is made of rather than as a matrix, so it costs `steps x batch x N` and never assembles one. Ablate it: measured, it helps on sequential tasks and hurts where attention already covers the same ground.
+*   **Collective Memory Across Bodies:** The persistent Hebbian buffer holds the batch mean of the live traces and is handed back to every row on the next call, so a batch can be run as a *colony*: independent bodies with private inputs and outputs, one shared memory living on the core. What one body learns at run time (no gradient, no weight update) every other body can read, including a body built after the fact. Measured in `convergence_hive_mind.py`.
 *   **Skill Transfer via Transplantation:** Learned temporal skills can be transplanted across model sizes and re-used in new tasks.
 *   **Living Dynamics:** Demonstrates **Willpower** (Latch), **Rhythm** (Stopwatch), and **Resonance** (Sine Wave).
 
@@ -74,11 +74,11 @@ OdyssNet solves full-scale MNIST (28x28) with **Zero Hidden Layers** (Direct Inp
 *   **Hidden Layers:** **0**
 *   **Thinking Time:** 10 Steps
 
-The input layer "talks to itself" for 10 steps. The chaotic feedback loops extract features (edges, loops) dynamically over time, performing the work of spatial layers. This proves that **Temporal Depth can replace Spatial Depth**.
+The input layer "talks to itself" for 10 steps. The chaotic feedback loops extract features (edges, loops) dynamically over time and do the work of spatial layers. This proves that **Temporal Depth can replace Spatial Depth**.
 
 ### One Memory, Many Bodies
 
-Eight bodies share one 21,280-parameter core and touch nothing else: separate hidden states, separate attention caches, separate forward passes, private inputs and private outputs. Each is shown **one edge** of an 8-node ring drawn fresh every episode. Every private carrier is then wiped — state zeroed, attention cache reset — and each body is asked to walk the ring from a query symbol, one echo step per edge.
+Eight bodies share one 21,280-parameter core and touch nothing else: separate hidden states, separate attention caches, separate forward passes, private inputs and private outputs. Each is shown **one edge** of an 8-node ring drawn fresh every episode. Every private carrier is then wiped (state zeroed, attention cache reset), and each body is asked to walk the ring from a query symbol, one echo step per edge.
 
 | 320 queries per column | hop 1 | hop 2 | hop 3 |
 | :--- | :--- | :--- | :--- |
@@ -86,9 +86,9 @@ Eight bodies share one 21,280-parameter core and touch nothing else: separate hi
 | apart, one body alone | 0.297 | 0.134 | 0.094 |
 | together, memory blank | 0.147 | 0.141 | 0.112 |
 
-Chance is 0.125. Hop 1 is an edge another body observed; hops 2 and 3 compose edges held by different bodies, which no body could answer from its own inputs. The ring exists only for that episode, so the answer cannot be in the weights, and nothing is trained at run time — the study pass runs under `torch.no_grad()`, leaving the write to the architecture's own plasticity.
+Chance is 0.125. Hop 1 is an edge another body observed; hops 2 and 3 compose edges held by different bodies, which no body could answer from its own inputs. The ring exists only for that episode, so the answer cannot be in the weights, and nothing is trained at run time: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity.
 
-The only thing between the bodies is the plastic trace they leave on the shared core, which the library pools as the batch mean. The controls say so from every side: move one body's edge and a *different* body's answer follows it (1.000) while that body run alone answers bit-identically; install another colony's memory and the answers follow *that* ring (1.000); run the bodies apart and pool the memories afterwards and the result matches the batched one to 3.0e-08; with `hebb_type=None` the whole thing sits at chance. Trained to seven hops instead of three, the same colony holds 1.000 through four edges and then falls away (0.884, 0.775, 0.228) — one echo step per edge, so composition depth is temporal depth. Full protocol in **section M**.
+The only thing between the bodies is the plastic trace they leave on the shared core, which the library pools as the batch mean. The controls say so from every side: move one body's edge and a *different* body's answer follows it (1.000) while that body run alone answers bit-identically; install another colony's memory and the answers follow *that* ring (1.000); run the bodies apart and pool the memories afterwards and the result matches the batched one to 3.0e-08; with `hebb_type=None` the whole thing sits at chance. Trained to seven hops instead of three, the same colony holds 1.000 through four edges and then falls away (0.884, 0.775, 0.228). One echo step walks one edge, so composition depth is temporal depth. Full protocol in **section M**.
 
 ---
 
@@ -130,14 +130,14 @@ trainer.fit(inputs, inputs, epochs=50)
 
 #### Initialization Protocols
 
-`weight_init=['quiet', 'resonant', 'quiet', 'zero']` is the default strategy, providing optimal initializations for encoder/decoder, core matrix, memory feedback, and gate parameters respectively. Single string values like `'resonant'` are automatically expanded intelligently.
+`weight_init=['quiet', 'resonant', 'quiet', 'zero']` is the default strategy: one entry each for encoder/decoder, core matrix, memory feedback, and gate parameters. A single string like `'resonant'` is expanded across the slots.
 
 `activation=['none', 'tanh', 'tanh', 'none']` is the default activation layout. The first 3 entries map to encoder/decoder, core, and memory paths. The 4th slot is reserved for config symmetry.
 
 `gate=None` resolves to the default gate layout `['none', 'none', 'identity']` (encoder/decoder off, core off, memory identity gate on). You can pass `gate='sigmoid'` to gate all branches, `['none', 'none', 'sigmoid']` for memory-only gating, or `['none', 'none', 'none']` to disable all gating.
 
 *   **All Networks (Default Core):**
-    *   Use `weight_init='resonant'` and `activation='tanh'`. The core will be placed at the Edge of Chaos (ρ(W) = 1.0) from the start, ensuring signal fidelity across temporal steps.
+    *   Use `weight_init='resonant'` and `activation='tanh'`. The core starts at the Edge of Chaos (ρ(W) = 1.0), which keeps signal fidelity across temporal steps.
     *   Bipolar Rademacher skeleton + spectral normalization to ρ = 1.0.
 *   **Alternative — Large Networks (>10 Neurons):**
     *   `weight_init='orthogonal'` remains a solid fallback for pure stability.
@@ -176,10 +176,10 @@ By "thinking" for 15 steps, OdyssNet simulates a 15-layer deep network using **o
 
 ### 4. Controlled Chaos (Attractors)
 Uncontrolled feedback loops lead to explosion. OdyssNet engineers the chaos to form stable **Attractors**.
-*   **StepNorm** acts as gravity, keeping energy bounded.
+*   **StepNorm** acts as gravity and keeps energy bounded.
 *   **Tanh** filters meaningful signals while maintaining signal symmetry.
-*   **ChaosGrad Optimizer (default)**: OdyssNet's bespoke zero-config optimizer. Estimates the step scale online (D-adaptation class math), applies architecture-aware per-family policy, and protects chaotic dynamics with an anchored traction limit and a loss-spike brake. No learning rate required — pass an explicit `lr` for reproducible fixed-rate mode.
-*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, correlations (temporal $h_t \otimes h_{t-1}$ or spatial $h_t \otimes h_t$) are accumulated each step and injected — where factors like `t_hebb_factor` are a global scalar or a per-neuron vector, both learnable, letting the network discover how plastic each pathway should be.
+*   **ChaosGrad Optimizer (default)**: OdyssNet's bespoke zero-config optimizer. Estimates the step scale online (D-adaptation class math), applies architecture-aware per-family policy, and protects chaotic dynamics with an anchored traction limit and a loss-spike brake. No learning rate required; pass an explicit `lr` for reproducible fixed-rate mode.
+*   **Heterogeneous Synaptic Plasticity**: When `hebb_type` is set, correlations (temporal $h_t \otimes h_{t-1}$ or spatial $h_t \otimes h_t$) are accumulated each step and injected. Factors like `t_hebb_factor` are a global scalar or a per-neuron vector, both learnable, so the network discovers how plastic each pathway should be.
 *   **The Latch Experiment** proved OdyssNet can create a stable attractor to hold a decision forever against noise.
 
 ### 5. Why Not RNN or LSTM?
@@ -197,11 +197,11 @@ While OdyssNet looks like a Recurrent Neural Network (RNN) on paper, its philoso
 *   **OdyssNet listens to its inner voice.** It takes **one** look at the problem and then closes its eyes to "think" about it for 15 steps. It creates its own temporal depth.
 
 ### 6. Biological Realism: Living Intelligence
-OdyssNet mimics the brain more closely than layered networks, not just in structure, but in **behavior**:
+OdyssNet mimics the brain more closely than layered networks, in **behavior** as much as in structure:
 
 *   **No Layers:** The brain doesn't have "Layer 1" and "Layer 2". It has regions of interconnected neurons. OdyssNet is a single region.
 *   **Willpower (The Latch):** Unlike standard RNNs that fade, OdyssNet can lock onto a decision and hold it against entropy, displaying "Cognitive Persistence."
-*   **Rhythm (The Stopwatch):** Without any external clock, OdyssNet experiences time subjectively, allowing it to count, wait, and act at precise moments.
+*   **Rhythm (The Stopwatch):** Without any external clock, OdyssNet experiences time subjectively, so it can count, wait and act at precise moments.
 *   **Patience (The Detective):** It benefits from "Thinking Time." Just as humans need a moment to process complex logic, OdyssNet solves impossible problems when given a few steps of silence to digest potential solutions.
 
 ### 7. Implicit Attention (Temporal Resonance)
@@ -214,9 +214,9 @@ By default OdyssNet carries no history buffer at all. Instead of explicit $Q \ti
 ### 8. Explicit Attention (Temporal Attention, 3.0)
 Resonance is memory *without* an index. Version 3.0 adds the other kind as an option: `attn_heads=4` gives every thinking step a query over the states that came before it.
 
-*   **Where it attaches:** There are no layers to stack attention between, so it runs along the only axis this architecture has — its own past. The result is added to the same pre-activation signal the recurrence and the input feed, and the step's activation and StepNorm bound it like everything else.
-*   **Query length is always 1.** The core cannot be unrolled in parallel, so a forward pass is a sequence of single-query attentions — a transformer's decode phase, never its prefill. Every cached entry is already in the past and softmax over keys is order-blind, so no mask and no reordering are ever needed.
-*   **A real KV cache:** grouped-query / multi-query heads, RoPE applied to each key when it is written, a sliding window, and two representations — a preallocated ring written in place for inference, a segmented graph cache for training — that are tested to produce identical numbers.
+*   **Where it attaches:** There are no layers to stack attention between, so it runs along the only axis this architecture has: its own past. The result is added to the same pre-activation signal the recurrence and the input feed, and the step's activation and StepNorm bound it like everything else.
+*   **Query length is always 1.** The core cannot be unrolled in parallel, so a forward pass is a sequence of single-query attentions, a transformer's decode phase and never its prefill. Every cached entry is already in the past and softmax over keys is order-blind, so no mask and no reordering are ever needed.
+*   **A real KV cache:** grouped-query / multi-query heads, RoPE applied to each key when it is written, a sliding window, and two representations that are tested to produce identical numbers: a preallocated ring written in place for inference, a segmented graph cache for training.
 *   **Free to try:** the output projection is zero-initialized and the module is built after the core, so an attention model and a plain one at the same seed start from the same $W$ and the same output. The ablation has one variable in it.
 *   **Measure it:** `python -u examples/advanced/experiment_llm.py --mode sweep --sweep attn --minutes 3 --batch 128`, whose `off` arm builds no attention at all. Full mechanics, cost model and knobs: [docs/LIBRARY.md](docs/LIBRARY.md#temporal-attention-odyssnetcoreattention).
 
@@ -225,7 +225,7 @@ The network state $h_t$ evolves as:
 
 $$h_t = \text{StepNorm}(\text{Tanh}(h_{t-1} \cdot W + B + I_t))$$
 
-With temporal attention enabled, one more term joins the same sum — a query over the cache $\mathcal{C}_t$ of previously written states:
+With temporal attention enabled, one more term joins the same sum: a query over the cache $\mathcal{C}_t$ of previously written states:
 
 $$h_t = \text{StepNorm}\Big(\text{Tanh}\big(h_{t-1} \cdot W + B + I_t + \text{Attn}(h_{t-1}, \mathcal{C}_t) \cdot W_o\big)\Big), \qquad W_o \big|_{t=0} = 0$$
 
@@ -271,7 +271,7 @@ We conducted extensive tests to validate OdyssNet's core hypothesis: **Temporal 
 *   **Insight:** OdyssNet uses **Time as a Hidden Layer**. By folding the input over just 5 time steps, it creates a non-linear decision boundary in a single physical layer, proving that 3 chaos-coupled neurons can solve XOR.
 
 ### C. The MNIST Marathon (Visual Intelligence)
-OdyssNet's vision capabilities were tested under four distinct conditions to prove robustness, scalability, and efficiency.
+We tested OdyssNet's vision under four conditions: full scale, continuous regeneration, tiny, and downscaled.
 
 #### 1. The Main Benchmark (Pure Zero-Hidden)
 *   **Target:** Full 28x28 MNIST (784 Pixels).
@@ -303,11 +303,11 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_revive.py`
-*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows for **Continuous Learning** without saturation, achieving 98.70% accuracy.
+*   **Insight:** Unlike standard pruning which shrinks capacity, OdyssNet can maintain full capacity by constantly recycling weak connections. This allows **Continuous Learning** without saturation, at 98.70% accuracy.
 
 #### 3. The Tiny Challenge (Extreme Constraints)
 *   **Target:** 7x7 Downscaled MNIST. (Less than an icon).
-*   **Architecture:** **59 Neurons** total. 4,669 parameters — a 3,717-parameter core plus one attention head of width 4.
+*   **Architecture:** **59 Neurons** total. 4,669 parameters: a 3,717-parameter core plus one attention head of width 4.
 *   **Result:** **96.05% Accuracy**.
     <details>
     <summary>See Tiny Results</summary>
@@ -318,7 +318,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_tiny.py`
-*   **Insight:** Even with parameter counts smaller than a bootloader, the system learns robust features. The run reaches 96.05% at epoch 23 and then holds it to the digit for the remaining 77 epochs — a fixed point, not a noisy plateau.
+*   **Insight:** Even with parameter counts smaller than a bootloader, the system learns robust features. The run reaches 96.05% at epoch 23 and then holds it to the digit for the remaining 77 epochs, which is a fixed point rather than a noisy plateau.
 
 #### 4. The Scaled Test (Medium Constraints)
 *   **Target:** 14x14 Downscaled MNIST.
@@ -357,7 +357,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     *   **Architecture:** 10 core neurons with 4 temporal attention heads.
     *   **Strategy:** 16 spiral patches of 7x7 pixels, one per thinking step.
     *   **Projections:** A 4-neuron input embedding and a 10-class output decoder.
-    *   **Total Parameters:** **634** — 430 core, 204 attention.
+    *   **Total Parameters:** **634** (430 core, 204 attention).
 *   **Result:** **Acc: 89.89%** after 100 epochs, peaking at **90.91%** (epoch 68).
     <details>
     <summary>See the "Parametric Efficiency" Log</summary>
@@ -370,16 +370,16 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_mnist_record.py`
-*   **Insight:** 0.14% accuracy per parameter. High-level intelligence compressed into a microscopic parametric space by leveraging temporal thinking steps, and the closest thing to **Entropic Compression Limits** in modern AI. The attention branch costs 204 of the 634 parameters and is what carries an early patch to a later one; a controlled two-seed comparison put it ahead of Hebbian plasticity on this task.
+*   **Insight:** 0.14% accuracy per parameter. High-level intelligence compressed into a microscopic parametric space by spending temporal thinking steps instead of parameters, and the closest thing to **Entropic Compression Limits** in modern AI. The attention branch costs 204 of the 634 parameters and is what carries an early patch to a later one; a controlled two-seed comparison put it ahead of Hebbian plasticity on this task.
 
 ### F. The Inverse Generator (728-Param Image Synthesis)
-*   **Target:** REVERSE the MNIST task—generate 28×28 images from digit labels (0-9).
+*   **Target:** REVERSE the MNIST task: generate 28×28 images from digit labels (0-9).
 *   **Direction:** Digit (Scalar) → Image (784 Pixels).
 *   **The Setup:**
     *   **Architecture:** OdyssNet with 12 neurons (2 input, 6 output, 4 hidden).
     *   **Strategy:** 5 warmup steps + 16 output steps = 21 total thinking steps.
     *   **Patches:** 16 patches (7×7 each) tiled into a 28×28 grid.
-    *   **Total Parameters:** **728** — a 484-parameter core plus 4 temporal attention heads.
+    *   **Total Parameters:** **728** (a 484-parameter core plus 4 temporal attention heads).
     *   **Compression:** 10×784 = 7,840 values vs. 728 parameters = **≈90.71% Neural Compression** (parameters are ≈9.29% of the baseline).
 *   **Result:** Legible reconstruction of all ten digits, final loss **0.6522** after 100 epochs.
     <details>
@@ -515,11 +515,11 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_skill_transfer.py`
-*   **Insight:** OdyssNet is not only learning tasks; it is transferring internal skill structure across sizes and tasks. Only 6.7% of the larger model's parameters come from the donor, and that fraction is enough to change where training ends up. This is a concrete step toward compositional learning.
+*   **Insight:** OdyssNet carries internal skill structure across sizes and tasks. Only 6.7% of the larger model's parameters come from the donor, and that fraction is enough to change where training ends up. This is a concrete step toward compositional learning.
 
 ### M. The Hive Mind (One Memory, Many Bodies)
-*   **Target:** Eight bodies share one 21,280-parameter core. Each is shown **one edge** of an 8-symbol ring drawn fresh every episode, and nothing else. Every hidden state and attention cache is then wiped, and each body is asked to walk the ring from a query symbol — one echo step per edge.
-*   **Challenge:** After the wipe no body holds anything privately. Bodies never touch: separate states, separate caches, separate forward passes, private inputs and outputs. Anything a body answers beyond its own edge had to arrive through the plastic trace the colony leaves on the shared core — which the library pools as the batch mean and hands back to every body on the next call.
+*   **Target:** Eight bodies share one 21,280-parameter core. Each is shown **one edge** of an 8-symbol ring drawn fresh every episode, and nothing else. Every hidden state and attention cache is then wiped, and each body is asked to walk the ring from a query symbol, one echo step per edge.
+*   **Challenge:** After the wipe no body holds anything privately. Bodies never touch: separate states, separate caches, separate forward passes, private inputs and outputs. Anything a body answers beyond its own edge had to arrive through the plastic trace the colony leaves on the shared core, which the library pools as the batch mean and hands back to every body on the next call.
 *   **Result:** **Perfect recall of edges no body observed, and perfect composition of edges held by different bodies.** Run apart, on the same weights with the same inputs, all of it collapses to chance.
     <details>
     <summary>See the Colony vs. the Lone Bee</summary>
@@ -549,7 +549,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     ```
     </details>
 *   **Script:** `examples/advanced/convergence_hive_mind.py`
-*   **Mechanism:** `hebb_type='temporal'`, measured against the alternatives on the same protocol (1,000 steps, CPU). An edge is directed and so is `h_prev` paired with `h_t`; `h_t` paired with itself is not, and `hebb_type='spatial'` alone never leaves chance (0.169 at hop 1). Attention is not a channel here — the cache is per body and is wiped before the query — and the colony measures identically with it off.
+*   **Mechanism:** `hebb_type='temporal'`, measured against the alternatives on the same protocol (1,000 steps, CPU). An edge is directed and so is `h_prev` paired with `h_t`; `h_t` paired with itself is not, and `hebb_type='spatial'` alone never leaves chance (0.169 at hop 1). Attention is not a channel here (the cache is per body and is wiped before the query), and the colony measures identically with it off.
 
     | | hop 1 | hop 2 | hop 3 |
     | :--- | :--- | :--- | :--- |
@@ -559,17 +559,17 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
     | `'spatial'` | 0.169 | 0.134 | 0.122 |
     | `None` | 0.125 | — | — |
 
-*   **Insight:** A **collective mind, not a shared checkpoint**. What one body learns at run time — no gradient step, no weight update, on a ring that exists only for this episode — every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, composition depth is temporal depth: trained to seven hops the same colony holds 1.000 through four edges, then 0.884, 0.775, 0.228.
+*   **Insight:** A **collective mind, not a shared checkpoint**. What one body learns at run time (no gradient step, no weight update, on a ring that exists only for this episode) every other body can read, including a body that did not exist while the colony was foraging. Only the *reading* is trained: the study pass runs under `torch.no_grad()`, so the write is the architecture's own plasticity. And because one echo step walks one edge, composition depth is temporal depth: trained to seven hops the same colony holds 1.000 through four edges, then 0.884, 0.775, 0.228.
 
 ### N. Image Diffusion (573k Params, No UNet, No VAE)
 *   **Target:** Class-conditional MNIST generation by denoising diffusion.
 *   **Direction:** Noise + class + clock -> 28x28 image, over 16 denoising steps.
 *   **The Setup:**
     *   **Architecture:** OdyssNet with 512 neurons (192 in, 192 out, 128 hidden).
-    *   **Strategy:** 16 denoising frames x 4 echo steps = 64 thinking steps, run as **one differentiable forward pass** — so hidden state, attention cache and plastic trace all cross every denoising step.
+    *   **Strategy:** 16 denoising frames x 4 echo steps = 64 thinking steps, run as **one differentiable forward pass**, so hidden state, attention cache and plastic trace all cross every denoising step.
     *   **No VAE:** `vocab_mode='continuous'` makes the model's own projections the encoder and decoder. Every learned parameter is inside OdyssNet.
-    *   **Total Parameters:** **573,376** — against Stable Diffusion's ~860M-parameter UNet.
-*   **Result:** **91.2% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti, val x0-MSE 0.0800 — 8.6% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 90.8%–92.8% across sampling batch sizes 10 to 100.
+    *   **Total Parameters:** **573,376**, against Stable Diffusion's ~860M-parameter UNet.
+*   **Result:** **91.2% conditioning fidelity** re-scored with `--mode eval` after 15 minutes on an RTX 3060 Ti, val x0-MSE 0.0800, which is 8.6% of the do-nothing predictor. Sampling is stochastic, so the figure moves: 90.8%–92.8% across sampling batch sizes 10 to 100.
     <details>
     <summary>See Generated Images (10 samples per class)</summary>
 
@@ -577,7 +577,7 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
     Each column is one class, each row an independent sample. Guidance scale 2.0, DDIM, 16 steps.
     </details>
-*   **Mechanism:** measured against a matched memoryless control — the same frames, targets and gradient budget, issued as separate calls so the denoiser starts each frame with nothing, which is what a UNet sampler does.
+*   **Mechanism:** measured against a matched memoryless control: the same frames, targets and gradient budget, issued as separate calls so the denoiser starts each frame with nothing, which is what a UNet sampler does.
 
     | 3 min per arm, seed 54321 | val MSE | fidelity | Frechet | params |
     | :--- | :--- | :--- | :--- | :--- |
@@ -588,11 +588,11 @@ OdyssNet's vision capabilities were tested under four distinct conditions to pro
 
     The shared-epsilon row is a caution, not a settled result: deriving every frame from one epsilon lets the model learn an inversion rather than a denoiser, which the iid grid catches (0.1762 against 0.0967), but its sample penalty appeared at seed 42 and vanished at this one (83.4% against 83.6%). `--traj-noise iid` is the default because it has never been worse on the sample columns.
 
-*   **The walk is a dial:** on a fixed grid it is not one — the weights are fitted to a single cadence, and fidelity falls from 97.2% at 6 steps to 68.8% at 64. Drawing the step count per batch (`--k-range`, default 12–20) cuts that spread from 42.8 points to 14.8 on one seed and 45.4 to 10.4 on another, while holding the Frechet distance flat. Trained over 12–20, it holds at K=4 and K=64 either side: what it learns is that the cadence is a quantity to read, not the range it saw. Drawing the thinking depth as well (`--e-range`, default 2–6) does the same for the echo axis, cutting its spread from 10.2 to 5.8 and 6.2 to 2.6 — and flattening the step-count axis too, so the two are not independent knobs. See `--mode flex`.
-*   **The path between noise and image is a table:** every sampler and target reads the schedule through `alpha_bar` and `sigma`, so the rectified-flow straight path is a change of table and nothing else — `_step_euler` was already flow-matching Euler in other coordinates. `--interpolant rf` is the default on CIFAR-10 evidence: the same conditioning fidelity as cosine with a better Frechet distance at both seeds. MNIST could not tell the two apart, which is its own result about which benchmark answers which question.
+*   **The walk is a dial:** on a fixed grid it is not one, because the weights are fitted to a single cadence, and fidelity falls from 97.2% at 6 steps to 68.8% at 64. Drawing the step count per batch (`--k-range`, default 12–20) cuts that spread from 42.8 points to 14.8 on one seed and 45.4 to 10.4 on another, while holding the Frechet distance flat. Trained over 12–20, it holds at K=4 and K=64 either side: what it learns is that the cadence is a quantity to read, not the range it saw. Drawing the thinking depth as well (`--e-range`, default 2–6) does the same for the echo axis, cutting its spread from 10.2 to 5.8 and 6.2 to 2.6, and it flattens the step-count axis too, so the two are not independent knobs. See `--mode flex`.
+*   **The path between noise and image is a table:** every sampler and target reads the schedule through `alpha_bar` and `sigma`, so the rectified-flow straight path is a change of table and nothing else; `_step_euler` was already flow-matching Euler in other coordinates. `--interpolant rf` is the default on CIFAR-10 evidence: the same conditioning fidelity as cosine with a better Frechet distance at both seeds. MNIST could not tell the two apart, which is its own result about which benchmark answers which question.
 
 *   **Script:** `examples/advanced/experiment_diffusion.py`
-*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object — and carrying it takes conditioning fidelity from chance to 83.6% against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction — white noise is full rank, and a measured 0.791 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss eightfold. And at fixed compute `K*E`, spending it on echo depth rather than denoising steps takes fidelity from 73.0% to **95.0%** — a question only an architecture whose depth is time can ask.
+*   **Insight:** Diffusion is a loop over time and OdyssNet is a network whose depth *is* time, so the denoising trajectory and the thinking trajectory are the same object, and carrying it takes conditioning fidelity from chance to 83.6% against a memoryless denoiser at identical parameter count. The example also shows what the architecture **cannot** do: the output is a rank-`n_out` view of the image, so predicting epsilon is impossible by construction: white noise is full rank, and a measured 0.791 sits at the 0.755 floor that rank implies. Predicting x0 costs 3.4% of variance instead and cuts the loss eightfold. And at fixed compute `K*E`, spending it on echo depth rather than denoising steps takes fidelity from 73.0% to **95.0%**, a question only an architecture whose depth is time can ask.
 
 ---
 
@@ -603,7 +603,7 @@ If we can solve vision with Zero Hidden Layers by trading Space for Time, this a
 
 *   **Hypothesis:** A 1B parameter model (OdyssNet-1B) could theoretically match the reasoning depth of much larger models (e.g., Llama-70B) by "thinking" for more steps.
 *   **Goal:** Efficient, high-reasoning AI on consumer hardware (e.g., RTX 3060).
-*   **New Evidence:** The Add -> Multiply transplant experiment shows reusable skills can survive scale changes and speed up new task acquisition, opening a realistic AGI pathway.
+*   **New Evidence:** The Add -> Multiply transplant experiment shows reusable skills can survive scale changes and speed up new task acquisition, which opens a realistic AGI pathway.
 
 > "We don't need petabytes of VRAM. We just need Time."
 
