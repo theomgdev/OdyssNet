@@ -117,7 +117,11 @@ class OdyssNet(nn.Module):
 
         self._init_weights()
         
-        # Memory Feedback (Neuron self-connections)
+        # Memory Feedback (Neuron self-connections). The memory gate starts
+        # closed, so a neuron earns the right to hold its own state only once
+        # the core has learned something worth holding — W already carries
+        # memory across steps, and an open latch before then is a shortcut
+        # around learning.
         self.memory_feedback = nn.Parameter(torch.empty(num_neurons, device=device))
         with torch.no_grad():
             self._apply_init(self.memory_feedback, self.mem_weight_init)

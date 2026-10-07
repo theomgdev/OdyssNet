@@ -793,24 +793,55 @@ branch still writes only into its own row.
 * **The stored state is fixed-size.** `neurons` floats whatever the context's
   length, where a KV cache grows with it.
 
-Out-of-scope and confidence are not heads. Per-option BCE with `pos_weight = K-1`
-makes the scalar absolute rather than a pure rank, which prevents the optimizer
-from minimising the loss by collapsing all options to the same low value. A
+Out-of-scope and confidence are not heads. Per-option BCE weighted by the
+batch's own negative-to-positive ratio makes the scalar absolute rather than a
+pure rank, which prevents the optimizer from minimising the loss by collapsing
+all options to the same low value. A
 question whose answer is none of the options reads as a flat low distribution,
 and confidence is that distribution's own max and margin. A rejection option is
 ordinary data.
 
 ### Status
 
-Converted CLINC150 (`data/decisions/from_clinc150.py` — 15,100 train contexts,
-45,200 questions, K 2-10), 192 neurons, 87,456 parameters, `lr=1e-3`, seed 42,
-batch 24, `chunk=16`, `think=8`: **39.58%** intent-plus-domain accuracy over
-held-out questions at 300 steps (up from 28.83% before batch-independent
-chunking), ECE 0.172.
+Two corpora, both produced by a converter next to the data it writes.
 
-The loss terms are balanced by `pos_weight = K - 1`, which keeps option scores
-apart during training and prevents the all-negative collapse that earlier runs
-faced.
+**`data/decisions/from_clinc150.py`** — converted CLINC150 (15,100 train
+contexts, 45,200 questions, K 2-10). 192 neurons, 87,456 parameters,
+`lr=1e-3`, seed 42, `chunk=16`, `think=8`: **39.58%** intent-plus-domain
+accuracy over held-out questions at 300 steps, ECE 0.172.
+
+**`data/decisions/synthetic_basics.py`** — a graded synthetic corpus, no
+download, written because CLINC150 asks one hard thing and a flat loss curve
+on it cannot distinguish a model that half reads from one that does not read
+at all. 24,000 contexts, 46,067 questions, 1.9 questions per context, K 2-12,
+and 18% of questions answered by none of the options — the `correct: -1`
+branch that CLINC never reaches, because its converter makes rejection a
+selectable option instead.
+
+Questions carry a band naming how much work the answer takes, so accuracy can
+be read per band rather than as one average that hides which half carried it.
+At 600 steps (87,456 parameters, 3.9 min, 2.6 steps/s) against a 29.1% chance
+baseline:
+
+| band | what it asks | n | accuracy |
+|---|---|---|---|
+| stated | the answer is a word in the context | 237 | 20.7% |
+| unanswerable | the context does not settle it | 138 | 85.5% |
+| recalled | context plus one thing a reader knows | 184 | 36.4% |
+| compared | two quantities weighed against each other | 92 | 27.2% |
+| inferred | a rule in the context applied to a fact in it | 127 | 46.5% |
+
+Overall 31.25%, ECE 0.029, Brier 0.197. Two things in that table are worth
+more than the average: `stated` sits *below* chance while `inferred` sits well
+above it, which is not what a model learning to read would look like, and
+`unanswerable` at 85.5% is partly the abstention threshold being easy to
+satisfy when every score is low. The band split is what makes both visible.
+
+The loss weights per-option BCE by the batch's own negative-to-positive ratio,
+which keeps option scores apart during training and prevents the all-negative
+collapse that unweighted BCE produces when wrong options outnumber the right
+one. Both counts are offset by one, so a batch whose every question is a
+rejection stays finite.
 
 Throughput: one optimizer step is 8 `forward` calls whatever Q and K are —
 one context read, one batched question read, one batched option read, each

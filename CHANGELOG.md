@@ -4,6 +4,22 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.13.0] — 2026-10-08
+
+### Changed
+- **The decision loss drops its hand-tuned weight.** `ABS_WEIGHT = 0.3` scaled the absolute term against the ranking term on the premise that its gradient arrives ~3.5x larger. Measured on the real model rather than a synthetic stand-in, the ratio runs the other way (rank 1.19e+03 against abs 1.62e+04 at one configuration, and rank/abs 1.5-1.7 at others), so the constant was correcting a direction it had wrong, and it bought 400 steps before the collapse it was meant to prevent returned. The two terms are summed as they are, and the class weight comes from the batch's own counts offset by one — `(neg+1)/(pos+1)` — which removes the `clamp(1, 64)` floor and ceiling and keeps an all-rejection batch finite by construction instead of by a bound.
+
+- **`--mode smoke` asserts wiring instead of learning, in 23 checks and ~25 s.** The learning gate had grown to 1200 steps on 48 contexts, which is a training run inside a smoke test, and it was still testing the seed: with one supervision signal per example neither the loss nor the accuracy moves measurably at any smoke-sized budget. In its place the loss is checked to reach every parameter family expected to learn and a dozen steps are checked to change them, both deterministic and both failing exactly on the detached-graph and wrong-parameter-group bugs a smoke exists to catch. `memory_feedback` and the memory gate stay outside the asserted set: the gate is `zero`-initialised by design, so the latch behind it is closed at step 0 and takes no gradient there.
+
+## [3.12.0] — 2026-10-07
+
+### Added
+- **`data/decisions/synthetic_basics.py` — a graded synthetic corpus, no download.** CLINC150 asks one hard thing (pick an intent out of 150), so a flat loss curve on it cannot tell a model that half reads from one that does not read at all. These questions are easy enough that failing them means the bytes are not being read: an answer sitting in the context, a denial the question contradicts, counting, comparing two numbers, and one hop through a rule stated in the context. 24,000 contexts and 46,067 questions by default, 1.9 questions per context, K 2-12.
+
+  Every question carries a band naming how much work its answer takes, so accuracy reads per band rather than as one average. Measured at 600 steps against a 29.1% chance baseline: `stated` 20.7%, `unanswerable` 85.5%, `recalled` 36.4%, `compared` 27.2%, `inferred` 46.5%, overall 31.25% — a split that says something the average does not, since the easiest band scores below chance while the hardest scores well above it.
+
+  18% of questions are answered by none of the options and say so with `correct: -1`. That branch existed but was unreachable: `from_clinc150.py` makes rejection a selectable option instead, so the `reject` metric was never exercised by real data. Scenes are built once and several questions asked about each, which is what exercises the stored-state amortisation; contexts carry a bystander and two filler sentences so duplicate scenes stay under 1% (at 15% the loader merged them and silently produced rows with nine questions). Splits draw from disjoint phrasing and entity pools, so memorising either shows up on test rather than later.
+
 ## [3.11.0] — 2026-10-07
 
 ### Added
