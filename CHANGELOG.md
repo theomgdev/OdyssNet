@@ -4,6 +4,13 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.8.0] — 2026-10-07
+
+### Added
+- **`examples/advanced/experiment_system_one.py` — typed decisions from one pass.** A System One layer returns calibrated typed answers instead of prose, and the usual way to get one is to run a generative model and throw the text away. OdyssNet reads a query byte by byte and decodes the final state into every decision at once: the 150-way intent choice, the 10-way domain choice, the out-of-scope probability and a self-reported confidence score are contiguous slices of one decoder, so a second question costs its slice rather than a second pass. The task is CLINC150, which is built to punish exactly the half everyone skips — its own paper reports classifiers at 96% in-scope and 66% out-of-scope recall — so both halves are scored, plus expected calibration error and Brier against the max-softmax signal those baselines used. `--mode frontier` walks the core size at a fixed recipe; `--mode ask` answers a query the way a caller would. The confidence head is trained against the intent head's own hit/miss, detached, so it predicts correctness rather than restating logits.
+
+  What the measurements say is in `docs/LIBRARY.md`. The short version: a single supervision signal per query — against the language-model path's one per token — is the binding constraint, not capacity. A random 256-query batch over 123 intents trains to 100% while the stream sits at chance, ChaosGrad's online estimate overshoots on that gradient (1.90% against a pinned `1e-3`'s 6.27% at equal steps, hence the fixed default), and accuracy then climbs for over a hundred epochs: 16.60% at 96 neurons, 22.60% at 192 and still rising. Per-byte-prefix supervision was measured and rejected — half the accuracy for 3.3x the wall-clock.
+
 ## [3.7.0] — 2026-09-16
 
 ### Fixed

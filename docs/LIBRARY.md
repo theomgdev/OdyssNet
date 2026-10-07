@@ -749,6 +749,58 @@ MNIST cannot answer this. All four arms sit at 96–98% at K=4, and the `cosine`
 
 ---
 
+## Typed Decisions (`examples/advanced/experiment_system_one.py`)
+
+CLINC150: 150 intents over 10 domains plus out-of-scope queries written to look
+like the in-scope ones. The query is injected one byte per step and a single
+decoder reads the final state into every decision at once — a 150-way intent
+choice, a 10-way domain choice, an out-of-scope probability and a self-reported
+confidence score are contiguous slices of one matrix, so a second question
+costs its slice and no second pass.
+
+### One supervision signal per query is the binding constraint
+
+The language-model path gets a gradient per token; here one arrives after every
+byte has been consumed. That difference, not capacity, is what the measurements
+keep returning to.
+
+A random 256-query batch holding 123 distinct intents trains to **100%** while
+the same configuration sits at chance on the stream, so credit assignment
+across the echo works and generalization is what is slow. A frozen-core linear
+probe on the final state recovers **5.6%** intent accuracy (mean-pooled decoded
+output: 3.2%), which is what the readout starts from before `W` is trained.
+
+### What moves it, measured on the val split
+
+ChaosGrad's online estimate climbs to its traction cap on this gradient and the
+cap is too large: at 1200 steps the estimator reached 1.90% intent accuracy
+where a pinned `1e-3` reached 6.27%, with 3e-4 at 5.23% and 1e-4 at 3.80%. A
+fixed `lr=1e-3` is therefore the default, and `--lr auto` puts the estimator
+back. `--sweep lr` is the arm.
+
+Accuracy then climbs for tens of epochs — 1200 steps is ~10 of them, and no
+arm at that budget had converged:
+
+| Core | 17 ep | 34 ep | 51 ep | 102 ep | 136 ep | Train loss at 136 ep |
+|---|---|---|---|---|---|---|
+| 96 neurons | 8.70% | 12.73% | 16.20% | 16.63% | 16.60% | 3.078 |
+| 192 neurons | 3.70% | 12.30% | 16.93% | 20.33% | **22.60%** | 1.384 |
+
+Intent accuracy, `lr=1e-3`, seed 42, 32 query bytes, no deliberation tail. The
+96-neuron core plateaus by 50 epochs; the 192-neuron core is still climbing at
+136 and its training loss has fallen to 1.38, so that arm is bounded by the
+corpus rather than by the core. Domain accuracy tracks it (36.73% and 47.13%).
+Out-of-scope recall stays near zero throughout — the noul head is the hard half
+of this dataset, which is why it exists.
+
+Supervising the decision at every byte prefix instead of only at the end was
+measured and rejected: at an equal 34 epochs it reached 6.23% against the
+end-only arm's 12.73%, for 3.3x the wall-clock. `max_outputs` also caps the
+readable sequence at the byte count, so a deliberation tail cannot be
+supervised per-step even in principle.
+
+---
+
 ## Advanced Capabilities
 
 ### 1. Temporal Depth (Space-Time Tradeoff)
