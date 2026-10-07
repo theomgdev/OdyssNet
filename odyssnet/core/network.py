@@ -666,14 +666,18 @@ class OdyssNet(nn.Module):
 
                         # 2. Projection (Embed or Linear)
                         vector = None
+                        skip = None
 
                         # Discrete (Int/Long) -> Embedding
                         if step_in.dtype in [torch.long, torch.int64, torch.int32]:
+                            # -1 means "inject nothing", as in direct mode:
+                            # clamped for the lookup, zeroed after it.
+                            skip = step_in == -1
                             if self.embed is not None:
-                                vector = self.embed(step_in.long())
+                                vector = self.embed(step_in.clamp_min(0).long())
                             elif self.proj is not None:
                                 # Fallback: integer input in continuous mode — cast and project
-                                vector = self.proj(step_in.float())
+                                vector = self.proj(step_in.clamp_min(0).float())
 
                         # Continuous (Float) -> Linear Projection
                         else:
@@ -687,6 +691,8 @@ class OdyssNet(nn.Module):
                         if vector is not None:
                             vector = self.enc_dec_act(vector)
                             vector = vector * self._get_input_scale(vector.dtype)
+                            if skip is not None and skip.any():
+                                vector = vector * (~skip).to(vector.dtype).unsqueeze(-1)
                             # Sparse tuple payload: (Flag, Data)
                             x_step_info = (True, vector)
 

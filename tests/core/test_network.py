@@ -431,6 +431,30 @@ class TestVocabMode:
         out, h = model(x, steps=6)
         assert out.shape == (2, 6, 32)
 
+    def test_vocab_minus_one_injects_nothing(self):
+        """-1 is the pad sentinel direct mode already honours.
+
+        Without it a padded row reads differently from the short row it was
+        padded from, so a batched score depends on the longest row beside it.
+        """
+        model = OdyssNet(
+            num_neurons=8,
+            input_ids=list(range(4)),
+            output_ids=list(range(4, 8)),
+            device="cpu",
+            vocab_size=32,
+            vocab_mode="discrete",
+        )
+        model.eval()
+        real = torch.tensor([[3, 7, 11]])
+        with torch.no_grad():
+            model.reset_state(batch_size=1)
+            bare, _ = model(real, steps=3, return_sequence=False)
+            model.reset_state(batch_size=1)
+            padded, _ = model(torch.tensor([[3, 7, 11, -1, -1]]), steps=3,
+                              return_sequence=False)
+        assert torch.allclose(bare, padded, atol=0, rtol=0)
+
 
 # ===========================================================================
 # State Management

@@ -751,146 +751,66 @@ MNIST cannot answer this. All four arms sit at 96–98% at K=4, and the `cosine`
 
 ## Typed Decisions (`examples/advanced/experiment_system_one.py`)
 
-CLINC150: 150 intents over 10 domains plus out-of-scope queries written to look
-like the in-scope ones. The query is injected one byte per step and a single
-decoder reads the final state into every decision at once — a 150-way intent
-choice, a 10-way domain choice, an out-of-scope probability and a self-reported
-confidence score are contiguous slices of one matrix, so a second question
-costs its slice and no second pass.
-
-### One supervision signal per query is the binding constraint
-
-The language-model path gets a gradient per token; here one arrives after every
-byte has been consumed. That difference, not capacity, is what the measurements
-keep returning to.
-
-A random 256-query batch holding 123 distinct intents trains to **100%** while
-the same configuration sits at chance on the stream, so credit assignment
-across the echo works and generalization is what is slow. A frozen-core linear
-probe on the final state recovers **5.6%** intent accuracy (mean-pooled decoded
-output: 3.2%), which is what the readout starts from before `W` is trained.
-
-### What moves it, measured on the val split
-
-ChaosGrad's online estimate climbs to its traction cap on this gradient and the
-cap is too large: at 1200 steps the estimator reached 1.90% intent accuracy
-where a pinned `1e-3` reached 6.27%, with 3e-4 at 5.23% and 1e-4 at 3.80%. A
-fixed `lr=1e-3` is therefore the default, and `--lr auto` puts the estimator
-back. `--sweep lr` is the arm.
-
-Accuracy then climbs for tens of epochs — 1200 steps is ~10 of them, and no
-arm at that budget had converged:
-
-| Core | 17 ep | 34 ep | 51 ep | 102 ep | 136 ep | Train loss at 136 ep |
-|---|---|---|---|---|---|---|
-| 96 neurons | 8.70% | 12.73% | 16.20% | 16.63% | 16.60% | 3.078 |
-| 192 neurons | 3.70% | 12.30% | 16.93% | 20.33% | **22.60%** | 1.384 |
-
-Intent accuracy, `lr=1e-3`, seed 42, 32 query bytes, no deliberation tail. The
-96-neuron core plateaus by 50 epochs; the 192-neuron core is still climbing at
-136 and its training loss has fallen to 1.38, so that arm is bounded by the
-corpus rather than by the core. Domain accuracy tracks it (36.73% and 47.13%).
-Out-of-scope recall stays near zero throughout — the noul head is the hard half
-of this dataset, which is why it exists.
-
-Supervising the decision at every byte prefix instead of only at the end was
-measured and rejected: at an equal 34 epochs it reached 6.23% against the
-end-only arm's 12.73%, for 3.3x the wall-clock. `max_outputs` also caps the
-readable sequence at the byte count, so a deliberation tail cannot be
-supervised per-step even in principle.
-
----
-
-## Runtime Options (`examples/advanced/experiment_system_one_v2.py`)
-
-The typed-decisions script above reserves a decoder column per class, which
-makes it a classifier: ask it about an option it never saw in training and
-there is nowhere to put the answer. This one removes the column. Context,
-question and each option are all bytes entering the same core, and every
-answer is one scalar from a **single-row** decoder.
-
-### The protocol
-
-Segment markers (`[S]`, `[Q]`, `[O]` — byte ids 1-3, text shifted up by 4)
-tell the core which kind of information is arriving. A question runs the
-shared prefix once, then each option branches from a rewind of it:
+A classifier reserves an output column per class, so an option it never saw is
+unaddressable and widening the schema means retraining. This script removes the
+column. Context, question and option are all bytes entering the same core
+behind one-byte segment markers, and every answer is one scalar from a
+single-row decoder:
 
 ```
-[S] context   -> h_s          read once
-[Q] question  -> h_sq         from h_s
-[O] option k  -> scalar       from a rewind of h_sq, for every k
+[S] context          -> h_ctx     stored, read once per example
+[Q] question         -> h_qry     from h_ctx, stored, read once
+[O] option 1         -> scalar    from h_qry
+[O] option 2         -> scalar    from h_qry, rewound
+[Q] next question    -> h_qry'    from h_ctx, rewound
 ```
 
-`forward` returns `h_t` inside the graph — only `self.state` is detached — so
-a stored state handed back as `current_state` still carries gradient. That is
-what makes branch-and-rewind a *training* mechanism rather than an inference
-trick, and it is why `TemporalAttention.mark()` / `rewind()` were added to the
-core: without truncating the KV cache at the branch point, option *k+1*
-attends to what option *k* wrote and the scores depend on option order.
+`forward` returns `h_t` inside the graph while only `self.state` is detached,
+so a stored state handed back as `current_state` still carries gradient — the
+caching is a training mechanism and not an inference trick. The same
+`score_all` serves training, evaluation and `--mode ask`.
+`TemporalAttention.mark()/rewind()` truncates the KV cache at the branch point;
+without it option *k+1* attends to what option *k* wrote and a score depends on
+the order it was asked in.
 
-Three properties follow, and all three are checked by `--mode smoke`:
+### What the shape buys, checked by `--mode smoke`
 
-* **Parameter count does not know K.** K=2, K=25 and K=150 all build the same
-  34,704-parameter model. A new option costs nothing; an option the model has
-  never seen is scored by reading its text.
-* **Options are mutually invisible.** Scoring the same option set forwards and
-  reversed gives a max difference of 0.0e+00, with and without attention.
-* **h_s is fixed-size.** `neurons` floats regardless of context length, where
-  a transformer's KV cache grows with it.
+* **The option count is not a parameter.** K=2, K=25 and K=150 all build the
+  same model and score through the same weights, so an option absent from
+  training is scored by reading its text.
+* **Options are blind to each other.** Scoring an option set forwards and
+  reversed agrees to within 1e-4, with and without attention.
+* **A score is blind to its batch.** Bucketing batches by step geometry and
+  reading in `chunk`-wide pieces keeps scores reproducible across `--batch`
+  sizes down to float noise (max Δ 3e-8).
+* **The cache is real.** Three questions of two options each cost 10 segment
+  reads against an uncached 18 — one context read per example, one question
+  read per question.
+* **The stored state is fixed-size.** `neurons` floats whatever the context's
+  length, where a KV cache grows with it.
 
-### Where the readout sits — the one knob that mattered
+Out-of-scope and confidence are not heads. Per-option BCE with `pos_weight = K-1`
+makes the scalar absolute rather than a pure rank, which prevents the optimizer
+from minimising the loss by collapsing all options to the same low value. A
+question whose answer is none of the options reads as a flat low distribution,
+and confidence is that distribution's own max and margin. A rejection option is
+ordinary data.
 
-The scalar is read at the end of the final segment, so whatever must be
-*compared against* has to still be present in the state at that moment.
-Measured on the intent question, 900 steps, seed 42, chance 18.2%:
+### Status
 
-| Order | Readout after | Intent | Context re-read per option |
-|---|---|---|---|
-| `ctx_last` | `[Q]` → `[O]` → `[S]` | **27.50%** | yes |
-| `opt_last` + echo8 | `[S]` → `[Q]` → `[O]` → 8 ctx bytes | 25.42% | no |
-| `opt_last` + echo16 | same, 16 bytes | 23.33% | no |
-| `q_last` | `[S]` → `[O]` → `[Q]` | 22.08% | yes |
-| `opt_last` | `[S]` → `[Q]` → `[O]` | 20.00% | no |
+Converted CLINC150 (`data/decisions/from_clinc150.py` — 15,100 train contexts,
+45,200 questions, K 2-10), 192 neurons, 87,456 parameters, `lr=1e-3`, seed 42,
+batch 24, `chunk=16`, `think=8`: **39.58%** intent-plus-domain accuracy over
+held-out questions at 300 steps (up from 28.83% before batch-independent
+chunking), ECE 0.172.
 
-Reading the option last leaves the context ~50 steps in the past, faded
-through a chaotic core — the arrangement that pays the amortisation in full is
-also the weakest at discriminating. Replaying a short echo of the context
-after each option recovers most of the gap while keeping the context in the
-shared prefix, and the echo has an optimum: 8 bytes beat 16. The default is
-therefore `opt_last` + `echo_bytes=8`, which keeps the stored state reusable
-across questions. `--sweep order` is the arm.
+The loss terms are balanced by `pos_weight = K - 1`, which keeps option scores
+apart during training and prevents the all-negative collapse that earlier runs
+faced.
 
-### Out-of-scope and confidence are not heads
-
-Both come off the same scalar, which is why they improve rather than being
-dropped:
-
-* Each option is trained with a per-option BCE against its own correctness, so
-  the scalar is absolute rather than a rank. A query with no good option reads
-  as a flat low distribution — out-of-scope is "every option scored low", with
-  no dedicated head to drown in the 150:1 imbalance a separate output fights.
-  CLINC150's out-of-scope split becomes ordinary training data (target zero on
-  every option), and `none of these` is available as a selectable option.
-* Confidence is `max(p)`, the top-two margin and the entropy of the
-  distribution the model already produced. The previous iteration's measured
-  reason for dropping a learned head: a 5-level confidence head reached ECE
-  0.101 where plain max-softmax on the same run reached 0.033. A learned
-  signal is still available as a *question* — `is the evidence enough?` —
-  against the stored state, for the price of one segment.
-
-### What would falsify it
-
-If the model ignores the question segment, it is a classifier that happens to
-be fed option text. Two guards, both reported by `--mode eval`: every question
-kind is trained from several paraphrases and scored on held-out ones, and
-`--holdout-intents N` removes N intents from training so their options appear
-for the first time at test.
-
-Honest status at the time of writing: the binary questions learn
-(`can_handle` 25% → 79%, `enough` 25% → 79%), while the K-way discrimination
-is only just off chance (19.5% against 18.2% at 2000 steps). The option-order
-and echo findings above came out of chasing exactly that gap, and it is not
-closed — the ranking term is what to keep working on.
+Throughput: one step is 24 contexts x 3 questions x ~7 options of sequential
+segment reads in 16-byte chunks. The caching removes the context and question
+re-reads, not the per-option ones.
 
 ---
 

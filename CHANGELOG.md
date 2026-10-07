@@ -4,6 +4,20 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.10.0] — 2026-10-07
+
+### Added
+- **`-1` sentinel in vocab mode (`odyssnet/core/network.py`).** Direct mode already treated token `-1` as "inject nothing at this step"; vocab mode now does the same by clamping the index before embedding lookup and zeroing the resulting vector. Padded sequences now read identically to the short sequences they were padded from, which is what allows variable-length inputs in one batch without cross-row contamination. Covered by `tests/core/test_network.py::TestVocabMode::test_vocab_minus_one_injects_nothing`.
+
+### Changed
+- **The two System One scripts became one.** `experiment_system_one.py` now carries the runtime-option protocol and `experiment_system_one_v2.py` is gone — a `_v2` file was the wrong way to keep a previous iteration available, which is what git is for. The merged script reads its corpus from JSONL (`--data` / `--val`) instead of carrying a dataset and a question bank inside the training path; `data/decisions/from_clinc150.py` converts CLINC150 next to the data it writes. Checkpoint handling follows `experiment_llm.py` and `experiment_diffusion.py`: a `_latest`/`_best` pair, `--resume` and `--resume-best`, `guard_overwrite` so a fresh run cannot destroy an existing tag at its first evaluation, and architecture adoption from the file being loaded.
+
+  The protocol is the full two-tier cache the design calls for: a context is read once into a stored state, each question once from it, and every option branches from a rewind of the question's state. Long segments are read in `chunk`-wide pieces (default 16) with state carried across them, and batches are bucketed by chunk count — so step counts derive from an example's own length rather than from the longest row in its batch, and scores are reproducible across `--batch` sizes down to float noise (max Δ 3e-8).
+
+  The loss balances per-option BCE by `pos_weight = K - 1`, which makes the right option worth as much as all wrong ones combined and prevents the optimizer from minimising loss by collapsing all options to an identical low value.
+
+  Measured on converted CLINC150 at 192 neurons and 87,456 parameters, `lr=1e-3`, seed 42, `chunk=16`, `think=8`: **39.58%** intent-plus-domain accuracy over held-out questions at 300 steps (up from 28.83% before batch-independent chunking), ECE 0.172. `docs/LIBRARY.md` carries the full description.
+
 ## [3.9.0] — 2026-10-07
 
 ### Added
