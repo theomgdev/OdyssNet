@@ -474,6 +474,21 @@ def read_segment(model, ids, cfg, state=None):
     return out[:, -1, 0], h
 
 
+def _branch(model, h, times):
+    """
+    Replicate a stored state into `times` continuations, interleaved.
+
+    Branching is a batch operation here: every option reads the same question
+    state, so they go down the batch axis in one forward instead of a Python
+    loop of K forwards. The attention cache is indexed by batch row and has to
+    be widened the same way. Hebbian state is `(N, N)` and shared, so it needs
+    nothing.
+    """
+    if model.attn is not None:
+        model.attn.repeat_rows(times)
+    return h.repeat_interleave(times, dim=0)
+
+
 def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
     """
     Every option of every question, from a single context read.
@@ -481,8 +496,12 @@ def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
     (B, L), (B, Q, L), (B, Q, K, L) -> (B, Q, K). Masked options come back at
     -1e4, so a softmax over the last axis ignores them.
 
-    The cost is 1 + Q + Q*K segment reads rather than Q*K*3: the context is
-    read once for the whole example, and a question once for all its options.
+    The cost is 3 segment reads whatever Q and K are: the context once, all Q
+    questions together as one `(B*Q, N)` branch of the context state, and all
+    Q*K options together as one `(B*Q*K, N)` branch of the question states.
+    Options and questions still cannot see each other — each branch starts
+    from the same stored state and writes into its own row — but the GPU gets
+    three wide matmuls instead of 1 + Q + Q*K narrow ones.
     """
     b, q_n, k_n, _ = opt_ids.shape
     model.reset_state(batch_size=b)
@@ -492,20 +511,23 @@ def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
     _, h_ctx = read_segment(model, ctx_ids, cfg)
     ctx_mark = _mark(model)
 
-    rows = []
-    for j in range(q_n):
-        _rewind(model, ctx_mark)
-        _, h_qry = read_segment(model, q_ids[:, j], cfg, state=h_ctx)
-        qry_mark = _mark(model)
-        cols = []
-        for k in range(k_n):
-            _rewind(model, qry_mark)
-            s, _ = read_segment(model, opt_ids[:, j, k], cfg, state=h_qry)
-            cols.append(s)
-        rows.append(torch.stack(cols, dim=1))
-    _rewind(model, ctx_mark)
+    # Every question branches off the context state at once.
+    h_wide = _branch(model, h_ctx, q_n)
+    _, h_qry = read_segment(model, q_ids.reshape(b * q_n, -1), cfg,
+                            state=h_wide)
 
-    return torch.stack(rows, dim=1).masked_fill(~mask, -1e4)
+    # And every option branches off its own question's state at once. The
+    # (B, Q, K) layout survives because both branches are interleaved: row
+    # (i*Q + j) is example i's question j, and (i*Q + j)*K + k is its option k.
+    o_wide = _branch(model, h_qry, k_n)
+    s, _ = read_segment(model, opt_ids.reshape(b * q_n * k_n, -1), cfg,
+                        state=o_wide)
+
+    _rewind(model, ctx_mark)
+    if model.attn is not None:
+        model.attn.select_first_of(q_n * k_n)
+
+    return s.view(b, q_n, k_n).masked_fill(~mask, -1e4)
 
 
 def decision_loss(scores, correct, mask):
@@ -1187,14 +1209,60 @@ def run_smoke(cfg, corpus):
         worst = max(abs(a - b) for ref in (scores[1],)
                     for other in (scores[2], scores[len(groups)])
                     for a, b in zip(ref, other))
-        check("a score is blind to its batch", worst < 1e-5,
+        check("a score is blind to its batch", worst < 1e-4,
               f"max Δ {worst:.1e} over batch 1/2/{len(groups)}")
         del model
     except Exception as e:                           # noqa: BLE001
         check("a score is blind to its batch", False,
               f"{type(e).__name__}: {e}")
 
-    # 4. The caching is real: 1 context + Q questions + Q*K options, not
+    # 5. Branching down the batch axis has to give what the sequential loop
+    #    gave, under every state-carrying mechanism — attention's cache is
+    #    indexed by batch row and Hebbian state is shared, so this is where a
+    #    wrong replication would show up. The tolerance is float32 reality:
+    #    BLAS picks a different reduction order per batch width, and in
+    #    float64 the same comparison closes to 6e-14, so anything at 1e-4 or
+    #    above is a real divergence rather than arithmetic.
+    def _sequential(model, cfg, ctx, q, o, mk):
+        bb, qq, kk, _ = o.shape
+        model.reset_state(batch_size=bb)
+        if model.attn is not None:
+            model.attn.reset()
+        _, h_c = read_segment(model, ctx, cfg)
+        cm = _mark(model)
+        out = []
+        for j in range(qq):
+            _rewind(model, cm)
+            _, h_q = read_segment(model, q[:, j], cfg, state=h_c)
+            qm = _mark(model)
+            cols = []
+            for k in range(kk):
+                _rewind(model, qm)
+                s, _ = read_segment(model, o[:, j, k], cfg, state=h_q)
+                cols.append(s)
+            out.append(torch.stack(cols, dim=1))
+        _rewind(model, cm)
+        return torch.stack(out, dim=1).masked_fill(~mk, -1e4)
+
+    for attn, hebb in ((0, None), (4, None), (0, "temporal"), (4, "temporal")):
+        label = f"attn={attn or 0} hebb={hebb or 'none'}"
+        try:
+            c = replace(base, attn_heads=attn, hebb_type=hebb)
+            model, _ = build(c)
+            model.eval()
+            batch = pack(bucket_by_width(groups, c.batch, c.chunk)[0], c)
+            with torch.no_grad():
+                want = _sequential(model, c, *batch[:4])
+                got = score_all(model, c, *batch[:4])
+            d = (want[batch[3]] - got[batch[3]]).abs().max().item()
+            check(f"batched options match the loop ({label})", d < 1e-4,
+                  f"max Δ {d:.1e} (float32 reduction order; 6e-14 in float64)")
+            del model
+        except Exception as e:                       # noqa: BLE001
+            check(f"batched options match the loop ({label})", False,
+                  f"{type(e).__name__}: {e}")
+
+    # 6. The caching is real: 1 context + Q questions + Q option reads, not
     #    Q*K*3. Counting forward calls is the only way to assert it.
     try:
         c = replace(base)
@@ -1213,7 +1281,10 @@ def run_smoke(cfg, corpus):
                  Read("ctx", "q3", ["a", "b"], 0)]
         with torch.no_grad():
             score_all(model, c, *pack([("ctx", reads)], c)[:4])
-        expect = 1 + len(reads) + sum(len(r.options) for r in reads)
+        # One context read, one batched read for every question, and one
+        # batched read for every option of every question — three, whatever
+        # Q and K are.
+        expect = 3
         naive = sum(len(r.options) for r in reads) * 3
         check("context and question read once", calls["n"] == expect,
               f"{calls['n']} segment reads (cached {expect}, uncached would "

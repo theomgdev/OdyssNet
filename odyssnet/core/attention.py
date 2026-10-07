@@ -543,6 +543,39 @@ class TemporalAttention(nn.Module):
         self._ring_cursor = snap['ring_cursor']
         self._writes = snap['writes']
 
+    def repeat_rows(self, times):
+        """
+        Repeat every cached batch row `times` times, interleaved.
+
+        Branching one prefix into several continuations is a batch operation:
+        row *i* becomes rows *i·times … i·times+times-1*, matching
+        `h.repeat_interleave(times, dim=0)` on the state side. Without it the
+        next write sees a different batch size and drops the carry.
+        """
+        self._map_rows(lambda t: t.repeat_interleave(times, dim=0)
+                       if times > 1 else t)
+
+    def select_first_of(self, times):
+        """
+        Undo `repeat_rows`: keep one row per original, dropping the branches.
+
+        The branches wrote nothing that survives — a rewind to the branch
+        point precedes this — so any of the `times` copies of a row is the
+        same, and the first is taken.
+        """
+        if times == 1:
+            return
+        self._map_rows(lambda t: t[::times].contiguous())
+
+    def _map_rows(self, fn):
+        for name in ('_mem_k', '_mem_v', '_ring_k', '_ring_v'):
+            buf = getattr(self, name)
+            if buf is not None:
+                setattr(self, name, fn(buf).contiguous())
+        self._pend_k = [fn(k) for k in self._pend_k]
+        self._pend_v = [fn(v) for v in self._pend_v]
+        self._pend_cat = None
+
     # ------------------------------------------------------------------ #
     # Cost model                                                          #
     # ------------------------------------------------------------------ #

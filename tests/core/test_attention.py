@@ -542,6 +542,55 @@ class TestRewind:
         assert model.attn.q_proj.weight.grad.abs().max() > 0
         assert model.W.grad.abs().max() > 0
 
+    def test_repeat_rows_matches_the_sequential_branch(self):
+        """Batched branching must equal the loop it replaces.
+
+        The cache is indexed by batch row, so widening the state without
+        widening the cache leaves row i attending to row i of the narrow
+        batch — an error of order 1, not of order 1e-5. The tolerance here is
+        float32 reduction order: BLAS picks a different kernel per batch width.
+        """
+        model = _model()
+        model.eval()
+        prefix, branches = _tokens(), 3
+
+        with torch.no_grad():
+            model.reset_state(3)
+            _, h = model(prefix, steps=12)
+            mark = model.attn.mark()
+            want = []
+            for seed in (1, 2, 3):
+                model.attn.rewind(mark)
+                out, _ = model(_tokens(seed=seed), steps=12, current_state=h)
+                want.append(out[:, -1])
+
+            model.reset_state(3)
+            _, h2 = model(prefix, steps=12)
+            model.attn.repeat_rows(branches)
+            wide = torch.cat([_tokens(seed=s) for s in (1, 2, 3)], dim=0)
+            # interleaved to match repeat_interleave on the state
+            order = [r * branches + b for r in range(3) for b in range(branches)]
+            wide = wide.view(branches, 3, -1).transpose(0, 1).reshape(len(order), -1)
+            got, _ = model(wide, steps=12,
+                           current_state=h2.repeat_interleave(branches, dim=0))
+
+        got = got[:, -1].view(3, branches, -1)
+        for b in range(branches):
+            assert torch.allclose(want[b], got[:, b], atol=1e-4)
+
+    def test_select_first_of_undoes_repeat_rows(self):
+        model = _model()
+        model.reset_state(2)
+        model(_tokens(batch=2), steps=12)      # grad on: segmented cache
+        model.attn.detach_cache()
+        before = model.attn.cache_len
+        assert model.attn._mem_k.shape[0] == 2
+        model.attn.repeat_rows(4)
+        assert model.attn._mem_k.shape[0] == 8
+        model.attn.select_first_of(4)
+        assert model.attn._mem_k.shape[0] == 2
+        assert model.attn.cache_len == before
+
     def test_rewind_past_the_end_raises(self):
         model = _model()
         model.reset_state(3)

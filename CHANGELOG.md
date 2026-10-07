@@ -4,6 +4,16 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.11.0] — 2026-10-07
+
+### Added
+- **`TemporalAttention.repeat_rows(times)` / `select_first_of(times)` — branch a cached prefix down the batch axis.** The KV cache is indexed by batch row, so widening a stored state into several continuations needs the cache widened the same way; without it the next write sees a different batch size and silently drops the carry. `repeat_rows` interleaves every cached row `times` times to match `h.repeat_interleave(times, dim=0)`, and `select_first_of` narrows back once the branches are scored. Both reach the frozen carry, the pending writes and the inference ring.
+
+### Changed
+- **`score_all` branches down the batch axis instead of looping.** All Q questions read together as one branch of the context state, and all Q·K options together as one branch of the question states — so an optimizer step is **8 `forward` calls whatever Q and K are**, against 71 for the sequential loop at Q=3, K=10. Measured on CPU at 192 neurons, batch 24: 0.17 s/step to 0.093 s/step; in `--mode smoke` the Hebbian variant went 50.8 s to 7.5 s.
+
+  Equivalence is asserted rather than assumed: `--mode smoke` compares batched branching against the per-option Python loop under four mechanism combinations (attention on/off × Hebbian on/off). The residual is float32 reduction order — BLAS picks a different kernel per batch width, and the same comparison closes to 6e-14 in float64 — so the gate sits at 1e-4, above arithmetic and below any real divergence.
+
 ## [3.10.0] — 2026-10-07
 
 ### Added

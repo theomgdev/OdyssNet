@@ -758,20 +758,19 @@ behind one-byte segment markers, and every answer is one scalar from a
 single-row decoder:
 
 ```
-[S] context          -> h_ctx     stored, read once per example
-[Q] question         -> h_qry     from h_ctx, stored, read once
-[O] option 1         -> scalar    from h_qry
-[O] option 2         -> scalar    from h_qry, rewound
-[Q] next question    -> h_qry'    from h_ctx, rewound
+[S] context          -> h_ctx     read once per example
+[Q] all Q questions  -> h_qry     one batched branch of h_ctx
+[O] all Q*K options  -> scalars   one batched branch of h_qry
 ```
 
 `forward` returns `h_t` inside the graph while only `self.state` is detached,
 so a stored state handed back as `current_state` still carries gradient — the
 caching is a training mechanism and not an inference trick. The same
-`score_all` serves training, evaluation and `--mode ask`.
-`TemporalAttention.mark()/rewind()` truncates the KV cache at the branch point;
-without it option *k+1* attends to what option *k* wrote and a score depends on
-the order it was asked in.
+`score_all` serves training, evaluation and `--mode ask`. Branching is a batch
+operation: `h.repeat_interleave(k, dim=0)` widens the state and
+`TemporalAttention.repeat_rows()` widens the KV cache the same way, so K
+options are one `(B·Q·K, N)` matmul rather than K sequential ones, and each
+branch still writes only into its own row.
 
 ### What the shape buys, checked by `--mode smoke`
 
@@ -782,10 +781,15 @@ the order it was asked in.
   reversed agrees to within 1e-4, with and without attention.
 * **A score is blind to its batch.** Bucketing batches by step geometry and
   reading in `chunk`-wide pieces keeps scores reproducible across `--batch`
-  sizes down to float noise (max Δ 3e-8).
-* **The cache is real.** Three questions of two options each cost 10 segment
-  reads against an uncached 18 — one context read per example, one question
-  read per question.
+  sizes down to float noise (max Δ 3e-7).
+* **Batched branching equals the sequential loop.** Reading all questions and
+  all options down the batch axis agrees with a per-option Python loop to
+  within float32 reduction order (max Δ 3e-5; 6e-14 in float64), with and
+  without attention, with and without Hebbian plasticity.
+* **The cache is real.** Three questions of two options each cost 3 segment
+  reads against an uncached 18 — and 3 is the count whatever Q and K are,
+  because questions branch off the context state together and options branch
+  off the question states together.
 * **The stored state is fixed-size.** `neurons` floats whatever the context's
   length, where a KV cache grows with it.
 
@@ -808,9 +812,10 @@ The loss terms are balanced by `pos_weight = K - 1`, which keeps option scores
 apart during training and prevents the all-negative collapse that earlier runs
 faced.
 
-Throughput: one step is 24 contexts x 3 questions x ~7 options of sequential
-segment reads in 16-byte chunks. The caching removes the context and question
-re-reads, not the per-option ones.
+Throughput: one optimizer step is 8 `forward` calls whatever Q and K are —
+one context read, one batched question read, one batched option read, each
+split into `chunk`-wide pieces. The sequential loop it replaced made 71 calls
+for the same work at Q=3, K=10.
 
 ---
 
