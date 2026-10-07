@@ -185,6 +185,68 @@ class TemporalAttention(nn.Module):
         """Forget everything. Called by `OdyssNet.reset_state()`."""
         self._reset_cache_storage()
 
+    def mark(self):
+        """
+        An opaque handle for the current cache end, to be passed to `rewind`.
+
+        Branching a run needs the cache to go back to a known point: several
+        continuations read the same prefix, and each must be blind to what the
+        others wrote. The handle carries the absolute write counter alongside
+        the length, because keys are rotated against that counter and a
+        truncation that forgot it would re-use a position.
+        """
+        return (self.cache_len, self._writes)
+
+    def rewind(self, mark):
+        """
+        Drop every entry written after `mark`, restoring the write position.
+
+        Branch-and-rewind spans several `forward` calls, and each call ends in
+        `detach_cache`, which folds that call's writes into the frozen carry.
+        A mark taken before those calls therefore points *inside* the carry by
+        the time it is used, so truncation has to be able to cut the carry as
+        well as the pending list — cutting only the pending writes would leave
+        one branch attending to another's keys.
+
+        Truncating the carry drops a detached tensor, so no graph is harmed.
+        The ring is inference-only, where truncation is a cursor move.
+        """
+        if mark is None:
+            return
+        target_len, target_writes = mark
+        if target_len > self.cache_len:
+            raise ValueError(
+                f"rewind to {target_len} entries, but the cache holds "
+                f"{self.cache_len}; the mark is from a different run")
+
+        if self._ring_k is not None:
+            drop = self._ring_fill - target_len
+            if drop > 0:
+                self._ring_cursor = (self._ring_cursor - drop) % self.window
+                self._ring_fill = target_len
+        else:
+            carry = 0 if self._mem_k is None else self._mem_k.shape[2]
+            keep = target_len - carry
+            if keep >= 0:
+                # The mark is at or after the carry: only pending writes go.
+                if keep < len(self._pend_k):
+                    del self._pend_k[keep:]
+                    del self._pend_v[keep:]
+                    self._pend_cat = None
+            else:
+                # The mark predates the carry — a mark taken before an
+                # intervening `detach_cache`. Drop the pending writes and
+                # trim the carry itself.
+                self._pend_k, self._pend_v, self._pend_cat = [], [], None
+                if target_len == 0:
+                    self._mem_k = self._mem_v = None
+                else:
+                    self._mem_k = self._mem_k[:, :, :target_len].contiguous()
+                    self._mem_v = self._mem_v[:, :, :target_len].contiguous()
+
+        self._writes = target_writes
+        self._rope_memo = None
+
     @property
     def cache_len(self):
         """Entries currently attendable."""

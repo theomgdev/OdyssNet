@@ -441,6 +441,127 @@ class TestGradients:
 
 
 # ===========================================================================
+# Branch and rewind
+# ===========================================================================
+
+class TestRewind:
+    """
+    `mark`/`rewind` exist so several continuations can read the same prefix
+    without seeing each other's writes — the cache half of branching a run
+    from a stored state.
+    """
+
+    def test_mark_and_rewind_restore_cache_length(self):
+        model = _model()
+        model.reset_state(3)
+        with torch.no_grad():
+            model(_tokens(), steps=12)
+        mark = model.attn.mark()
+        before = model.attn.cache_len
+        with torch.no_grad():
+            model(_tokens(seed=1), steps=12, current_state=model.state)
+        assert model.attn.cache_len > before
+        model.attn.rewind(mark)
+        assert model.attn.cache_len == before
+        assert model.attn.position == mark[1]
+
+    def test_branches_are_blind_to_each_other(self):
+        """Two continuations from one mark must score identically regardless
+        of the order they are run in — the property option scoring needs."""
+        model = _model()
+        model.reset_state(3)
+        prefix = _tokens(seed=0)
+        a, b = _tokens(seed=1), _tokens(seed=2)
+
+        with torch.no_grad():
+            _, h = model(prefix, steps=12)
+            mark = model.attn.mark()
+
+            out_a1, _ = model(a, steps=12, current_state=h)
+            model.attn.rewind(mark)
+            out_b1, _ = model(b, steps=12, current_state=h)
+            model.attn.rewind(mark)
+
+            # Same two branches, opposite order.
+            out_b2, _ = model(b, steps=12, current_state=h)
+            model.attn.rewind(mark)
+            out_a2, _ = model(a, steps=12, current_state=h)
+
+        assert torch.allclose(out_a1, out_a2, atol=1e-6)
+        assert torch.allclose(out_b1, out_b2, atol=1e-6)
+
+    def test_rewind_cuts_into_the_frozen_carry(self):
+        """Each `forward` ends in `detach_cache`, so a mark taken before an
+        intervening call points inside the carry; truncation must reach it.
+
+        Grad stays enabled here: the segmented representation is the one that
+        has a carry at all, while `no_grad` writes go to the inference ring.
+        """
+        model = _model()
+        model.reset_state(3)
+        model(_tokens(), steps=12)
+        model.attn.detach_cache()
+        mark = model.attn.mark()
+        carry = model.attn._mem_k.shape[2]
+        assert carry == mark[0]
+
+        model(_tokens(seed=3), steps=12, current_state=model.state)
+        model.attn.detach_cache()          # second call folds into the carry
+        assert model.attn._mem_k.shape[2] > carry
+
+        model.attn.rewind(mark)
+        assert model.attn.cache_len == carry
+        assert model.attn._mem_k.shape[2] == carry
+
+    def test_rewind_to_zero_empties_the_cache(self):
+        model = _model()
+        model.reset_state(3)
+        mark = model.attn.mark()
+        assert mark[0] == 0
+        with torch.no_grad():
+            model(_tokens(), steps=12)
+        model.attn.rewind(mark)
+        assert model.attn.cache_len == 0
+        assert model.attn.position == 0
+
+    def test_rewind_carries_gradient_through_a_branch(self):
+        """The training-time use: a branch's loss must reach the prefix."""
+        model = _model()
+        model.reset_state(3)
+        out_p, h = model(_tokens(), steps=12)
+        mark = model.attn.mark()
+
+        losses = []
+        for seed in (1, 2):
+            model.attn.rewind(mark)
+            out, _ = model(_tokens(seed=seed), steps=12, current_state=h)
+            losses.append(out.sum())
+        sum(losses).backward()
+
+        assert model.attn.q_proj.weight.grad is not None
+        assert model.attn.q_proj.weight.grad.abs().max() > 0
+        assert model.W.grad.abs().max() > 0
+
+    def test_rewind_past_the_end_raises(self):
+        model = _model()
+        model.reset_state(3)
+        with torch.no_grad():
+            model(_tokens(), steps=12)
+        stale = (model.attn.cache_len + 5, model.attn.position)
+        with pytest.raises(ValueError, match="mark is from a different run"):
+            model.attn.rewind(stale)
+
+    def test_rewind_of_none_is_a_noop(self):
+        model = _model()
+        model.reset_state(3)
+        with torch.no_grad():
+            model(_tokens(), steps=12)
+        before = model.attn.cache_len
+        model.attn.rewind(None)
+        assert model.attn.cache_len == before
+
+
+# ===========================================================================
 # Row-wise reset
 # ===========================================================================
 

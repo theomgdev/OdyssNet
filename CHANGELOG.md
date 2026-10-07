@@ -4,6 +4,15 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.9.0] — 2026-10-07
+
+### Added
+- **`TemporalAttention.mark()` / `rewind(mark)` — branch a run from a stored state.** Several continuations reading the same prefix have to be blind to each other's cache writes, otherwise the second one attends to what the first wrote and its score depends on the order it was asked in. `mark()` returns an opaque handle (cache length plus the absolute write counter, because keys are rotated against it); `rewind()` truncates back to it. A mark taken before an intervening `forward` points *inside* the frozen carry by the time it is used — each call ends in `detach_cache` — so truncation reaches the carry as well as the pending list, and dropping a detached tensor harms no graph. Rewinding past the end raises rather than silently attending to the wrong prefix. 7 new tests cover length restoration, order-independence of two branches, carry truncation, rewind-to-zero, gradient reaching the prefix through a branch, the stale-mark error and the `None` no-op.
+
+- **`examples/advanced/experiment_system_one_v2.py` — a decision layer whose parameters do not know how many questions or options are coming.** The previous System One script reserves a decoder column per class, which makes it a classifier: ask about an option it never saw and there is nowhere to put the answer. This one removes the column. Context, question and each option are bytes entering the same core behind segment markers, and every answer is one scalar from a single-row decoder — so K=2, K=25 and K=150 all build the same 34,704-parameter model, and an unseen option is scored by reading its text. `forward` already returned `h_t` inside the graph, which is what makes branch-and-rewind a training mechanism rather than an inference trick.
+
+  The measured finding is about *where the readout sits*: the scalar is read at the end of the final segment, so whatever must be compared against has to still be in the state at that moment. Reading the option last leaves the context ~50 steps back, faded through a chaotic core — 20.00% intent against 27.50% for reading the context last (900 steps, seed 42, chance 18.2%). But reading the context last re-reads it per option, giving up the amortisation the design exists for; replaying an 8-byte echo of the context after each option recovers most of the gap (25.42%) while keeping the context in the shared prefix, and the echo has an optimum — 16 bytes scored worse than 8. Out-of-scope and confidence are not heads here: per-option BCE makes the scalar absolute, so out-of-scope reads as a flat low distribution, and confidence is the distribution's own `max(p)`/margin/entropy, plus an `is the evidence enough?` question against the stored state. Full tables and the honest status of the K-way ranking term are in `docs/LIBRARY.md`.
+
 ## [3.8.0] — 2026-10-07
 
 ### Added

@@ -801,6 +801,99 @@ supervised per-step even in principle.
 
 ---
 
+## Runtime Options (`examples/advanced/experiment_system_one_v2.py`)
+
+The typed-decisions script above reserves a decoder column per class, which
+makes it a classifier: ask it about an option it never saw in training and
+there is nowhere to put the answer. This one removes the column. Context,
+question and each option are all bytes entering the same core, and every
+answer is one scalar from a **single-row** decoder.
+
+### The protocol
+
+Segment markers (`[S]`, `[Q]`, `[O]` — byte ids 1-3, text shifted up by 4)
+tell the core which kind of information is arriving. A question runs the
+shared prefix once, then each option branches from a rewind of it:
+
+```
+[S] context   -> h_s          read once
+[Q] question  -> h_sq         from h_s
+[O] option k  -> scalar       from a rewind of h_sq, for every k
+```
+
+`forward` returns `h_t` inside the graph — only `self.state` is detached — so
+a stored state handed back as `current_state` still carries gradient. That is
+what makes branch-and-rewind a *training* mechanism rather than an inference
+trick, and it is why `TemporalAttention.mark()` / `rewind()` were added to the
+core: without truncating the KV cache at the branch point, option *k+1*
+attends to what option *k* wrote and the scores depend on option order.
+
+Three properties follow, and all three are checked by `--mode smoke`:
+
+* **Parameter count does not know K.** K=2, K=25 and K=150 all build the same
+  34,704-parameter model. A new option costs nothing; an option the model has
+  never seen is scored by reading its text.
+* **Options are mutually invisible.** Scoring the same option set forwards and
+  reversed gives a max difference of 0.0e+00, with and without attention.
+* **h_s is fixed-size.** `neurons` floats regardless of context length, where
+  a transformer's KV cache grows with it.
+
+### Where the readout sits — the one knob that mattered
+
+The scalar is read at the end of the final segment, so whatever must be
+*compared against* has to still be present in the state at that moment.
+Measured on the intent question, 900 steps, seed 42, chance 18.2%:
+
+| Order | Readout after | Intent | Context re-read per option |
+|---|---|---|---|
+| `ctx_last` | `[Q]` → `[O]` → `[S]` | **27.50%** | yes |
+| `opt_last` + echo8 | `[S]` → `[Q]` → `[O]` → 8 ctx bytes | 25.42% | no |
+| `opt_last` + echo16 | same, 16 bytes | 23.33% | no |
+| `q_last` | `[S]` → `[O]` → `[Q]` | 22.08% | yes |
+| `opt_last` | `[S]` → `[Q]` → `[O]` | 20.00% | no |
+
+Reading the option last leaves the context ~50 steps in the past, faded
+through a chaotic core — the arrangement that pays the amortisation in full is
+also the weakest at discriminating. Replaying a short echo of the context
+after each option recovers most of the gap while keeping the context in the
+shared prefix, and the echo has an optimum: 8 bytes beat 16. The default is
+therefore `opt_last` + `echo_bytes=8`, which keeps the stored state reusable
+across questions. `--sweep order` is the arm.
+
+### Out-of-scope and confidence are not heads
+
+Both come off the same scalar, which is why they improve rather than being
+dropped:
+
+* Each option is trained with a per-option BCE against its own correctness, so
+  the scalar is absolute rather than a rank. A query with no good option reads
+  as a flat low distribution — out-of-scope is "every option scored low", with
+  no dedicated head to drown in the 150:1 imbalance a separate output fights.
+  CLINC150's out-of-scope split becomes ordinary training data (target zero on
+  every option), and `none of these` is available as a selectable option.
+* Confidence is `max(p)`, the top-two margin and the entropy of the
+  distribution the model already produced. The previous iteration's measured
+  reason for dropping a learned head: a 5-level confidence head reached ECE
+  0.101 where plain max-softmax on the same run reached 0.033. A learned
+  signal is still available as a *question* — `is the evidence enough?` —
+  against the stored state, for the price of one segment.
+
+### What would falsify it
+
+If the model ignores the question segment, it is a classifier that happens to
+be fed option text. Two guards, both reported by `--mode eval`: every question
+kind is trained from several paraphrases and scored on held-out ones, and
+`--holdout-intents N` removes N intents from training so their options appear
+for the first time at test.
+
+Honest status at the time of writing: the binary questions learn
+(`can_handle` 25% → 79%, `enough` 25% → 79%), while the K-way discrimination
+is only just off chance (19.5% against 18.2% at 2000 steps). The option-order
+and echo findings above came out of chasing exactly that gap, and it is not
+closed — the ranking term is what to keep working on.
+
+---
+
 ## Advanced Capabilities
 
 ### 1. Temporal Depth (Space-Time Tradeoff)
