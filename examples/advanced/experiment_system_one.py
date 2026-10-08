@@ -513,7 +513,7 @@ def _branch(model, h, times):
     return h.repeat_interleave(times, dim=0)
 
 
-def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
+def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask, return_trajectories=False):
     """
     Every option of every question, from a single context read.
 
@@ -558,7 +558,10 @@ def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
     active_lens = (opt_ids != PAD_ID).sum(dim=-1)
 
     s = smooth_trajectory_score(step_scores, active_lens, power=2.0)
-    return s.masked_fill(~mask, -1e4)
+    scores = s.masked_fill(~mask, -1e4)
+    if return_trajectories:
+        return scores, step_scores, active_lens
+    return scores
 
 
 def decision_loss(scores, correct, mask):
@@ -716,7 +719,7 @@ def fmt(m):
 # --------------------------------------------------------------------------- #
 
 @torch.no_grad()
-def ask(model, cfg, context, questions):
+def ask(model, cfg, context, questions, return_trajectories=False):
     """
     `questions` is [(text, [option, ...]), ...]; the context is read once.
 
@@ -728,7 +731,13 @@ def ask(model, cfg, context, questions):
     model.eval()
     groups = [(context, [Read(context, q, list(o), -1) for q, o in questions])]
     ctx, q_ids, opt_ids, mask, _ = pack(groups, cfg)
-    scores = score_all(model, cfg, ctx, q_ids, opt_ids, mask)[0]
+    with torch.no_grad():
+        if return_trajectories:
+            scores_batch, step_scores, active_lens = score_all(
+                model, cfg, ctx, q_ids, opt_ids, mask, return_trajectories=True)
+            scores = scores_batch[0]
+        else:
+            scores = score_all(model, cfg, ctx, q_ids, opt_ids, mask)[0]
     if was_training:
         model.train()
 
@@ -737,7 +746,7 @@ def ask(model, cfg, context, questions):
         s = scores[j, : len(options)]
         p = torch.softmax(s, dim=0)
         order = torch.argsort(p, descending=True)
-        answers.append({
+        ans = {
             "question": q,
             "ranked": [(options[int(i)], float(p[int(i)])) for i in order],
             "absolute": {options[int(i)]: float(torch.sigmoid(s[int(i)]))
@@ -745,7 +754,13 @@ def ask(model, cfg, context, questions):
             "confidence": float(p.max()),
             "margin": (float(p[order[0]] - p[order[1]])
                        if len(options) > 1 else 1.0),
-        })
+        }
+        if return_trajectories:
+            ans["trajectories"] = {
+                options[int(i)]: step_scores[0, j, int(i), :int(active_lens[0, j, int(i)])].cpu().tolist()
+                for i in range(len(options))
+            }
+        answers.append(ans)
     return answers
 
 
@@ -759,6 +774,53 @@ def print_answers(answers):
               f"margin {a['margin']:.2f}")
         if max(a["absolute"].values()) < 0.3:
             print("     ── reads as none of these")
+
+
+def plot_trajectories(context, answers):
+    """
+    Renders character-by-character score trajectories for each option.
+    Honors ODYSSNET_DISABLE_PLOT=1 to stay non-blocking in automated test runs.
+    """
+    if os.environ.get("ODYSSNET_DISABLE_PLOT") == "1":
+        return
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("\n  (matplotlib not installed; skipping trajectory plot)")
+        return
+
+    n_q = len(answers)
+    fig, axes = plt.subplots(n_q, 1, figsize=(10, max(4 * n_q, 4)), squeeze=False)
+
+    for ax, a in zip(axes[:, 0], answers):
+        q = a["question"]
+        ranked = a["ranked"]
+        top_opt = ranked[0][0]
+        trajs = a.get("trajectories", {})
+
+        for name, prob in ranked:
+            traj = trajs.get(name, [])
+            if not traj:
+                continue
+            is_top = (name == top_opt)
+            lw = 2.5 if is_top else 1.2
+            alpha = 1.0 if is_top else 0.6
+            label = f"{prob*100:5.1f}%  {name}"
+            marker = "o" if len(traj) <= 32 else None
+            ax.plot(range(len(traj)), traj, label=label, linewidth=lw,
+                    alpha=alpha, marker=marker, markersize=3)
+
+        ax.set_title(f"Q: {q}", fontsize=11, fontweight="bold")
+        ax.set_xlabel("Option Token / Character Step (t)", fontsize=9)
+        ax.set_ylabel("Instantaneous Score s(t)", fontsize=9)
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.legend(loc="best", fontsize=8)
+
+    ctx_preview = context if len(context) <= 70 else context[:67] + "..."
+    fig.suptitle(f"OdyssNet-SystemOne — Decision Trajectory\nContext: \"{ctx_preview}\"",
+                 fontsize=12)
+    plt.tight_layout()
+    plt.show()
 
 
 # --------------------------------------------------------------------------- #
@@ -1812,8 +1874,11 @@ def main():
         print(f"\n  context: {a.context!r}")
         print(f"  (read once; {len(a.question)} question(s) over "
               f"{len(a.option)} options)")
-        print_answers(ask(model, cfg, a.context,
-                          [(q, list(a.option)) for q in a.question]))
+        answers = ask(model, cfg, a.context,
+                      [(q, list(a.option)) for q in a.question],
+                      return_trajectories=True)
+        print_answers(answers)
+        plot_trajectories(a.context, answers)
         return
 
     if a.mode == "eval":
