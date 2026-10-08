@@ -935,9 +935,6 @@ OdyssNet supports dynamic growth, allowing you to add neurons to a live network 
 Dynamically adds `amount` empty neurons to the model.
 *   **Continuity**: Optimizers are migrated, so momentum and history are preserved.
 *   **State**: The training state is preserved.
-*   **Initialization**: 
-    *   **Incoming Weights**: 0 (Maintains forward pass stability, new neuron starts inactive).
-    *   **Outgoing Weights**: Small random noise (Enables backpropagation / gradient flow).
 
 ```python
 # Add 1 neuron if loss stagnates
@@ -945,7 +942,7 @@ if loss > prev_loss:
     trainer.expand(amount=1)
 ```
 
-> **Initialization:** New connections are initialized with `micro_quiet_warm` (Normal(0, 1e-3)) noise so they remain dormant relative to trained weights and do not destabilize the existing dynamics. Optimizer momentum is migrated from the old parameters to the expanded ones.
+> **Initialization:** Connections to and from a new neuron are initialized with `micro_quiet_warm` (Normal(0, 1e-3)) noise, in both directions, so they remain dormant relative to trained weights and do not destabilize the existing dynamics. Optimizer momentum is migrated from the old parameters to the expanded ones.
 
 ---
 
