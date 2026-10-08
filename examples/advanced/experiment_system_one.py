@@ -148,10 +148,8 @@ class Cfg:
 
     # --- optimization ---
     batch: int = 24                 # contexts per step
-    # Pinned rather than ChaosGrad's estimate: supervision here is one signal
-    # per option rather than one per token, and the estimator was measured
-    # climbing past its useful range on that gradient. `--lr auto` restores it.
-    lr: float = 1e-3
+    # None = ChaosGrad's online estimate (default, zero-config); float = fixed-rate mode.
+    lr: float | None = None
     grad_ckpt: bool = False
 
     # --- run control ---
@@ -1610,8 +1608,8 @@ def parse_args():
                         "(default: %(default)s)")
     g.add_argument("--lr", default="keep", metavar="RATE",
                    help="'auto' for ChaosGrad's online estimate, a float for "
-                        "fixed-rate. Default 'keep': a fresh run uses the "
-                        f"pinned {d.lr}, --resume keeps the checkpoint's mode")
+                        "fixed-rate mode. Default 'keep': a fresh run uses "
+                        "auto (zero-config); --resume keeps the checkpoint's mode")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra "
                         "sequential forward per step")

@@ -815,8 +815,8 @@ Two corpora, both produced by a converter next to the data it writes.
 
 **`data/decisions/from_clinc150.py`** — converted CLINC150 (15,100 train
 contexts, 45,200 questions, K 2-10). 192 neurons, 87,456 parameters,
-`lr=1e-3`, seed 42, `chunk=16`, `think=8`: **39.58%** intent-plus-domain
-accuracy over held-out questions at 300 steps, ECE 0.172.
+zero-config `lr=auto`, seed 42, `chunk=16`, `think=8`: **41.17%** intent-plus-domain
+accuracy over held-out questions at 500 steps, ECE 0.035.
 
 **`data/decisions/synthetic_basics.py`** — a graded synthetic corpus, no
 download, written because CLINC150 asks one hard thing and a flat loss curve
