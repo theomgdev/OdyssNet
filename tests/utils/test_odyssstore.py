@@ -133,6 +133,26 @@ class TestSaveCheckpoint:
 # load_checkpoint
 # ===========================================================================
 
+class TestAtomicSave:
+    def test_failed_save_keeps_the_previous_checkpoint(self, tmp_path, monkeypatch):
+        model = _model()
+        opt = _optimizer(model)
+        path = str(tmp_path / "ckpt.pt")
+        save_checkpoint(model, opt, epoch=1, loss=0.5, path=path)
+        good = open(path, "rb").read()
+
+        def interrupted(obj, f):
+            with open(f, "wb") as fh:
+                fh.write(b"partial")
+            raise OSError("disk full")
+        monkeypatch.setattr(torch, "save", interrupted)
+
+        with pytest.raises(OSError):
+            save_checkpoint(model, opt, epoch=2, loss=0.1, path=path)
+        assert open(path, "rb").read() == good
+        assert os.listdir(tmp_path) == ["ckpt.pt"]
+
+
 class TestLoadCheckpoint:
     def test_model_weights_restored(self, tmp_path):
         model = _model()
@@ -337,6 +357,14 @@ class TestGetCheckpointInfo:
         save_checkpoint(model, opt, epoch=1, loss=0.0, path=path)
         info = get_checkpoint_info(path)
         assert info["total_params"] > 0
+
+    @pytest.mark.parametrize("kwargs", [{}, {"hebb_type": "both"}, {"attn_heads": 2}])
+    def test_total_params_matches_the_model(self, tmp_path, kwargs):
+        model = OdyssNet(num_neurons=6, input_ids=[0, 1], output_ids=[4, 5],
+                         device="cpu", **kwargs)
+        path = str(tmp_path / "count.pt")
+        save_checkpoint(model, _optimizer(model), epoch=1, loss=0.0, path=path)
+        assert get_checkpoint_info(path)["total_params"] == model.get_num_params()
 
     def test_returns_keys_list(self, tmp_path):
         model = _model()

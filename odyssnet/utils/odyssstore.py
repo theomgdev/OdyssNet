@@ -36,8 +36,17 @@ def save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, traine
         
     dir_part = os.path.dirname(os.path.abspath(path))
     os.makedirs(dir_part, exist_ok=True)
-    
-    torch.save(checkpoint, path)
+
+    # Written beside the target and renamed over it: an interrupted save must
+    # not destroy the checkpoint it was meant to replace.
+    tmp_path = f"{path}.tmp"
+    try:
+        torch.save(checkpoint, tmp_path)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
     return path
 
 
@@ -234,8 +243,10 @@ def get_checkpoint_info(path, device='cpu'):
     
     # Calculate model size
     if 'model_state_dict' in checkpoint:
+        # Index tables and the Hebbian carry are buffers, not parameters.
         total_params = sum(
-            t.numel() for t in checkpoint['model_state_dict'].values()
+            t.numel() for key, t in checkpoint['model_state_dict'].items()
+            if key not in ('input_pos', 'output_pos') and '_hebb_state_' not in key
         )
         if 'W' in checkpoint['model_state_dict']:
             total_params -= checkpoint['model_state_dict']['W'].shape[0]
