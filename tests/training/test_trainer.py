@@ -175,6 +175,23 @@ class TestTrainBatch:
         loss = t.train_batch(x, y, thinking_steps=2)
         assert isinstance(loss, float)
 
+    def test_non_finite_gradient_skips_the_step(self):
+        model = _model()
+        t = _trainer(model)
+        x, y = _batch(), _targets()
+        t.train_batch(x, y, thinking_steps=3)
+        before = [p.detach().clone() for p in model.parameters()]
+
+        bad = y.clone()
+        bad[0, 0] = float("nan")
+        with pytest.warns(RuntimeWarning, match="Non-finite gradient"):
+            t.train_batch(x, bad, thinking_steps=3)
+        assert all(torch.equal(b, p) for b, p in zip(before, model.parameters()))
+
+        t.train_batch(x, y, thinking_steps=3)
+        assert all(torch.isfinite(p).all() for p in model.parameters())
+        assert not torch.equal(before[0], model.W)
+
     def test_state_persisted_after_train_batch(self):
         model = _model()
         t = _trainer(model)

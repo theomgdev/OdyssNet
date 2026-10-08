@@ -4,6 +4,7 @@ import torch.optim as optim
 import time
 import math
 import numbers
+import warnings
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
@@ -265,8 +266,13 @@ class OdyssNetTrainer:
             if self.gradient_persistence > 0.0:
                 self._inject_persistent_grads()
 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.scaler.step(self.optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            # A non-finite gradient would poison the optimizer's moments and
+            # the weights for good; GradScaler only guards this under CUDA AMP.
+            if torch.isfinite(grad_norm):
+                self.scaler.step(self.optimizer)
+            else:
+                warnings.warn("Non-finite gradient; optimizer step skipped.", RuntimeWarning, stacklevel=2)
             self.scaler.update()
 
             if self.gradient_persistence > 0.0:
