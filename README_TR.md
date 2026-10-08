@@ -120,8 +120,9 @@ set_seed(42)
 
 # Sıfır-Gizli Ağ başlat
 # 1 Giriş, 1 Çıkış.
-model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device='cuda')
-trainer = OdyssNetTrainer(model, lr=1e-4, device='cuda')
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = OdyssNet(num_neurons=2, input_ids=[0], output_ids=[1], device=device)
+trainer = OdyssNetTrainer(model, lr=1e-4, device=device)
 
 # Eğit
 inputs = torch.randn(100, 1)

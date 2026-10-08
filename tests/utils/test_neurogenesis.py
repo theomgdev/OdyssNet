@@ -19,7 +19,7 @@ import torch
 import os
 
 
-from odyssnet import OdyssNet
+from odyssnet import ChaosGrad, OdyssNet
 from odyssnet.utils.neurogenesis import Neurogenesis
 
 
@@ -217,6 +217,24 @@ class TestOptimizerExpansion:
         out.sum().backward()
         new_opt.step()
         new_opt.zero_grad()
+
+    def test_chaosgrad_traction_anchor_survives_expansion(self):
+        model = _model(n=6, in_ids=[0, 1], out_ids=[4, 5])
+        opt = ChaosGrad.from_model(model)
+        for _ in range(3):
+            out, _ = model(torch.randn(2, 6), steps=2)
+            out.pow(2).sum().backward()
+            opt.step()
+            opt.zero_grad()
+        anchor = {g["group_name"]: g["rms0"] for g in opt.param_groups}
+        new_opt = Neurogenesis.expand(model, opt, amount=2, verbose=False)
+        assert {g["group_name"]: g["rms0"] for g in new_opt.param_groups} == anchor
+
+    @pytest.mark.parametrize("make_opt", [_adamw, ChaosGrad.from_model])
+    def test_verbose_false_prints_nothing(self, make_opt, capsys):
+        model = _model(n=4)
+        Neurogenesis.expand(model, make_opt(model), amount=2, verbose=False)
+        assert capsys.readouterr().out == ""
 
 
 # ===========================================================================

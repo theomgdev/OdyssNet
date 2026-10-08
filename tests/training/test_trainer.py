@@ -61,6 +61,10 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
+    def test_device_defaults_to_the_models(self):
+        model = _model()
+        assert OdyssNetTrainer(model).device == model.device
+
     def test_explicit_lr_uses_fixed_chaosgrad(self):
         # Explicit lr → ChaosGrad in fixed-rate mode
         t = _trainer()  # _trainer() defaults to lr=1e-4
@@ -174,6 +178,23 @@ class TestTrainBatch:
         y = _targets()
         loss = t.train_batch(x, y, thinking_steps=2)
         assert isinstance(loss, float)
+
+    def test_non_finite_gradient_skips_the_step(self):
+        model = _model()
+        t = _trainer(model)
+        x, y = _batch(), _targets()
+        t.train_batch(x, y, thinking_steps=3)
+        before = [p.detach().clone() for p in model.parameters()]
+
+        bad = y.clone()
+        bad[0, 0] = float("nan")
+        with pytest.warns(RuntimeWarning, match="Non-finite gradient"):
+            t.train_batch(x, bad, thinking_steps=3)
+        assert all(torch.equal(b, p) for b, p in zip(before, model.parameters()))
+
+        t.train_batch(x, y, thinking_steps=3)
+        assert all(torch.isfinite(p).all() for p in model.parameters())
+        assert not torch.equal(before[0], model.W)
 
     def test_state_persisted_after_train_batch(self):
         model = _model()
@@ -295,6 +316,19 @@ class TestPredict:
         pred = t.predict(x, thinking_steps=2)
         assert not pred.requires_grad
 
+    def test_predict_reads_integer_tensors_as_neuron_indices(self):
+        """`train_batch` injects integer tensors by index; `predict` must read
+        them the same way instead of treating them as feature values."""
+        model = _model(n=6, in_ids=[0, 1, 2], out_ids=[4, 5])
+        t = _trainer(model)
+        tokens = torch.tensor([[0, 1], [2, 1]])
+        pred = t.predict(tokens, thinking_steps=2, full_sequence=True)
+        model.eval()
+        model.reset_state(2)
+        with torch.no_grad():
+            direct, _ = model(tokens, steps=2)
+        assert torch.equal(pred, direct[:, :, [4, 5]])
+
 
 # ===========================================================================
 # evaluate
@@ -411,7 +445,7 @@ class TestExpand:
         assert t.optimizer is not None
 
     def test_expand_preserves_existing_weights(self):
-        model = _model(n=4)
+        model = _model(n=4, out_ids=[2, 3])
         t = _trainer(model)
         old_w = model.W.data[:4, :4].clone()
         t.expand(amount=2, verbose=False)

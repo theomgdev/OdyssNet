@@ -36,8 +36,17 @@ def save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, traine
         
     dir_part = os.path.dirname(os.path.abspath(path))
     os.makedirs(dir_part, exist_ok=True)
-    
-    torch.save(checkpoint, path)
+
+    # Written beside the target and renamed over it: an interrupted save must
+    # not destroy the checkpoint it was meant to replace.
+    tmp_path = f"{path}.tmp"
+    try:
+        torch.save(checkpoint, tmp_path)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
     return path
 
 
@@ -46,12 +55,13 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
     Loads a training checkpoint.
     
     Args:
-        model: The OdyssNet model instance (must match checkpoint architecture if strict=True).
+        model: The OdyssNet model instance.
         optimizer: The optimizer instance.
         path (str): File path to the checkpoint.
         device (str): Device to load tensors to.
-        strict (bool): If True, raises error on architecture mismatch.
-                       If False, ignores mismatched keys (standard PyTorch behavior).
+        strict (bool): If True, a missing or unexpected key raises. If False those
+                       keys are skipped; a shape mismatch raises either way, so use
+                       `transplant_weights` to load across sizes.
         lr (float, optional): If provided, overwrites the learning rate in the optimizer 
                               after loading the state.
         trainer (optional): Trainer instance that implements load_state_dict.
@@ -61,7 +71,7 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
         
     Raises:
         FileNotFoundError: If checkpoint file doesn't exist.
-        RuntimeError: If strict=True and architecture doesn't match.
+        RuntimeError: On a shape mismatch, or on a key mismatch if strict=True.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Checkpoint not found: {path}")
@@ -192,7 +202,10 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     
     # Load the modified state
     model.load_state_dict(target_state)
-    
+    # The init strategy above fills the new region's diagonal too.
+    with torch.no_grad():
+        model.W.fill_diagonal_(0.0)
+
     if verbose:
         print(f"Weight Transplantation Complete. (New regions initialized with: {init_new})")
         print(f"   Total Parameters: {stats['total_params']:,}")
@@ -231,8 +244,10 @@ def get_checkpoint_info(path, device='cpu'):
     
     # Calculate model size
     if 'model_state_dict' in checkpoint:
+        # Index tables and the Hebbian carry are buffers, not parameters.
         total_params = sum(
-            t.numel() for t in checkpoint['model_state_dict'].values()
+            t.numel() for key, t in checkpoint['model_state_dict'].items()
+            if key not in ('input_pos', 'output_pos') and '_hebb_state_' not in key
         )
         if 'W' in checkpoint['model_state_dict']:
             total_params -= checkpoint['model_state_dict']['W'].shape[0]

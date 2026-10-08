@@ -4,6 +4,7 @@ import torch.optim as optim
 import time
 import math
 import numbers
+import warnings
 from typing import Callable
 from ..utils.data import prepare_input, to_tensor
 
@@ -11,7 +12,7 @@ from ..utils.neurogenesis import Neurogenesis
 from .chaos_optimizer import ChaosGrad
 
 class OdyssNetTrainer:
-    def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device='cpu',
+    def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device=None,
                  gradient_persistence=0.0, synaptic_noise=0.0,
                  anomaly_hook=None):
         """
@@ -28,14 +29,14 @@ class OdyssNetTrainer:
                 - float (e.g. 1e-4): ChaosGrad runs with a fixed AdamW-style
                   learning rate (automatic estimation disabled). Use for
                   exact reproducibility studies.
-            device (str): Device to run training on.
+            device (str): Device to run training on. Default: the model's own device.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
             anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
                 anomalies ('spike', 'plateau', 'increase').
         """
         self.model = model
-        self.device = device
+        self.device = device if device is not None else model.device
         self.model.to(self.device)
         self.gradient_persistence = gradient_persistence
         self.synaptic_noise = synaptic_noise
@@ -104,6 +105,21 @@ class OdyssNetTrainer:
         return torch.amp.autocast(
             device_type='cuda' if is_cuda else 'cpu', enabled=is_cuda,
         )
+
+    def _prepare_inputs(self, input_features):
+        """Map user input to what `forward` takes, and return its batch size.
+
+        Vocab models take token ids or raw vectors as they are. Without a
+        vocab, integer tensors are neuron indices to inject, and anything else
+        is a feature matrix mapped onto `input_ids`.
+        """
+        if getattr(self.model, 'vocab_size', None) is not None:
+            x_input = to_tensor(input_features, self.device)
+        elif isinstance(input_features, torch.Tensor) and input_features.dtype in (torch.int32, torch.int64):
+            x_input = input_features.to(self.device)
+        else:
+            return prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
+        return x_input, x_input.shape[0]
 
     def _extract_outputs(self, all_states, final_state, full_sequence):
         """Extract the prediction tensor from forward-pass outputs.
@@ -205,17 +221,7 @@ class OdyssNetTrainer:
                         if 'W' in name and param.dim() == 2 and param.shape[0] == param.shape[1]:
                             param.fill_diagonal_(0.0)
 
-        # Prepare Data
-        # If model has vocab_size, we assume input is Token IDs or Raw Vects for Projection.
-        # We bypass 'prepare_input' which attempts to map features to specific neurons manually.
-        if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-            x_input = to_tensor(input_features, self.device)
-            batch_size = x_input.shape[0]
-        elif isinstance(input_features, torch.Tensor) and input_features.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-            x_input = input_features.to(self.device)
-            batch_size = x_input.shape[0]
-        else:
-            x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
+        x_input, batch_size = self._prepare_inputs(input_features)
 
         target_values = to_tensor(target_values, self.device)
         if mask is not None:
@@ -260,8 +266,13 @@ class OdyssNetTrainer:
             if self.gradient_persistence > 0.0:
                 self._inject_persistent_grads()
 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.scaler.step(self.optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            # A non-finite gradient would poison the optimizer's moments and
+            # the weights for good; GradScaler only guards this under CUDA AMP.
+            if torch.isfinite(grad_norm):
+                self.scaler.step(self.optimizer)
+            else:
+                warnings.warn("Non-finite gradient; optimizer step skipped.", RuntimeWarning, stacklevel=2)
             self.scaler.update()
 
             if self.gradient_persistence > 0.0:
@@ -353,12 +364,7 @@ class OdyssNetTrainer:
         """
         self.model.eval()
         with torch.no_grad():
-            if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                x_input = to_tensor(input_features, self.device)
-                batch_size = x_input.shape[0]
-            else:
-                x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
-
+            x_input, batch_size = self._prepare_inputs(input_features)
             self.model.reset_state(batch_size)
             all_states, final_state = self.model(x_input, steps=thinking_steps, return_sequence=full_sequence)
             return self._extract_outputs(all_states, final_state, full_sequence)

@@ -24,6 +24,12 @@ class OdyssNet(nn.Module):
             else:
                 num_neurons = 0
         
+        for name, ids in (("input_ids", input_ids), ("output_ids", output_ids)):
+            if any(not 0 <= i < num_neurons for i in ids):
+                raise ValueError(f"{name} must lie in [0, {num_neurons}), got {list(ids)}")
+        if vocab_mode not in ('hybrid', 'discrete', 'continuous'):
+            raise ValueError(f"vocab_mode must be 'hybrid', 'discrete' or 'continuous', got {vocab_mode!r}")
+
         self.num_neurons = num_neurons
         self.debug = debug
         if debug:
@@ -79,7 +85,6 @@ class OdyssNet(nn.Module):
         
         self.pulse_mode = pulse_mode
         self.gradient_checkpointing = gradient_checkpointing
-        self._cached_scaled_input = None
         
         # Parse configurable component settings
         weight_init = self._normalize_weight_init(weight_init)
@@ -394,8 +399,10 @@ class OdyssNet(nn.Module):
                         frob = tensor.norm()
                         if frob > 1e-8:
                             tensor.div_(frob / (tensor.numel() ** 0.5))
-            else:
+            elif strategy == 'uniform':
                 nn.init.uniform_(tensor, -0.1, 0.1)
+            else:
+                raise ValueError(f"Unknown weight init strategy: {strategy!r}")
 
     def regenerate_weak_weights(self, threshold=0.01, percentage=None):
         with torch.no_grad():
@@ -647,6 +654,11 @@ class OdyssNet(nn.Module):
         if len(output_pos) > 0:
             output_scale_vec[output_pos] = self._get_output_scale(h_t.dtype)
 
+        # Held across steps for continuous (non-pulse) injection; a local, so
+        # the previous call's graph is not kept alive and the model stays
+        # deep-copyable.
+        cached_input = None
+
         for t in range(steps):
             # Prepare input for this step
             x_step_info = None
@@ -702,11 +714,11 @@ class OdyssNet(nn.Module):
 
                         # Cache input for continuous (non-pulse) persistence across steps
                         if not self.pulse_mode:
-                            self._cached_scaled_input = x_step_info
+                            cached_input = x_step_info
 
                     # Re-use cached input for non-active steps in continuous mode
                     if not self.pulse_mode and x_step_info is None:
-                        x_step_info = getattr(self, '_cached_scaled_input', None)
+                        x_step_info = cached_input
 
                 # --- LEGACY DIRECT MODE ---
                 else:
@@ -759,8 +771,8 @@ class OdyssNet(nn.Module):
                     else:
                         # Continuous mode: cache on first step, reuse for all subsequent steps
                         if t == 0:
-                            self._cached_scaled_input = x_input * input_scale_vec
-                        x_step_info = self._cached_scaled_input
+                            cached_input = x_input * input_scale_vec
+                        x_step_info = cached_input
 
 
             if self.attn is not None and (self.attn_read == 'step' or t % ratio == 0):
