@@ -184,17 +184,24 @@ class Read:
     correct: int                    # index into options, or -1 for "none"
 
 
-def load_reads(path):
+def load_reads(path, default_leaf="train.jsonl"):
     """
     Parse the decision format, refusing anything ambiguous.
 
     Errors name the file and line: a malformed corpus should cost a message,
     not a training run that silently learns from three usable rows.
     """
+    if os.path.isdir(path):
+        candidates = [default_leaf, "train.jsonl", "val.jsonl"] if default_leaf else ["train.jsonl", "val.jsonl"]
+        for leaf in candidates:
+            if leaf and os.path.exists(os.path.join(path, leaf)):
+                path = os.path.join(path, leaf)
+                break
+
     if not os.path.exists(path):
         raise SystemExit(
             f"\n✋ No data at {path}.\n"
-            f"   --data / --val take JSONL, one object per context:\n"
+            f"   --data / --val take JSONL (or a directory containing train.jsonl / val.jsonl):\n"
             f'     {{"context": "...", "questions": [\n'
             f'        {{"q": "...", "options": ["a", "b"], "correct": 0}}]}}\n'
             f"   correct: -1 means no option is right.\n")
@@ -250,8 +257,18 @@ def group_by_context(reads):
 
 def load_corpus(cfg, verbose=True):
     """(train_groups, val_groups), reported as the shape they really are."""
-    train = group_by_context(load_reads(cfg.data))
-    val = group_by_context(load_reads(cfg.val))
+    train_path = cfg.data
+    val_path = cfg.val
+    if os.path.isdir(train_path):
+        train_cand = os.path.join(train_path, "train.jsonl")
+        val_cand = os.path.join(train_path, "val.jsonl")
+        if os.path.exists(train_cand):
+            train_path = train_cand
+        if val_path == Cfg.val and os.path.exists(val_cand):
+            val_path = val_cand
+
+    train = group_by_context(load_reads(train_path, "train.jsonl"))
+    val = group_by_context(load_reads(val_path, "val.jsonl"))
     if verbose:
         for label, groups in (("train", train), ("val", val)):
             reads = [r for _, rs in groups for r in rs]
