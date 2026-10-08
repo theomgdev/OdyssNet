@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`Neurogenesis.expand` re-measured the traction anchor on the trained weights** (`chaos_core` `rms0` 0.27 → 0.21 and `projections` 0.019 → 0.042 on a 6 → 8 neuron probe), so the cap stopped tracking the initial scale and moved again on every growth. `rms0` is carried over with the other per-group estimates. `verbose=False` no longer prints the "optimizer state transferred" line.
 - **`save_checkpoint` was not atomic.** An interrupted write destroyed the checkpoint it replaced; it now writes beside the target and renames over it. `get_checkpoint_info` counted buffers as parameters (280 against `get_num_params()`'s 132 at 8 neurons with `hebb_type='both'`) and no longer does.
 
+- **Mistyped configuration was accepted silently.** An unknown `weight_init` name fell through to `uniform(-0.1, 0.1)`, a mistyped `vocab_mode` built neither `embed` nor `proj` so the input was ignored, and neuron ids outside `[0, num_neurons)` surfaced as an `IndexError` mid-forward or, for negative ids, wrapped around to the last neuron. Each now raises `ValueError` at construction; `'uniform'` is an explicit strategy.
+
 ### Removed
 - **`pytorch-lightning` and `tqdm` from the dependencies.** Nothing in the package or the examples imports either.
 

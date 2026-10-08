@@ -441,7 +441,7 @@ class TestExpand:
         assert t.optimizer is not None
 
     def test_expand_preserves_existing_weights(self):
-        model = _model(n=4)
+        model = _model(n=4, out_ids=[2, 3])
         t = _trainer(model)
         old_w = model.W.data[:4, :4].clone()
         t.expand(amount=2, verbose=False)

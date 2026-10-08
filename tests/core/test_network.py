@@ -83,6 +83,18 @@ class TestInitialisation:
         model = _make(4, pulse_mode=False)
         assert model.pulse_mode is False
 
+    @pytest.mark.parametrize("kwargs", [
+        dict(input_ids=[0, 9], output_ids=[3]),
+        dict(input_ids=[0], output_ids=[-1]),
+    ])
+    def test_ids_outside_the_core_raise(self, kwargs):
+        with pytest.raises(ValueError, match="must lie in"):
+            OdyssNet(num_neurons=4, device="cpu", **kwargs)
+
+    def test_unknown_vocab_mode_raises(self):
+        with pytest.raises(ValueError, match="vocab_mode"):
+            _make(4, vocab_size=5, vocab_mode="discrte")
+
 
 # ===========================================================================
 # Weight Initialisation Strategies
@@ -98,10 +110,15 @@ INIT_STRATEGIES = [
     "zero",
     "one",
     "resonant",
+    "uniform",
 ]
 
 
 class TestWeightInit:
+    def test_unknown_strategy_raises(self):
+        with pytest.raises(ValueError, match="xavier_unifrom"):
+            _make(4, weight_init="xavier_unifrom")
+
     @pytest.mark.parametrize("strategy", INIT_STRATEGIES)
     def test_strategy_produces_finite_weights(self, strategy):
         model = _make(4, weight_init=strategy)

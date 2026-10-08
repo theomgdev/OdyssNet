@@ -24,6 +24,12 @@ class OdyssNet(nn.Module):
             else:
                 num_neurons = 0
         
+        for name, ids in (("input_ids", input_ids), ("output_ids", output_ids)):
+            if any(not 0 <= i < num_neurons for i in ids):
+                raise ValueError(f"{name} must lie in [0, {num_neurons}), got {list(ids)}")
+        if vocab_mode not in ('hybrid', 'discrete', 'continuous'):
+            raise ValueError(f"vocab_mode must be 'hybrid', 'discrete' or 'continuous', got {vocab_mode!r}")
+
         self.num_neurons = num_neurons
         self.debug = debug
         if debug:
@@ -393,8 +399,10 @@ class OdyssNet(nn.Module):
                         frob = tensor.norm()
                         if frob > 1e-8:
                             tensor.div_(frob / (tensor.numel() ** 0.5))
-            else:
+            elif strategy == 'uniform':
                 nn.init.uniform_(tensor, -0.1, 0.1)
+            else:
+                raise ValueError(f"Unknown weight init strategy: {strategy!r}")
 
     def regenerate_weak_weights(self, threshold=0.01, percentage=None):
         with torch.no_grad():
