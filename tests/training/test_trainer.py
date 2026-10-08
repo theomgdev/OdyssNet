@@ -61,6 +61,10 @@ def _targets(batch_size=4, n_outputs=2):
 # ===========================================================================
 
 class TestTrainerInit:
+    def test_device_defaults_to_the_models(self):
+        model = _model()
+        assert OdyssNetTrainer(model).device == model.device
+
     def test_explicit_lr_uses_fixed_chaosgrad(self):
         # Explicit lr → ChaosGrad in fixed-rate mode
         t = _trainer()  # _trainer() defaults to lr=1e-4

@@ -12,7 +12,7 @@ from ..utils.neurogenesis import Neurogenesis
 from .chaos_optimizer import ChaosGrad
 
 class OdyssNetTrainer:
-    def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device='cpu',
+    def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device=None,
                  gradient_persistence=0.0, synaptic_noise=0.0,
                  anomaly_hook=None):
         """
@@ -29,14 +29,14 @@ class OdyssNetTrainer:
                 - float (e.g. 1e-4): ChaosGrad runs with a fixed AdamW-style
                   learning rate (automatic estimation disabled). Use for
                   exact reproducibility studies.
-            device (str): Device to run training on.
+            device (str): Device to run training on. Default: the model's own device.
             gradient_persistence (float): How much gradient to keep from previous step (0.0-0.9).
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
             anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
                 anomalies ('spike', 'plateau', 'increase').
         """
         self.model = model
-        self.device = device
+        self.device = device if device is not None else model.device
         self.model.to(self.device)
         self.gradient_persistence = gradient_persistence
         self.synaptic_noise = synaptic_noise

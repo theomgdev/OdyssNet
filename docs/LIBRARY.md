@@ -298,6 +298,7 @@ trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(),
 ```
 
 **Parameters:**
+*   `device` (str, optional): Where to train. Default: the model's own device, so a model built with `device='cuda'` stays there.
 *   `lr` (float or None): Learning rate. Default: `None`.
     *   `None`: **ChaosGrad** estimates the step scale online — no manual tuning required. Recommended default. Loss curves vary slightly across runs because the estimate adapts to the observed landscape.
     *   float (e.g. `1e-4`): ChaosGrad runs in **fixed-rate mode** (automatic estimation disabled; AdamW-equivalent updates under the same family policy). Use for byte-for-byte reproducibility studies and benchmarking against fixed baselines.
