@@ -482,6 +482,16 @@ class TestStateManagement:
         model.reset_state()
         assert model.state.shape[0] == 1
 
+    @pytest.mark.parametrize("vocab", [None, 5])
+    def test_deepcopy_after_continuous_forward(self, vocab):
+        """A continuous-input forward must not leave graph tensors on the model."""
+        import copy
+        model = _make(4, pulse_mode=False, vocab_size=vocab)
+        x = torch.randn(2, 4) if vocab is None else torch.randint(0, vocab, (2, 3))
+        model(x, steps=3)
+        clone = copy.deepcopy(model)
+        assert torch.equal(clone.W, model.W)
+
 
 # ===========================================================================
 # Diagonal Constraint

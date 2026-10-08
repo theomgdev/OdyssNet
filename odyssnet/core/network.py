@@ -79,7 +79,6 @@ class OdyssNet(nn.Module):
         
         self.pulse_mode = pulse_mode
         self.gradient_checkpointing = gradient_checkpointing
-        self._cached_scaled_input = None
         
         # Parse configurable component settings
         weight_init = self._normalize_weight_init(weight_init)
@@ -647,6 +646,11 @@ class OdyssNet(nn.Module):
         if len(output_pos) > 0:
             output_scale_vec[output_pos] = self._get_output_scale(h_t.dtype)
 
+        # Held across steps for continuous (non-pulse) injection; a local, so
+        # the previous call's graph is not kept alive and the model stays
+        # deep-copyable.
+        cached_input = None
+
         for t in range(steps):
             # Prepare input for this step
             x_step_info = None
@@ -702,11 +706,11 @@ class OdyssNet(nn.Module):
 
                         # Cache input for continuous (non-pulse) persistence across steps
                         if not self.pulse_mode:
-                            self._cached_scaled_input = x_step_info
+                            cached_input = x_step_info
 
                     # Re-use cached input for non-active steps in continuous mode
                     if not self.pulse_mode and x_step_info is None:
-                        x_step_info = getattr(self, '_cached_scaled_input', None)
+                        x_step_info = cached_input
 
                 # --- LEGACY DIRECT MODE ---
                 else:
@@ -759,8 +763,8 @@ class OdyssNet(nn.Module):
                     else:
                         # Continuous mode: cache on first step, reuse for all subsequent steps
                         if t == 0:
-                            self._cached_scaled_input = x_input * input_scale_vec
-                        x_step_info = self._cached_scaled_input
+                            cached_input = x_input * input_scale_vec
+                        x_step_info = cached_input
 
 
             if self.attn is not None and (self.attn_read == 'step' or t % ratio == 0):
