@@ -300,8 +300,10 @@ class Neurogenesis:
                 # brake_ref rides along with brake_ceiling: dropping it would
                 # turn a held brake into a fast-releasing one right after an
                 # expansion, exactly when the loss stream is most turbulent.
+                # rms0 is the traction anchor: the *initial* weight scale. A
+                # rebuild would re-measure it on the trained weights.
                 for key in ('d', 'd_max', 'd_numerator', 'brake_ceiling', 'brake_ref',
-                            'k', 'weight_decay'):
+                            'k', 'weight_decay', 'rms0'):
                     if key in old_group:
                         new_group[key] = old_group[key]
         else:
@@ -410,7 +412,8 @@ class Neurogenesis:
             if old_decoder_param is not None and hasattr(model, 'output_decoder') and model.output_decoder is not None:
                 transfer_state(old_decoder_param, model.output_decoder.weight, is_matrix=True)
 
-            print("   OK: Optimizer state transferred (momentum preserved)")
+            if verbose:
+                print("   OK: Optimizer state transferred (momentum preserved)")
         except Exception as e:
             print(f"   WARNING: Optimizer state transfer failed ({e}). Performing cold restart.")
 
