@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.14.0] — 2026-10-08
+
+### Added
+- **Dense temporal credit assignment via smooth power-curved horizon.** Sampling only the final terminal step of an option sequence discarded intermediate trajectory credit and produced sparse decision gradients. Option reading now computes all recurrent steps in its single forward pass (`return_sequence=True`) and smoothly integrates step scores with a parabolic horizon $w(t) = ((t+1)/T)^2$: early prefix ambiguity is naturally attenuated ($w(0) \approx 0$) while discriminative suffixes carry full weight. The dense temporal supervision removes the analytical loss floor, dropping training loss steadily ($1.17 \to 0.94$) and sharpening calibration ECE ($0.160 \to 0.043$) with zero extra forward passes.
+
 ## [3.13.0] — 2026-10-08
 
 ### Changed

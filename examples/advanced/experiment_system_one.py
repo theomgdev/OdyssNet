@@ -451,9 +451,9 @@ def _rewind(model, mark):
         model.attn.rewind(mark)
 
 
-def read_segment(model, ids, cfg, state=None):
+def read_segment(model, ids, cfg, state=None, return_sequence=False):
     """
-    One segment plus its echo steps; returns (scalar, end state).
+    One segment plus its echo steps; returns (scalar_or_seq, end state).
 
     The segment is read in `cfg.chunk`-wide pieces with the state carried
     between them, which is what makes a context of any length cost steps in
@@ -465,13 +465,39 @@ def read_segment(model, ids, cfg, state=None):
     """
     total = ids.shape[1]
     h = state
+    seq_outs = [] if return_sequence else None
     for start in range(0, total, cfg.chunk):
         piece = ids[:, start: start + cfg.chunk]
         last = start + cfg.chunk >= total
         out, h = model(piece,
                        steps=piece.shape[1] + (cfg.think if last else 0),
-                       current_state=h, return_sequence=False)
+                       current_state=h, return_sequence=return_sequence)
+        if return_sequence:
+            seq_outs.append(out)
+    if return_sequence:
+        return torch.cat(seq_outs, dim=1).squeeze(-1), h
     return out[:, -1, 0], h
+
+
+def smooth_trajectory_score(step_scores, active_lengths, power=2.0):
+    """
+    Smoothly integrates option trajectory step scores into a final decision scalar.
+
+    Weights scale smoothly as tau^power where tau = (t+1)/T, eliminating early
+    prefix ambiguity without sharp boundary discontinuities.
+    """
+    b, q_n, k_n, t_max = step_scores.shape
+    device = step_scores.device
+    t_idx = torch.arange(1, t_max + 1, device=device, dtype=step_scores.dtype).view(1, 1, 1, t_max)
+    lens = active_lengths.unsqueeze(-1).clamp(min=1).to(step_scores.dtype)
+
+    tau = (t_idx / lens).clamp(max=1.0)
+    weights = tau.pow(power)
+    mask = t_idx <= lens
+    weights = weights * mask
+
+    weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+    return (step_scores * (weights / weight_sum)).sum(dim=-1)
 
 
 def _branch(model, h, times):
@@ -520,14 +546,21 @@ def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask):
     # (B, Q, K) layout survives because both branches are interleaved: row
     # (i*Q + j) is example i's question j, and (i*Q + j)*K + k is its option k.
     o_wide = _branch(model, h_qry, k_n)
-    s, _ = read_segment(model, opt_ids.reshape(b * q_n * k_n, -1), cfg,
-                        state=o_wide)
+    opt_flat = opt_ids.reshape(b * q_n * k_n, -1)
+    step_scores, _ = read_segment(model, opt_flat, cfg,
+                                  state=o_wide, return_sequence=True)
 
     _rewind(model, ctx_mark)
     if model.attn is not None:
         model.attn.select_first_of(q_n * k_n)
 
-    return s.view(b, q_n, k_n).masked_fill(~mask, -1e4)
+    # Trajectory shape: (B, Q, K, TotalSteps)
+    total_steps = step_scores.shape[1]
+    step_scores = step_scores.view(b, q_n, k_n, total_steps)
+    active_lens = (opt_ids != PAD_ID).sum(dim=-1)
+
+    s = smooth_trajectory_score(step_scores, active_lens, power=2.0)
+    return s.masked_fill(~mask, -1e4)
 
 
 def decision_loss(scores, correct, mask):
@@ -1238,7 +1271,9 @@ def run_smoke(cfg, corpus):
             cols = []
             for k in range(kk):
                 _rewind(model, qm)
-                s, _ = read_segment(model, o[:, j, k], cfg, state=h_q)
+                step_s, _ = read_segment(model, o[:, j, k], cfg, state=h_q, return_sequence=True)
+                act_lens = (o[:, j, k] != PAD_ID).sum(dim=-1).view(bb, 1, 1)
+                s = smooth_trajectory_score(step_s.view(bb, 1, 1, -1), act_lens, power=2.0).squeeze(1).squeeze(1)
                 cols.append(s)
             out.append(torch.stack(cols, dim=1))
         _rewind(model, cm)

@@ -793,6 +793,14 @@ branch still writes only into its own row.
 * **The stored state is fixed-size.** `neurons` floats whatever the context's
   length, where a KV cache grows with it.
 
+* **Dense temporal credit assignment via smooth power-curved horizon.** Sampling
+  only the final step of an option sequence discards trajectory credit and makes
+  decision gradients sparse. Parabolic weighting ($w_t = ((t+1)/T)^2$) over
+  normalized time $\tau = (t+1)/T$ smoothly integrates all step scores computed
+  during the recurrent read of the option: it suppresses early prefix ambiguity
+  while concentrating gradient on distinguishing suffixes, with zero extra forward
+  passes and full typesafe scalar compatibility.
+
 Out-of-scope and confidence are not heads. Per-option BCE weighted by the
 batch's own negative-to-positive ratio makes the scalar absolute rather than a
 pure rank, which prevents the optimizer from minimising the loss by collapsing
