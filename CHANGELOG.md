@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Mistyped configuration was accepted silently.** An unknown `weight_init` name fell through to `uniform(-0.1, 0.1)`, a mistyped `vocab_mode` built neither `embed` nor `proj` so the input was ignored, and neuron ids outside `[0, num_neurons)` surfaced as an `IndexError` mid-forward or, for negative ids, wrapped around to the last neuron. Each now raises `ValueError` at construction; `'uniform'` is an explicit strategy.
 
+- **`load_checkpoint(strict=False)` was documented as ignoring size mismatches.** It skips missing and unexpected keys only; a shape mismatch raises, as measured on a 4 → 6 neuron load. The docstring and `docs/LIBRARY.md` now say so and point to `transplant_weights`.
+
 ### Removed
 - **`pytorch-lightning` and `tqdm` from the dependencies.** Nothing in the package or the examples imports either.
 

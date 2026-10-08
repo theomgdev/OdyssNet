@@ -901,7 +901,7 @@ The `odyssstore` module provides checkpoint management utilities, including a un
 Saves a training checkpoint to disk. Pass `trainer_state=trainer.state_dict()` to also persist the trainer's runtime state (step counter, scaler, persistent gradients). The file is written beside `path` and renamed over it, so an interrupted save leaves the previous checkpoint intact.
 
 #### `load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, trainer=None)`
-Loads a checkpoint. Set `strict=False` to ignore size mismatches (will partially load what fits). Pass `lr` to overwrite the saved learning rate after loading. Pass `trainer` (an `OdyssNetTrainer` instance) to restore runtime trainer state (step counter, scaler, persistent gradients).
+Loads a checkpoint. Set `strict=False` to skip missing or unexpected keys; a size mismatch raises either way, so use `transplant_weights` to load across sizes. Pass `lr` to overwrite the saved learning rate after loading. Pass `trainer` (an `OdyssNetTrainer` instance) to restore runtime trainer state (step counter, scaler, persistent gradients).
 
 #### `transplant_weights(model, checkpoint_path, device='cpu', verbose=True)`
 🧬 **Weight Transplantation**: Transfers learned weights from a checkpoint to a model, **even if the number of neurons is different**.

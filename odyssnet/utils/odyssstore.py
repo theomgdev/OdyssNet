@@ -55,12 +55,13 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
     Loads a training checkpoint.
     
     Args:
-        model: The OdyssNet model instance (must match checkpoint architecture if strict=True).
+        model: The OdyssNet model instance.
         optimizer: The optimizer instance.
         path (str): File path to the checkpoint.
         device (str): Device to load tensors to.
-        strict (bool): If True, raises error on architecture mismatch.
-                       If False, ignores mismatched keys (standard PyTorch behavior).
+        strict (bool): If True, a missing or unexpected key raises. If False those
+                       keys are skipped; a shape mismatch raises either way, so use
+                       `transplant_weights` to load across sizes.
         lr (float, optional): If provided, overwrites the learning rate in the optimizer 
                               after loading the state.
         trainer (optional): Trainer instance that implements load_state_dict.
@@ -70,7 +71,7 @@ def load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, 
         
     Raises:
         FileNotFoundError: If checkpoint file doesn't exist.
-        RuntimeError: If strict=True and architecture doesn't match.
+        RuntimeError: On a shape mismatch, or on a key mismatch if strict=True.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Checkpoint not found: {path}")
