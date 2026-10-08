@@ -336,9 +336,10 @@ Runs a single custom training step. Useful for custom loops (RL, Generative, etc
 *   `full_sequence` (bool): If `True`, calculates loss on the entire sequence output `(Batch, Steps, Out)` instead of just the last step. Essential for Seq2Seq tasks.
 *   `mask` (Tensor, optional): A binary or weighted mask `(Batch, Steps, Out)` to ignore specific steps or outputs during loss calculation. Useful for tasks with "thinking delays" or variable-length sequences.
 *   `output_transform` (Callable, optional): A function to transform the predicted outputs before loss calculation. Useful for reshaping logits (e.g., flatten for CrossEntropy) or applying custom activations.
+*   A step whose gradient norm is not finite is skipped with a `RuntimeWarning`: weights and optimizer state are left as they were.
 
 #### `trainer.predict(input_features, thinking_steps, full_sequence=False)`
-Runs inference in evaluation mode.
+Runs inference in evaluation mode. Takes the same inputs as `train_batch`, integer index tensors included.
 *   `full_sequence` (bool): If `True`, returns outputs for all time steps `(Batch, Steps, Out)`.
 
 #### `trainer.regenerate_synapses(threshold=0.01)`
@@ -897,7 +898,7 @@ The `odyssstore` module provides checkpoint management utilities, including a un
 ### Functions
 
 #### `save_checkpoint(model, optimizer, epoch, loss, path, extra_data=None, trainer_state=None)`
-Saves a training checkpoint to disk. Pass `trainer_state=trainer.state_dict()` to also persist the trainer's runtime state (step counter, scaler, persistent gradients).
+Saves a training checkpoint to disk. Pass `trainer_state=trainer.state_dict()` to also persist the trainer's runtime state (step counter, scaler, persistent gradients). The file is written beside `path` and renamed over it, so an interrupted save leaves the previous checkpoint intact.
 
 #### `load_checkpoint(model, optimizer, path, device='cpu', strict=True, lr=None, trainer=None)`
 Loads a checkpoint. Set `strict=False` to ignore size mismatches (will partially load what fits). Pass `lr` to overwrite the saved learning rate after loading. Pass `trainer` (an `OdyssNetTrainer` instance) to restore runtime trainer state (step counter, scaler, persistent gradients).

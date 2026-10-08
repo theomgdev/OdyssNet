@@ -4,6 +4,22 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.14.1] — 2026-10-08
+
+### Fixed
+- **`transplant_weights` left the core diagonal at ~1e-3 after a scale-up.** The `micro_quiet_warm` init it applies before copying the overlap fills the new region's diagonal too, so the first forward pass used self-connections that belong to `memory_feedback`. The diagonal is zeroed once the state is loaded.
+- **`predict` / `evaluate` rejected the integer index tensors `train_batch` accepts** in direct mode, failing on a dtype mismatch. Both now share one input helper.
+- **A non-pulse `forward` kept its input graph on the model**, which held the previous batch's activations until the next call and made `copy.deepcopy(model)` raise. The cache lives only for the call.
+- **A non-finite gradient destroyed the model on CPU.** One NaN target put NaN into ChaosGrad's moments and `W`, and the next good batch could not repair it. The trainer now skips the step with a `RuntimeWarning`, and `GradScaler.update()` still runs so loss-scale backoff is unchanged. Verified on CPU only.
+- **`Neurogenesis.expand` re-measured the traction anchor on the trained weights** (`chaos_core` `rms0` 0.27 → 0.21 and `projections` 0.019 → 0.042 on a 6 → 8 neuron probe), so the cap stopped tracking the initial scale and moved again on every growth. `rms0` is carried over with the other per-group estimates. `verbose=False` no longer prints the "optimizer state transferred" line.
+- **`save_checkpoint` was not atomic.** An interrupted write destroyed the checkpoint it replaced; it now writes beside the target and renames over it. `get_checkpoint_info` counted buffers as parameters (280 against `get_num_params()`'s 132 at 8 neurons with `hebb_type='both'`) and no longer does.
+
+### Removed
+- **`pytorch-lightning` and `tqdm` from the dependencies.** Nothing in the package or the examples imports either.
+
+### Changed
+- CI runs on Python 3.13 as well (398 tests pass there). The README quick start falls back to CPU instead of requiring CUDA.
+
 ## [3.14.0] — 2026-10-08
 
 ### Added

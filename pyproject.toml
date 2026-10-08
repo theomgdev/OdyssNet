@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odyssnet"
-version = "3.14.0"
+version = "3.14.1"
 description = "Temporal Depth replaces Spatial Depth — zero-hidden-layer neural networks via trainable chaos dynamics"
 readme = "README.md"
 license = {text = "MIT"}
@@ -21,14 +21,13 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "torch>=2.4.0",
     "numpy",
     "matplotlib",
-    "tqdm",
-    "pytorch-lightning",
 ]
 
 [project.optional-dependencies]
