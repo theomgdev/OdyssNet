@@ -105,6 +105,21 @@ class OdyssNetTrainer:
             device_type='cuda' if is_cuda else 'cpu', enabled=is_cuda,
         )
 
+    def _prepare_inputs(self, input_features):
+        """Map user input to what `forward` takes, and return its batch size.
+
+        Vocab models take token ids or raw vectors as they are. Without a
+        vocab, integer tensors are neuron indices to inject, and anything else
+        is a feature matrix mapped onto `input_ids`.
+        """
+        if getattr(self.model, 'vocab_size', None) is not None:
+            x_input = to_tensor(input_features, self.device)
+        elif isinstance(input_features, torch.Tensor) and input_features.dtype in (torch.int32, torch.int64):
+            x_input = input_features.to(self.device)
+        else:
+            return prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
+        return x_input, x_input.shape[0]
+
     def _extract_outputs(self, all_states, final_state, full_sequence):
         """Extract the prediction tensor from forward-pass outputs.
 
@@ -205,17 +220,7 @@ class OdyssNetTrainer:
                         if 'W' in name and param.dim() == 2 and param.shape[0] == param.shape[1]:
                             param.fill_diagonal_(0.0)
 
-        # Prepare Data
-        # If model has vocab_size, we assume input is Token IDs or Raw Vects for Projection.
-        # We bypass 'prepare_input' which attempts to map features to specific neurons manually.
-        if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-            x_input = to_tensor(input_features, self.device)
-            batch_size = x_input.shape[0]
-        elif isinstance(input_features, torch.Tensor) and input_features.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-            x_input = input_features.to(self.device)
-            batch_size = x_input.shape[0]
-        else:
-            x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
+        x_input, batch_size = self._prepare_inputs(input_features)
 
         target_values = to_tensor(target_values, self.device)
         if mask is not None:
@@ -353,12 +358,7 @@ class OdyssNetTrainer:
         """
         self.model.eval()
         with torch.no_grad():
-            if hasattr(self.model, 'vocab_size') and self.model.vocab_size is not None:
-                x_input = to_tensor(input_features, self.device)
-                batch_size = x_input.shape[0]
-            else:
-                x_input, batch_size = prepare_input(input_features, self.model.input_ids, self.model.num_neurons, self.device)
-
+            x_input, batch_size = self._prepare_inputs(input_features)
             self.model.reset_state(batch_size)
             all_states, final_state = self.model(x_input, steps=thinking_steps, return_sequence=full_sequence)
             return self._extract_outputs(all_states, final_state, full_sequence)

@@ -295,6 +295,19 @@ class TestPredict:
         pred = t.predict(x, thinking_steps=2)
         assert not pred.requires_grad
 
+    def test_predict_reads_integer_tensors_as_neuron_indices(self):
+        """`train_batch` injects integer tensors by index; `predict` must read
+        them the same way instead of treating them as feature values."""
+        model = _model(n=6, in_ids=[0, 1, 2], out_ids=[4, 5])
+        t = _trainer(model)
+        tokens = torch.tensor([[0, 1], [2, 1]])
+        pred = t.predict(tokens, thinking_steps=2, full_sequence=True)
+        model.eval()
+        model.reset_state(2)
+        with torch.no_grad():
+            direct, _ = model(tokens, steps=2)
+        assert torch.equal(pred, direct[:, :, [4, 5]])
+
 
 # ===========================================================================
 # evaluate
