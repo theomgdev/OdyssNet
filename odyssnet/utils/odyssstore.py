@@ -192,7 +192,10 @@ def transplant_weights(model, checkpoint_path, device='cpu', verbose=True, init_
     
     # Load the modified state
     model.load_state_dict(target_state)
-    
+    # The init strategy above fills the new region's diagonal too.
+    with torch.no_grad():
+        model.W.fill_diagonal_(0.0)
+
     if verbose:
         print(f"Weight Transplantation Complete. (New regions initialized with: {init_new})")
         print(f"   Total Parameters: {stats['total_params']:,}")

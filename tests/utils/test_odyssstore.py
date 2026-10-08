@@ -289,6 +289,15 @@ class TestTransplantWeights:
                     "keys_matched", "keys_resized", "keys_missing"):
             assert key in stats
 
+    @pytest.mark.parametrize("src_n,tgt_n", [(3, 6), (6, 3), (4, 4)])
+    def test_diagonal_stays_zero(self, tmp_path, src_n, tgt_n):
+        path = str(tmp_path / "diag.pt")
+        src = _model(n=src_n)
+        save_checkpoint(src, _optimizer(src), epoch=1, loss=0.0, path=path)
+        tgt = _model(n=tgt_n)
+        transplant_weights(tgt, path, verbose=False)
+        assert tgt.W.diagonal().abs().max().item() == 0.0
+
     def test_transplant_total_equals_sum(self, tmp_path):
         model = _model(n=4)
         opt = _optimizer(model)
