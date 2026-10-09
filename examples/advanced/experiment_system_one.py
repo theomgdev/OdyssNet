@@ -689,10 +689,17 @@ class Validator:
         cfg = self.cfg
         hit = n = rej_hit = rej_n = 0
         conf, ok = [], []
+        loss_sum = loss_n = 0
 
         for chunk in self.batches:
             ctx, questions, options, mask, correct = pack(chunk, cfg)
             scores = score_all(model, cfg, ctx, questions, options, mask)
+
+            # Val loss: same criterion as training, no gradient.
+            vloss, _ = decision_loss(scores, correct, mask)
+            loss_sum += float(vloss)
+            loss_n += 1
+
             prob = torch.softmax(scores, dim=2)
             pred = prob.argmax(dim=2)
             top = prob.max(dim=2).values
@@ -711,7 +718,9 @@ class Validator:
                         rej_n += 1
                         rej_hit += int(float(top[i, j]) < 0.5)
 
-        m = {"acc": hit / n if n else float("nan"), "questions": n + rej_n}
+        m = {"acc": hit / n if n else float("nan"),
+             "loss": loss_sum / max(loss_n, 1),
+             "questions": n + rej_n}
         if rej_n:
             m["reject"] = rej_hit / rej_n
         if conf:
@@ -724,6 +733,8 @@ class Validator:
 
 def fmt(m):
     bits = [f"acc {m['acc']*100:6.2f}%"]
+    if "loss" in m:
+        bits.append(f"loss {m['loss']:.4f}")
     if "reject" in m:
         bits.append(f"reject {m['reject']*100:5.1f}%")
     if "ece" in m:
@@ -824,8 +835,15 @@ def plot_trajectories(context, answers):
             alpha = 1.0 if is_top else 0.6
             label = f"{prob*100:5.1f}%  {name}"
             marker = "o" if len(traj) <= 32 else None
+            color = ax._get_lines.get_next_color()
             ax.plot(range(len(traj)), traj, label=label, linewidth=lw,
-                    alpha=alpha, marker=marker, markersize=3)
+                    alpha=alpha, marker=marker, markersize=3, color=color)
+            # Dashed horizontal mean line for each option — shows where the
+            # trajectory settled on average, making it easy to spot the
+            # "eureka" inflection points against the baseline.
+            mean_s = sum(traj) / len(traj)
+            ax.axhline(mean_s, linestyle="--", linewidth=0.9,
+                       alpha=0.5, color=color)
 
         ax.set_title(f"Q: {q}", fontsize=11, fontweight="bold")
         ax.set_xlabel("Option Token / Character Step (t)", fontsize=9)
