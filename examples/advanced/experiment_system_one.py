@@ -689,15 +689,16 @@ class Validator:
         cfg = self.cfg
         hit = n = rej_hit = rej_n = 0
         conf, ok = [], []
-        loss_sum = loss_n = 0
+        abs_sum = rank_sum = loss_n = 0
 
         for chunk in self.batches:
             ctx, questions, options, mask, correct = pack(chunk, cfg)
             scores = score_all(model, cfg, ctx, questions, options, mask)
 
             # Val loss: same criterion as training, no gradient.
-            vloss, _ = decision_loss(scores, correct, mask)
-            loss_sum += float(vloss)
+            _, parts = decision_loss(scores, correct, mask)
+            abs_sum += parts["abs"]
+            rank_sum += parts["rank"]
             loss_n += 1
 
             prob = torch.softmax(scores, dim=2)
@@ -719,7 +720,8 @@ class Validator:
                         rej_hit += int(float(top[i, j]) < 0.5)
 
         m = {"acc": hit / n if n else float("nan"),
-             "loss": loss_sum / max(loss_n, 1),
+             "abs": abs_sum / max(loss_n, 1),
+             "rank": rank_sum / max(loss_n, 1),
              "questions": n + rej_n}
         if rej_n:
             m["reject"] = rej_hit / rej_n
@@ -733,8 +735,10 @@ class Validator:
 
 def fmt(m):
     bits = [f"acc {m['acc']*100:6.2f}%"]
-    if "loss" in m:
-        bits.append(f"loss {m['loss']:.4f}")
+    if "abs" in m:
+        bits.append(f"abs {m['abs']:.4f}")
+    if "rank" in m:
+        bits.append(f"rank {m['rank']:.4f}")
     if "reject" in m:
         bits.append(f"reject {m['reject']*100:5.1f}%")
     if "ece" in m:
