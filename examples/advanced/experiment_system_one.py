@@ -178,6 +178,7 @@ class Cfg:
 @dataclass
 class Read:
     """One (context, question, options, correct) tuple."""
+    __slots__ = ("context", "question", "options", "correct")
     context: str
     question: str
     options: list
@@ -190,6 +191,11 @@ def load_reads(path, default_leaf="train.jsonl"):
 
     Errors name the file and line: a malformed corpus should cost a message,
     not a training run that silently learns from three usable rows.
+
+    Strings are interned as they are read, because a corpus is mostly repeated
+    text — one context is carried by every question under it, and an option
+    set is drawn from a pool far smaller than the file. Interning plus slots
+    is what decides whether a multi-million-question corpus fits in memory.
     """
     if os.path.isdir(path):
         candidates = [default_leaf, "train.jsonl", "val.jsonl"] if default_leaf else ["train.jsonl", "val.jsonl"]
@@ -207,6 +213,10 @@ def load_reads(path, default_leaf="train.jsonl"):
             f"   correct: -1 means no option is right.\n")
 
     reads = []
+    pool = {}
+    def keep(text):
+        return pool.setdefault(text, text)
+
     with open(path, encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
             line = line.strip()
@@ -221,6 +231,7 @@ def load_reads(path, default_leaf="train.jsonl"):
                 raise SystemExit(
                     f"\n✋ {path}:{n}: needs 'context' (string) and "
                     f"'questions' (list).\n")
+            ctx = keep(ctx)
             for q in questions:
                 options = q.get("options")
                 if not isinstance(options, list) or len(options) < 2:
@@ -232,8 +243,8 @@ def load_reads(path, default_leaf="train.jsonl"):
                     raise SystemExit(
                         f"\n✋ {path}:{n}: correct={correct} is out of range "
                         f"for {len(options)} options.\n")
-                reads.append(Read(ctx, str(q.get("q", "")),
-                                  [str(o) for o in options], correct))
+                reads.append(Read(ctx, keep(str(q.get("q", ""))),
+                                  [keep(str(o)) for o in options], correct))
     if not reads:
         raise SystemExit(f"\n✋ {path}: no usable rows.\n")
     return reads
@@ -256,27 +267,50 @@ def group_by_context(reads):
 
 
 def load_corpus(cfg, verbose=True):
-    """(train_groups, val_groups), reported as the shape they really are."""
-    train_path = cfg.data
-    val_path = cfg.val
-    if os.path.isdir(train_path):
-        train_cand = os.path.join(train_path, "train.jsonl")
-        val_cand = os.path.join(train_path, "val.jsonl")
-        if os.path.exists(train_cand):
-            train_path = train_cand
-        if val_path == Cfg.val and os.path.exists(val_cand):
-            val_path = val_cand
+    """
+    (train_groups, val_groups), reported as the shape they really are.
 
-    train = group_by_context(load_reads(train_path, "train.jsonl"))
-    val = group_by_context(load_reads(val_path, "val.jsonl"))
+    `--data` and `--val` take several comma-separated paths, so a final corpus
+    is assembled at the command line rather than by concatenating files on
+    disk: the parts stay separately regenerable, and a mix can be changed
+    without rewriting gigabytes.
+    """
+    def resolve(spec, leaf):
+        """Comma-separated paths, with a directory standing for its `leaf`."""
+        out = []
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            candidate = os.path.join(part, leaf)
+            out.append(candidate if os.path.isdir(part) else part)
+        return out
+
+    train_paths = resolve(cfg.data, "train.jsonl")
+    # An unset --val follows --data: pointing --data at data/wordnet should
+    # validate on data/wordnet/val.jsonl, not on the default corpus.
+    val_paths = (resolve(cfg.data, "val.jsonl") if cfg.val == Cfg.val
+                 and os.path.isdir(cfg.data.split(",")[0].strip())
+                 else resolve(cfg.val, "val.jsonl"))
+
+    def read_all(paths, leaf):
+        reads = []
+        for path in paths:
+            reads += load_reads(path, leaf)
+        return group_by_context(reads)
+
+    train = read_all(train_paths, "train.jsonl")
+    val = read_all(val_paths, "val.jsonl")
     if verbose:
-        for label, groups in (("train", train), ("val", val)):
+        for label, paths, groups in (("train", train_paths, train),
+                                     ("val", val_paths, val)):
             reads = [r for _, rs in groups for r in rs]
             k = [len(r.options) for r in reads]
             none = sum(1 for r in reads if r.correct < 0)
             print(f"📚 {label}: {len(groups):,} contexts | {len(reads):,} "
                   f"questions | K {min(k)}-{max(k)} (mean {sum(k)/len(k):.1f}) "
-                  f"| {none:,} answered by none of the options")
+                  f"| {none:,} answered by none of the options"
+                  + (f" | {len(paths)} files" if len(paths) > 1 else ""))
     return train, val
 
 
@@ -346,14 +380,17 @@ def widths(group, chunk):
     Lengths enter as a count of chunks rather than as bytes: two contexts of
     91 and 96 bytes both run six pieces of 16, so they belong in one batch and
     a key on exact length would have split them into two.
+
+    Question and option *counts* are deliberately not part of the key. They
+    pad along their own axes and the step count does not depend on them, so
+    keying on them only narrows the buckets without making a row's scores any
+    more independent of what shares its batch.
     """
     ctx, reads = group
     up = lambda n: -(-(n + 1) // chunk)  # noqa: E731  (+1 for the marker)
     return (up(len(ctx.encode("utf-8"))),
             max(up(len(r.question.encode("utf-8"))) for r in reads),
-            max(up(len(o.encode("utf-8"))) for r in reads for o in r.options),
-            len(reads),
-            max(len(r.options) for r in reads))
+            max(up(len(o.encode("utf-8"))) for r in reads for o in r.options))
 
 
 def bucket_by_width(groups, size, chunk):
@@ -367,6 +404,11 @@ def bucket_by_width(groups, size, chunk):
     buckets = {}
     for g in groups:
         buckets.setdefault(widths(g, chunk), []).append(g)
+    return cut(buckets, size)
+
+
+def cut(buckets, size):
+    """{key: [group, ...]} flattened into batches of at most `size`."""
     out = []
     for rows in buckets.values():
         out += [rows[s: s + size] for s in range(0, len(rows), size)]
@@ -382,22 +424,34 @@ class Batches:
     read by row length is not available and padding a short row would make its
     score depend on the longest row beside it. Grouping by the widths the rows
     actually have removes the pad instead of hiding it.
+
+    Each epoch re-cuts the batches rather than reordering a fixed set, so a
+    long run sees new combinations of rows instead of the same few hundred
+    batches in a new order — on a large corpus the fixed cut is most of the
+    stochasticity a step would otherwise have.
     """
 
     def __init__(self, groups, cfg):
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
-        self.buckets = bucket_by_width(groups, cfg.batch, cfg.chunk)
-        self.order, self.pos, self.epochs = list(range(len(self.buckets))), 0, 0
-        self.rng.shuffle(self.order)
+        self.pools = {}
+        for g in groups:
+            self.pools.setdefault(widths(g, cfg.chunk), []).append(g)
+        self.epochs = 0
+        self.queue = []
+        self._refill()
+
+    def _refill(self):
+        for rows in self.pools.values():
+            self.rng.shuffle(rows)
+        self.queue = cut(self.pools, self.cfg.batch)
+        self.rng.shuffle(self.queue)
 
     def next(self):
-        if self.pos >= len(self.order):
-            self.rng.shuffle(self.order)
-            self.pos, self.epochs = 0, self.epochs + 1
-        picks = self.buckets[self.order[self.pos]]
-        self.pos += 1
-        return pack(picks, self.cfg)
+        if not self.queue:
+            self.epochs += 1
+            self._refill()
+        return pack(self.queue.pop(), self.cfg)
 
 
 # --------------------------------------------------------------------------- #
@@ -660,7 +714,13 @@ class Validator:
 
     def __init__(self, groups, cfg):
         self.cfg = cfg
-        groups = groups[: cfg.eval_contexts] if cfg.eval_contexts else groups
+        if cfg.eval_contexts and cfg.eval_contexts < len(groups):
+            # A deterministic sample, not the first N: a corpus is written
+            # grouped by whatever produced it, so the head of the file is one
+            # question type and a prefix would score that type rather than the
+            # validation set. The seed is fixed so every arm scores the same
+            # contexts.
+            groups = random.Random(0).sample(groups, cfg.eval_contexts)
         # Batches of one width, as in training: a mixed-width batch pays its
         # longest row's steps for every row, and that is also what would make
         # the score move with --batch.
@@ -1583,6 +1643,9 @@ examples:
   # your own data
   %(prog)s --mode train --data mine/train.jsonl --val mine/val.jsonl
 
+  # several corpora as one, assembled at the command line
+  %(prog)s --mode train --data ../../data/decisions,../../data/basics,../../data/wordnet
+
   # compute-matched ablations; every arm gets the same wall clock
   %(prog)s --mode sweep --sweep think --minutes 4
   %(prog)s --mode sweep --sweep mech --arms plain,attn4 --minutes 6
@@ -1630,10 +1693,13 @@ def parse_args():
                    help="comma-separated subset of the preset's arms")
 
     g = p.add_argument_group("data")
-    g.add_argument("--data", default=d.data, metavar="PATH",
-                   help="training JSONL (default: data/decisions/train.jsonl)")
-    g.add_argument("--val", default=d.val, metavar="PATH",
-                   help="validation JSONL (default: data/decisions/val.jsonl)")
+    g.add_argument("--data", default=d.data, metavar="PATH[,PATH]",
+                   help="training JSONL, or several comma-separated; a "
+                        "directory stands for its train.jsonl "
+                        "(default: data/decisions/train.jsonl)")
+    g.add_argument("--val", default=d.val, metavar="PATH[,PATH]",
+                   help="validation JSONL; follows --data when that names a "
+                        "directory (default: data/decisions/val.jsonl)")
 
     g = p.add_argument_group("architecture")
     g.add_argument("--neurons", type=int, default=d.neurons, metavar="N",

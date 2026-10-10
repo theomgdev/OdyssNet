@@ -813,7 +813,10 @@ ordinary data.
 
 ### Status
 
-Two corpora, both produced by a converter next to the data it writes.
+Three corpora, each produced by a converter next to the data it writes. They
+are assembled at the command line rather than concatenated on disk — `--data`
+and `--val` take comma-separated paths, so a mix changes without rewriting
+gigabytes and each part stays separately regenerable.
 
 **`data/decisions/from_clinc150.py`** — converted CLINC150 (15,100 train
 contexts, 45,200 questions, K 2-10). 192 neurons, 87,456 parameters,
@@ -828,10 +831,35 @@ and 18% of questions answered by none of the options — the `correct: -1`
 branch that CLINC never reaches, because its converter makes rejection a
 selectable option instead.
 
+**`data/decisions/from_wordnet.py`** — English word knowledge, which neither
+of the others carries: intent and synthetic retrieval both train the protocol
+while leaving the bytes without meanings behind them. WordNet supplies the
+definitions, hypernyms, synonyms and antonyms; `data/wikisent2.txt` supplies
+real sentences to blank a word out of. Seven question types (cloze, usage,
+definition in both directions, hypernym, synonym, antonym) and a `--contexts`
+budget rather than a fixed size.
+
+Difficulty there is the distractor pool, not the question: a wrong option
+drawn from the whole dictionary is settled by topic, one drawn from the
+target's own siblings under a shared hypernym needs the distinction itself,
+and one drawn from the target word's *other senses* cannot be separated by
+topic at all. Bands name which pool a question used.
+
+Three properties decide whether the corpus measures word knowledge or
+something easier, and each is enforced rather than assumed. Polysemy limits
+what is askable — a definition question takes monosemous targets only, because
+"which definition belongs to `bank`" has several right answers. Proper nouns,
+named entities and abbreviations are dropped (4,623 of 28,100 lemmas above
+zipf 2.5), since asking which city a definition describes measures geography.
+And the splits partition *answer words*, not synsets: 55% of targets are
+polysemous and a cloze answer is the word itself, so a synset-level split puts
+28% of words on both sides, while partitioning words leaves 90% of synsets
+entirely inside one split.
+
 Questions carry a band naming how much work the answer takes, so accuracy can
 be read per band rather than as one average that hides which half carried it.
-At 600 steps (87,456 parameters, 3.9 min, 2.6 steps/s) against a 29.1% chance
-baseline:
+At 600 steps on the synthetic corpus (87,456 parameters, 3.9 min, 2.6 steps/s)
+against a 29.1% chance baseline:
 
 | band | what it asks | n | accuracy |
 |---|---|---|---|

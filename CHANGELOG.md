@@ -4,6 +4,18 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [3.15.0] — 2026-10-10
+
+### Added
+- **`data/decisions/from_wordnet.py`** — a word-knowledge corpus for `experiment_system_one.py`. The two existing corpora teach the protocol (pick an intent, find a stated fact, decline when nothing fits) while leaving the bytes without meanings behind them; this one asks what words mean. WordNet supplies definitions, hypernyms, synonyms and antonyms, `data/wikisent2.txt` supplies real sentences to blank a word out of, and seven question types come out of the pair. Difficulty is the distractor pool rather than the question — dictionary-wide, frequency-matched, sibling under a shared hypernym, or the target word's own other senses — and bands name which pool each question used. Three filters decide whether it measures word knowledge: definition questions take monosemous targets only, proper nouns and abbreviations are dropped (4,623 of 28,100 lemmas above zipf 2.5), and the splits partition answer words rather than synsets (55% of targets are polysemous, so a synset-level split would put 28% of words on both sides). At `--contexts 120000`: 151,635 questions, 1.3 per context, 10% unanswerable.
+- **`--data` and `--val` take several comma-separated paths.** A final corpus is assembled at the command line instead of by concatenating files on disk, so each part stays separately regenerable and a mix changes without rewriting gigabytes.
+
+### Fixed
+- **Batch composition in `experiment_system_one.py` was fixed for the whole run.** `Batches` cut the groups into batches once and then only reshuffled the order, so every epoch saw the same few thousand batches; each epoch now re-cuts them. On a three-corpus 100,787-context mix the two epochs share 142 of 4,366 compositions, where they previously shared all of them.
+- **`bucket_by_width` keyed on question and option counts**, which narrows the buckets without buying anything: those axes pad separately and do not change the step count. Measured in float64, a row's scores move by 1.4e-15 whether or not its batch mates share its counts — the batch width's own arithmetic. Dropping the two keys took mean batch fill from 17.3 to 23.7 out of 24 on the synthetic corpus.
+- **A corpus held more memory than it needed.** `Read` gained `__slots__` and `load_reads` interns the strings it parses, since a context is carried by every question under it and option sets are drawn from a small pool: 600 → 374 bytes per read, so 257,035 questions occupy 0.10 GB.
+- **`--eval-contexts` took the head of the validation file**, which is one question type when the corpus was written grouped by its producer. It now takes a seed-fixed random sample, so every arm still scores the same contexts.
+
 ## [3.14.1] — 2026-10-08
 
 ### Fixed
