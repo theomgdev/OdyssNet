@@ -14,7 +14,7 @@ from .chaos_optimizer import ChaosGrad
 class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device=None,
                  gradient_persistence=0.0, synaptic_noise=0.0,
-                 anomaly_hook=None):
+                 anomaly_hook=None, max_grad_norm=1.0):
         """
         Initializes the trainer.
 
@@ -34,6 +34,13 @@ class OdyssNetTrainer:
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
             anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
                 anomalies ('spike', 'plateau', 'increase').
+            max_grad_norm (float): Gradient clipping threshold. Default 1.0,
+                which suits a dense per-token loss. Raise it when the loss is
+                a sparse scalar accumulated over many recurrent steps: the
+                clip rescales the whole gradient, and with it the signal
+                ChaosGrad's online step-scale estimate reads, so a threshold
+                far below the natural norm leaves the estimate stuck near its
+                floor.
         """
         self.model = model
         self.device = device if device is not None else model.device
@@ -41,6 +48,7 @@ class OdyssNetTrainer:
         self.gradient_persistence = gradient_persistence
         self.synaptic_noise = synaptic_noise
         self.initial_lr = lr
+        self.max_grad_norm = max_grad_norm
 
         # --- Optimizer Initialization ---
         self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
@@ -266,7 +274,8 @@ class OdyssNetTrainer:
             if self.gradient_persistence > 0.0:
                 self._inject_persistent_grads()
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                                       self.max_grad_norm)
             # A non-finite gradient would poison the optimizer's moments and
             # the weights for good; GradScaler only guards this under CUDA AMP.
             if torch.isfinite(grad_norm):

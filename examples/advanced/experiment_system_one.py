@@ -86,6 +86,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import random
@@ -98,10 +99,12 @@ import torch.nn.functional as F
 
 from odyssnet import (OdyssNet, OdyssNetTrainer, load_checkpoint,
                       save_checkpoint, set_seed)
+from odyssnet.training.chaos_optimizer import ChaosGrad
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CKPT_DIR = os.path.join(HERE, "ckpt")
 DATA_DIR = os.path.join(HERE, "..", "..", "data", "decisions")
+CACHE_DIR = os.path.join(DATA_DIR, "read_cache")
 
 # Segment markers. Ids 0-3 are reserved so a marker is never ambiguous with a
 # text byte; text is shifted up by OFFSET.
@@ -112,6 +115,12 @@ PAD_ID = -1
 SEG_CONTEXT, SEG_QUESTION, SEG_OPTION = 0, 1, 2
 OFFSET = 3
 VOCAB = 256 + OFFSET
+
+#: A question is read as declined when its best option's probability falls
+#: below this. Note what a flat distribution does: over K>=3 options the top
+#: probability is 1/K < 0.5 already, so the rate a model has to beat is not
+#: zero and `Validator` reports both.
+REJECT_AT = 0.5
 
 
 # --------------------------------------------------------------------------- #
@@ -147,10 +156,23 @@ class Cfg:
     attn_qk_norm: bool = True
 
     # --- optimization ---
-    batch: int = 24                 # contexts per step
+    batch: int = -1                 # -1 = empirical autotune; contexts/step
     # None = ChaosGrad's online estimate (default, zero-config); float = fixed-rate mode.
     lr: float | None = None
     grad_ckpt: bool = False
+    # The decision loss is one scalar per question accumulated over three
+    # recurrent segments, so its natural gradient norm sits near 80 — two
+    # orders above a per-token loss, and clipping at 1.0 throws that away.
+    clip: float = 80.0              # gradient clipping threshold
+    # ChaosGrad's estimate reads `(grad * (p0 - p)).sum()` — how well the
+    # gradient aligns with where the weights have actually travelled. Opposing
+    # gradients across steps keep that sum near zero or negative, so the
+    # estimate never ratchets and the run sits at chance however long it goes.
+    d0: float = 1e-6                # initial step-scale estimate
+    compile: bool = False           # torch.compile the forward. The step is
+                                    # launch-bound at every size measured, so
+                                    # fusing it is the largest speedup on
+                                    # offer; warmup costs a minute or two.
 
     # --- run control ---
     minutes: float = 0.0            # 0 = until Ctrl-C
@@ -178,97 +200,240 @@ class Cfg:
 @dataclass
 class Read:
     """One (context, question, options, correct) tuple."""
-    __slots__ = ("context", "question", "options", "correct")
+    __slots__ = ("context", "question", "options", "correct", "band")
     context: str
     question: str
     options: list
     correct: int                    # index into options, or -1 for "none"
+    band: int                       # the corpus's own difficulty label, or 0
 
 
-def load_reads(path, default_leaf="train.jsonl"):
+class Corpus:
     """
-    Parse the decision format, refusing anything ambiguous.
+    A parsed corpus whose text lives on disk, not in the heap.
 
-    Errors name the file and line: a malformed corpus should cost a message,
-    not a training run that silently learns from three usable rows.
+    JSONL is parsed once into four files:
+      <stamp>.blob   every distinct string, concatenated UTF-8
+      <stamp>.str    (n_strings + 1,) int64 offsets into the blob
+      <stamp>.opt    (total_options,) int64 string ids of options (flat, 0 pad)
+      <stamp>.read   (n_reads, 6) int64: ctx, qry, correct, band, opt_lo, opt_hi
 
-    Strings are interned as they are read, because a corpus is mostly repeated
-    text — one context is carried by every question under it, and an option
-    set is drawn from a pool far smaller than the file. Interning plus slots
-    is what decides whether a multi-million-question corpus fits in memory.
+    The table is what a run walks; the blob and option table are memory-mapped,
+    so the text is paged in by the OS on demand and a corpus larger than RAM
+    costs nothing extra.
+
+    Strings are deduplicated as they are written, because a decision corpus is
+    mostly repeated text — one context is carried by every question under it,
+    and option sets are drawn from a small pool. That dedup is also why a
+    string id is worth storing: the pool fits in the table even when the text
+    does not fit in memory.
+
+    There is no ceiling on option count K: options form a contiguous slice
+    in `.opt`, so K=2 and K=150 use exactly their actual length at zero pad.
     """
-    if os.path.isdir(path):
-        candidates = [default_leaf, "train.jsonl", "val.jsonl"] if default_leaf else ["train.jsonl", "val.jsonl"]
-        for leaf in candidates:
-            if leaf and os.path.exists(os.path.join(path, leaf)):
-                path = os.path.join(path, leaf)
-                break
 
-    if not os.path.exists(path):
-        raise SystemExit(
-            f"\n✋ No data at {path}.\n"
-            f"   --data / --val take JSONL (or a directory containing train.jsonl / val.jsonl):\n"
-            f'     {{"context": "...", "questions": [\n'
-            f'        {{"q": "...", "options": ["a", "b"], "correct": 0}}]}}\n'
-            f"   correct: -1 means no option is right.\n")
+    WIDTH = 6                       # ctx, qry, correct, band, opt_lo, opt_hi
 
-    reads = []
-    pool = {}
-    def keep(text):
-        return pool.setdefault(text, text)
+    def __init__(self, stamp):
+        self.stamp = stamp
+        base = os.path.join(CACHE_DIR, stamp)
+        self._str = np.memmap(base + ".str", dtype=np.int64, mode="r")
+        self._blob = np.memmap(base + ".blob", dtype=np.uint8, mode="r")
+        self._opt = np.memmap(base + ".opt", dtype=np.int64, mode="r")
+        reads = np.memmap(base + ".read", dtype=np.int64, mode="r")
+        self.reads = reads.reshape(-1, self.WIDTH)
 
-    with open(path, encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"\n✋ {path}:{n}: {e}\n") from e
-            ctx, questions = row.get("context"), row.get("questions")
-            if not isinstance(ctx, str) or not isinstance(questions, list):
-                raise SystemExit(
-                    f"\n✋ {path}:{n}: needs 'context' (string) and "
-                    f"'questions' (list).\n")
-            ctx = keep(ctx)
-            for q in questions:
-                options = q.get("options")
-                if not isinstance(options, list) or len(options) < 2:
-                    raise SystemExit(
-                        f"\n✋ {path}:{n}: a question needs at least two "
-                        f"options.\n")
-                correct = int(q.get("correct", -1))
-                if correct >= len(options):
-                    raise SystemExit(
-                        f"\n✋ {path}:{n}: correct={correct} is out of range "
-                        f"for {len(options)} options.\n")
-                reads.append(Read(ctx, keep(str(q.get("q", ""))),
-                                  [keep(str(o)) for o in options], correct))
-    if not reads:
-        raise SystemExit(f"\n✋ {path}: no usable rows.\n")
-    return reads
+    def text(self, sid):
+        """The string with this id.
+
+        Deliberately uncached: a cache keyed by string id grows to the whole
+        corpus over a long run, which is the heap cost this class exists to
+        avoid. Only the batch being packed is ever decoded, and a short slice
+        of a mapped array is cheap.
+        """
+        lo, hi = int(self._str[sid]), int(self._str[sid + 1])
+        return bytes(self._blob[lo:hi]).decode("utf-8")
+
+    def byte_len(self, sid):
+        """UTF-8 length without decoding — `widths` needs only this."""
+        return int(self._str[sid + 1]) - int(self._str[sid])
+
+    def read(self, i):
+        """Row `i` as a `Read`, with its text resolved."""
+        row = self.reads[i]
+        opts = [self.text(int(o)) for o in self._opt[row[4]:row[5]]]
+        return Read(self.text(int(row[0])), self.text(int(row[1])),
+                    opts, int(row[2]), int(row[3]))
+
+    def widths(self, group, chunk):
+        """
+        The step geometry of a group, from the offset table alone.
+
+        This runs over every group on every epoch, so it must not decode
+        anything: lengths are offset differences, and the bucket key is a
+        count of chunks rather than of bytes.
+        """
+        ctx_id, idx = group
+        up = lambda n: -(-(n + 1) // chunk)  # noqa: E731  (+1 for the marker)
+        q_max = o_max = 0
+        for i in idx:
+            row = self.reads[i]
+            q_max = max(q_max, up(self.byte_len(int(row[1]))))
+            for o in self._opt[row[4]:row[5]]:
+                o_max = max(o_max, up(self.byte_len(int(o))))
+        return (up(self.byte_len(ctx_id)), q_max, o_max)
+
+    def group_by_context(self):
+        """
+        [(ctx_id, [read_idx, ...]), ...] — the unit the context cache amortises.
+
+        Grouping is what makes the stored state worth anything: every question
+        under one context shares a single context read. Contexts are already
+        adjacent in the table because the cache writes a JSONL line's
+        questions together, so this is one pass with no index dict.
+        """
+        out = []
+        ctx_col = np.asarray(self.reads[:, 0])
+        if not ctx_col.size:
+            return out
+        cuts = np.flatnonzero(np.diff(ctx_col)) + 1
+        for lo, hi in zip(np.r_[0, cuts], np.r_[cuts, ctx_col.size]):
+            out.append((int(ctx_col[lo]), list(range(int(lo), int(hi)))))
+        return out
+
+    def __len__(self):
+        return self.reads.shape[0]
 
 
-def group_by_context(reads):
+def _cache_stamp(paths):
+    """A name derived from what the cache was built from.
+
+    Path, size and mtime of every input: regenerating a corpus changes the
+    mtime, so a stale cache is never read as current. The alternative —
+    hashing the contents — would read gigabytes to decide whether to read
+    gigabytes.
     """
-    [(context, [Read, ...]), ...] — the unit the context cache amortises.
+    parts = []
+    for p in paths:
+        st = os.stat(p)
+        parts.append(f"{os.path.abspath(p)}|{st.st_size}|{int(st.st_mtime)}")
+    digest = hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    return digest
 
-    Grouping is what makes the stored state worth anything: every question
-    under one context shares a single context read.
+
+def build_cache(paths, stamp, verbose=False):
     """
-    out, index = [], {}
-    for r in reads:
-        if r.context not in index:
-            index[r.context] = len(out)
-            out.append((r.context, []))
-        out[index[r.context]][1].append(r)
-    return out
+    Parse JSONL into four cache files. Nothing accumulates in RAM.
+
+    The string pool is a dict of text -> id held while writing, which is the
+    one unavoidable cost: dedup needs to remember what it has seen. It holds
+    distinct strings only, so it is bounded by the corpus's vocabulary of
+    contexts and options rather than by its question count.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    base = os.path.join(CACHE_DIR, stamp)
+
+    pool, offsets, blob_at = {}, [0], 0
+    n_reads = 0
+    opt_at = 0
+    t0 = time.time()
+
+    with open(base + ".blob.part", "wb") as blob, \
+         open(base + ".read.part", "wb") as table, \
+         open(base + ".opt.part", "wb") as opt_file:
+
+        def intern(text):
+            nonlocal blob_at
+            got = pool.get(text)
+            if got is not None:
+                return got
+            raw = text.encode("utf-8")
+            blob.write(raw)
+            blob_at += len(raw)
+            offsets.append(blob_at)
+            got = len(pool)
+            pool[text] = got
+            return got
+
+        for path in paths:
+            with open(path, encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as e:
+                        raise SystemExit(f"\n✋ {path}:{n}: {e}\n") from e
+                    ctx, questions = row.get("context"), row.get("questions")
+                    if not isinstance(ctx, str) or not isinstance(questions, list):
+                        raise SystemExit(
+                            f"\n✋ {path}:{n}: needs 'context' (string) and "
+                            f"'questions' (list).\n")
+                    ctx_id = intern(ctx)
+                    for q in questions:
+                        options = q.get("options")
+                        if not isinstance(options, list) or len(options) < 2:
+                            raise SystemExit(
+                                f"\n✋ {path}:{n}: a question needs at least "
+                                f"two options.\n")
+                        correct = int(q.get("correct", -1))
+                        if correct >= len(options):
+                            raise SystemExit(
+                                f"\n✋ {path}:{n}: correct={correct} is out of "
+                                f"range for {len(options)} options.\n")
+                        opt_ids = np.array([intern(str(o)) for o in options], dtype=np.int64)
+                        opt_ids.tofile(opt_file)
+                        opt_start = opt_at
+                        opt_at += len(options)
+                        opt_end = opt_at
+                        rec = np.array([ctx_id, intern(str(q.get("q", ""))),
+                                        correct, int(q.get("band", 0)),
+                                        opt_start, opt_end], dtype=np.int64)
+                        rec.tofile(table)
+                        n_reads += 1
+                    if verbose and n % 50000 == 0:
+                        print(f"   {os.path.basename(path)}: {n:,} lines, "
+                              f"{n_reads:,} questions  {time.time()-t0:4.0f}s")
+
+    if not n_reads:
+        raise SystemExit(f"\n✋ {', '.join(paths)}: no usable rows.\n")
+
+    np.asarray(offsets, dtype=np.int64).tofile(base + ".str.part")
+    for ext in (".blob", ".read", ".str", ".opt"):
+        os.replace(base + ext + ".part", base + ext)
+    if verbose:
+        print(f"   cached {n_reads:,} questions | {opt_at:,} options | "
+              f"{len(pool):,} distinct strings | {blob_at/1e6:.1f} MB blob")
+    return n_reads
+
+
+def open_corpus(paths, verbose=False):
+    """The cache for these paths, built if it is missing or stale."""
+    for p in paths:
+        if not os.path.exists(p):
+            raise SystemExit(
+                f"\n✋ No data at {p}.\n"
+                f"   --data / --val take JSONL (or a directory containing "
+                f"train.jsonl / val.jsonl):\n"
+                f'     {{"context": "...", "questions": [\n'
+                f'        {{"q": "...", "options": ["a", "b"], "correct": 0}}]}}\n'
+                f"   correct: -1 means no option is right.\n")
+    stamp = _cache_stamp(paths)
+    base = os.path.join(CACHE_DIR, stamp)
+    if not all(os.path.exists(base + e) for e in (".blob", ".str", ".read", ".opt")):
+        build_cache(paths, stamp, verbose=verbose)
+    return Corpus(stamp)
 
 
 def load_corpus(cfg, verbose=True):
     """
-    (train_groups, val_groups), reported as the shape they really are.
+    (train, val) as `Corpus` objects with their context groups.
+
+    Returns `((train_corpus, train_groups), (val_corpus, val_groups))`. Each
+    corpus is parsed once into a memmap cache keyed by its inputs, so a
+    re-run of the same data costs a stat call rather than a full parse, and
+    the text never enters the heap.
 
     `--data` and `--val` take several comma-separated paths, so a final corpus
     is assembled at the command line rather than by concatenating files on
@@ -293,25 +458,20 @@ def load_corpus(cfg, verbose=True):
                  and os.path.isdir(cfg.data.split(",")[0].strip())
                  else resolve(cfg.val, "val.jsonl"))
 
-    def read_all(paths, leaf):
-        reads = []
-        for path in paths:
-            reads += load_reads(path, leaf)
-        return group_by_context(reads)
-
-    train = read_all(train_paths, "train.jsonl")
-    val = read_all(val_paths, "val.jsonl")
-    if verbose:
-        for label, paths, groups in (("train", train_paths, train),
-                                     ("val", val_paths, val)):
-            reads = [r for _, rs in groups for r in rs]
-            k = [len(r.options) for r in reads]
-            none = sum(1 for r in reads if r.correct < 0)
-            print(f"📚 {label}: {len(groups):,} contexts | {len(reads):,} "
-                  f"questions | K {min(k)}-{max(k)} (mean {sum(k)/len(k):.1f}) "
+    out = []
+    for label, paths in (("train", train_paths), ("val", val_paths)):
+        corpus = open_corpus(paths, verbose=verbose)
+        groups = corpus.group_by_context()
+        out.append((corpus, groups))
+        if verbose:
+            k = corpus.reads[:, 5] - corpus.reads[:, 4]
+            none = int((corpus.reads[:, 2] < 0).sum())
+            print(f"📚 {label}: {len(groups):,} contexts | {len(corpus):,} "
+                  f"questions | K {int(k.min())}-{int(k.max())} "
+                  f"(mean {float(k.mean()):.1f}) "
                   f"| {none:,} answered by none of the options"
                   + (f" | {len(paths)} files" if len(paths) > 1 else ""))
-    return train, val
+    return out[0], out[1]
 
 
 def encode(text, marker):
@@ -325,55 +485,94 @@ def pad_to(rows, width):
     return out
 
 
-def pack(groups, cfg):
+@dataclass
+class Batch:
     """
-    (context, questions, options, mask, correct) as device tensors.
+    One step's work as flat rows, the way the card wants it.
 
-    `questions` is (B, Q, L_q) and `options` is (B, Q, K, L_o), padded to the
-    batch maximum with `mask` carrying the real counts — so a batch mixing a
-    2-option and a 150-option question is one tensor and nothing in the model
-    or the loss ever learns a fixed geometry.
+    A decision batch is ragged in two directions at once — contexts carry
+    different question counts and questions carry different option counts —
+    and a `(B, Q, K, L)` tensor pays the batch maximum on both. The rows are
+    therefore flat and the structure lives in index tensors:
 
-    Each of the three axes is padded to the longest entry *in this batch*, not
-    to a configured width: segments are chained through `current_state`, so a
-    three-byte option has no reason to run a long segment's worth of steps.
+        ctx        (B, Lc)                 one row per context
+        qry        (Nq, Lq)                every question, flattened
+        opt        (No, Lo)                every option, flattened
+        q_owner    (Nq,)   -> context row
+        o_owner    (No,)   -> question row
+        correct    (Nq,)   index into that question's options, or -1
+        q_span     (Nq+1,) option slice per question, for the ranking term
+
+    `score_all` branches by gathering on `q_owner` / `o_owner`, so no padding
+    row is ever forwarded and the step count still depends only on segment
+    width.
     """
-    b = len(groups)
-    q_max = max(len(rs) for _, rs in groups)
-    k_max = max(len(r.options) for _, rs in groups for r in rs)
+    ctx: torch.Tensor
+    qry: torch.Tensor
+    opt: torch.Tensor
+    q_owner: torch.Tensor
+    o_owner: torch.Tensor
+    correct: torch.Tensor
+    q_span: torch.Tensor
 
-    ctx_rows = [encode(c, SEG_CONTEXT) for c, _ in groups]
-    q_rows = {}
-    o_rows = {}
-    correct = np.full((b, q_max), -1, dtype=np.int64)
-    mask = np.zeros((b, q_max, k_max), dtype=bool)
+    @property
+    def n_questions(self):
+        return self.qry.shape[0]
 
-    for i, (_, rs) in enumerate(groups):
-        for j, r in enumerate(rs):
-            q_rows[(i, j)] = encode(r.question, SEG_QUESTION)
-            for k, opt in enumerate(r.options):
-                o_rows[(i, j, k)] = encode(opt, SEG_OPTION)
-            mask[i, j, : len(r.options)] = True
-            correct[i, j] = r.correct
+    @property
+    def n_options(self):
+        return self.opt.shape[0]
+
+
+def pack(groups, cfg, corpus=None):
+    """
+    A `Batch` of flat rows on the device.
+
+    Each of the three segment kinds is padded to the longest entry *of its own
+    kind in this batch*, rounded up to a chunk: segments are chained through
+    `current_state`, so a three-byte option has no reason to run a long one's
+    steps. Nothing is padded along the question or option axis, because there
+    is no such axis.
+
+    With a `corpus`, `groups` are `(ctx_id, [read_index, ...])` and the text is
+    decoded here — one batch's worth — and never held between steps. Without
+    one, they are `(context, [Read, ...])`, which is what a caller that built
+    its reads in memory has: `--mode ask` and the smoke checks.
+    """
+    if corpus is None:
+        rows = [(ctx, list(reads)) for ctx, reads in groups]
+    else:
+        rows = [(corpus.text(c), [corpus.read(j) for j in idx])
+                for c, idx in groups]
+
+    ctx_rows = [encode(c, SEG_CONTEXT) for c, _ in rows]
+    qry_rows, opt_rows = [], []
+    q_owner, o_owner, correct, q_span = [], [], [], [0]
+
+    for i, (_, reads) in enumerate(rows):
+        for r in reads:
+            qry_rows.append(encode(r.question, SEG_QUESTION))
+            q_owner.append(i)
+            q_index = len(qry_rows) - 1
+            for opt in r.options:
+                opt_rows.append(encode(opt, SEG_OPTION))
+                o_owner.append(q_index)
+            correct.append(r.correct)
+            q_span.append(len(opt_rows))
 
     up = lambda n: max(cfg.chunk, -(-n // cfg.chunk) * cfg.chunk)  # noqa: E731
-    l_q = up(max(len(v) for v in q_rows.values()))
-    l_o = up(max(len(v) for v in o_rows.values()))
-    l_c = up(max(len(r) for r in ctx_rows))
+    to = lambda a, d=np.int64: torch.from_numpy(  # noqa: E731
+        np.asarray(a, dtype=d)).to(cfg.device, non_blocking=True)
 
-    ctx = pad_to(ctx_rows, l_c)
-    questions = np.full((b, q_max, l_q), PAD_ID, dtype=np.int64)
-    options = np.full((b, q_max, k_max, l_o), PAD_ID, dtype=np.int64)
-    for (i, j), row in q_rows.items():
-        questions[i, j, : len(row)] = row
-    for (i, j, k), row in o_rows.items():
-        options[i, j, k, : len(row)] = row
-
-    to = lambda a: torch.from_numpy(a).to(cfg.device)  # noqa: E731
-    return (to(ctx), to(questions), to(options), to(mask), to(correct))
+    return Batch(
+        ctx=to(pad_to(ctx_rows, up(max(len(r) for r in ctx_rows)))),
+        qry=to(pad_to(qry_rows, up(max(len(r) for r in qry_rows)))),
+        opt=to(pad_to(opt_rows, up(max(len(r) for r in opt_rows)))),
+        q_owner=to(q_owner), o_owner=to(o_owner),
+        correct=to(correct), q_span=to(q_span))
 
 
-def widths(group, chunk):
+def widths(group, chunk, corpus=None):
     """
     The step geometry a group would be read at, as a bucket key.
 
@@ -386,6 +585,8 @@ def widths(group, chunk):
     keying on them only narrows the buckets without making a row's scores any
     more independent of what shares its batch.
     """
+    if corpus is not None:
+        return corpus.widths(group, chunk)
     ctx, reads = group
     up = lambda n: -(-(n + 1) // chunk)  # noqa: E731  (+1 for the marker)
     return (up(len(ctx.encode("utf-8"))),
@@ -393,7 +594,7 @@ def widths(group, chunk):
             max(up(len(o.encode("utf-8"))) for r in reads for o in r.options))
 
 
-def bucket_by_width(groups, size, chunk):
+def bucket_by_width(groups, size, chunk, corpus=None):
     """
     Groups split into batches whose rows share a step geometry.
 
@@ -403,7 +604,7 @@ def bucket_by_width(groups, size, chunk):
     """
     buckets = {}
     for g in groups:
-        buckets.setdefault(widths(g, chunk), []).append(g)
+        buckets.setdefault(widths(g, chunk, corpus), []).append(g)
     return cut(buckets, size)
 
 
@@ -431,12 +632,13 @@ class Batches:
     stochasticity a step would otherwise have.
     """
 
-    def __init__(self, groups, cfg):
+    def __init__(self, groups, cfg, corpus=None):
         self.cfg = cfg
+        self.corpus = corpus
         self.rng = random.Random(cfg.seed)
         self.pools = {}
         for g in groups:
-            self.pools.setdefault(widths(g, cfg.chunk), []).append(g)
+            self.pools.setdefault(widths(g, cfg.chunk, corpus), []).append(g)
         self.epochs = 0
         self.queue = []
         self._refill()
@@ -447,11 +649,50 @@ class Batches:
         self.queue = cut(self.pools, self.cfg.batch)
         self.rng.shuffle(self.queue)
 
+    def state(self):
+        """
+        Where the corpus walk is, for the checkpoint.
+
+        The queue is regenerated from `rng` plus `epochs`, so replaying the
+        RNG to the same draw count restores the same remaining batches. That
+        is cheaper and smaller than storing the queue, and it stays correct
+        across a corpus that has not changed.
+        """
+        return {"epochs": self.epochs, "left": len(self.queue),
+                "batch": self.cfg.batch}
+
+    def restore(self, snap):
+        """Replay the walk to where the checkpoint left it."""
+        if not snap:
+            return
+        saved_batch = snap.get("batch")
+        if saved_batch is not None and saved_batch != self.cfg.batch:
+            # Silently ignoring this would resume the *weights* while quietly
+            # rewinding the *data* to the first context — the model would
+            # re-read what it has already seen and nothing would say so.
+            print(f"⚠️  Corpus position not restored: checkpoint ran "
+                  f"batch={saved_batch}, this run has {self.cfg.batch}. "
+                  f"Re-run with the checkpoint's batch size to continue where "
+                  f"it left off; training will otherwise restart the corpus "
+                  f"from the beginning.")
+            return
+        target_epochs = int(snap.get("epochs", 0))
+        left = int(snap.get("left", 0))
+        while self.epochs < target_epochs:
+            self.epochs += 1
+            self._refill()
+        if 0 <= left <= len(self.queue):
+            del self.queue[left:]
+
     def next(self):
         if not self.queue:
             self.epochs += 1
             self._refill()
-        return pack(self.queue.pop(), self.cfg)
+        return pack(self.queue.pop(), self.cfg, self.corpus)
+
+    def peek(self):
+        """The next batch's shape without consuming it, for the cost report."""
+        return pack(self.queue[-1], self.cfg, self.corpus)
 
 
 # --------------------------------------------------------------------------- #
@@ -488,12 +729,64 @@ def build(cfg):
         dropout_rate=cfg.dropout,
         gradient_checkpointing=cfg.grad_ckpt,
     )
-    trainer = OdyssNetTrainer(model, lr=cfg.lr, device=cfg.device)
+    if cfg.compile:
+        # Compile the bound method rather than the module: everything else in
+        # this script reaches through `model` for state, caches and
+        # checkpoints, and an OptimizedModule wrapper would sit between them
+        # and the real object.
+        model.forward = torch.compile(model.forward)
+    trainer = OdyssNetTrainer(
+        model, device=cfg.device, max_grad_norm=cfg.clip,
+        optimizer=ChaosGrad.from_model(model, lr=cfg.lr, d0=cfg.d0))
     # The loss is assembled here, over a variable number of options, so the
     # trainer's criterion has to pass the scalar through rather than square it
     # against a zero target.
     trainer.loss_fn = lambda pred, _target: pred.mean()
     return model, trainer
+
+
+def cost_advisory(cfg, model, batch):
+    """
+    What one step holds, before it holds it.
+
+    87k parameters are a third of a megabyte; what fills a card here is the
+    option read. `score_all` gathers one row per option and keeps every
+    recurrent step for backward, so the tensor that decides whether a run fits
+    is `options x neurons x steps` — and `--batch` counts contexts, which is
+    between one and two orders of magnitude below it.
+    """
+    params = sum(p.numel() for p in model.parameters())
+    rows = batch.n_options
+    steps = batch.opt.shape[1] + cfg.think
+    state_gb = rows * cfg.neurons * steps * 4 / 1e9
+    print(f"📐 {params*4/1e6:.2f} MB of weights | one step reads "
+          f"{batch.ctx.shape[0]} contexts -> {batch.n_questions} questions -> "
+          f"{rows} options")
+    print(f"   option read is {rows} rows x {steps} steps x {cfg.neurons} "
+          f"neurons = {state_gb:.2f} GB of state kept for backward")
+    if state_gb > 1.5:
+        suggest = max(1, int(cfg.batch * 1.5 / state_gb))
+        print(f"⚠️  that term alone is {state_gb:.1f} GB and it is linear in "
+              f"the batch — try --batch {suggest}, a shorter --chunk, or "
+              f"--grad-ckpt.")
+    if model.attn is not None:
+        writes = steps
+        kv_gb = model.attn.training_cache_bytes(rows, writes) / 1e9
+        print(f"👁️  attention {model.attn.heads}x{model.attn.head_dim} "
+              f"({model.attn.kv_heads} kv) | KV kept for backward "
+              f"{kv_gb:.2f} GB ({writes} writes at {rows} rows)")
+        if kv_gb > 1.5:
+            print("⚠️  the KV term grows with the square of the writes per "
+                  "step — shorten --chunk before blaming the core.")
+    if model.hebb_type is not None:
+        paths = 2 if model.hebb_type == "both" else 1
+        trace_gb = paths * steps * rows * cfg.neurons ** 2 * 4 / 1e9
+        print(f"🧬 plasticity {model.hebb_type}/{model.hebb_res} | trace kept "
+              f"for backward ~{trace_gb:.1f} GB ({paths} path(s) x {steps} "
+              f"steps x {rows} rows x {cfg.neurons}²)")
+        if trace_gb > 1.5:
+            print("⚠️  the plastic trace is the largest activation in this "
+                  "model by far — --grad-ckpt exists for exactly it.")
 
 
 def describe(cfg, model):
@@ -550,92 +843,80 @@ def read_segment(model, ids, cfg, state=None, return_sequence=False):
 
 def smooth_trajectory_score(step_scores, active_lengths, power=2.0):
     """
-    Smoothly integrates option trajectory step scores into a final decision scalar.
+    Integrate each option's per-step scores into one decision scalar.
 
-    Weights scale smoothly as tau^power where tau = (t+1)/T, eliminating early
-    prefix ambiguity without sharp boundary discontinuities.
+    `(rows, T)` and `(rows,)` -> `(rows,)`. Weights rise as tau^power over
+    normalized time tau = (t+1)/length, which suppresses the prefix a short
+    option shares with its competitors without a hard cutoff, and steps past a
+    row's own length weigh nothing.
     """
-    b, q_n, k_n, t_max = step_scores.shape
-    device = step_scores.device
-    t_idx = torch.arange(1, t_max + 1, device=device, dtype=step_scores.dtype).view(1, 1, 1, t_max)
+    t_max = step_scores.shape[-1]
+    t_idx = torch.arange(1, t_max + 1, device=step_scores.device,
+                         dtype=step_scores.dtype)
     lens = active_lengths.unsqueeze(-1).clamp(min=1).to(step_scores.dtype)
 
-    tau = (t_idx / lens).clamp(max=1.0)
-    weights = tau.pow(power)
-    mask = t_idx <= lens
-    weights = weights * mask
-
-    weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-    return (step_scores * (weights / weight_sum)).sum(dim=-1)
+    weights = (t_idx / lens).clamp(max=1.0).pow(power) * (t_idx <= lens)
+    weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+    return (step_scores * weights).sum(dim=-1)
 
 
-def _branch(model, h, times):
+def _branch(model, h, index):
     """
-    Replicate a stored state into `times` continuations, interleaved.
+    Gather a stored state into one row per continuation.
 
-    Branching is a batch operation here: every option reads the same question
+    Branching is a batch operation here: every option reads its own question's
     state, so they go down the batch axis in one forward instead of a Python
-    loop of K forwards. The attention cache is indexed by batch row and has to
-    be widened the same way. Hebbian state is `(N, N)` and shared, so it needs
-    nothing.
+    loop. `index` may repeat a row any number of times and the count need not
+    be the same for every row — which is what lets a 2-option question share a
+    batch with a 12-option one at no padding cost. The attention cache is
+    indexed by batch row and is gathered the same way; Hebbian state is
+    `(N, N)` and shared, so it needs nothing.
     """
     if model.attn is not None:
-        model.attn.repeat_rows(times)
-    return h.repeat_interleave(times, dim=0)
+        model.attn.gather_rows(index)
+    return h.index_select(0, index)
 
 
-def score_all(model, cfg, ctx_ids, q_ids, opt_ids, mask, return_trajectories=False):
+def score_all(model, cfg, batch, return_trajectories=False):
     """
-    Every option of every question, from a single context read.
+    One scalar per option, from a single context read.
 
-    (B, L), (B, Q, L), (B, Q, K, L) -> (B, Q, K). Masked options come back at
-    -1e4, so a softmax over the last axis ignores them.
-
-    The cost is 3 segment reads whatever Q and K are: the context once, all Q
-    questions together as one `(B*Q, N)` branch of the context state, and all
-    Q*K options together as one `(B*Q*K, N)` branch of the question states.
-    Options and questions still cannot see each other — each branch starts
-    from the same stored state and writes into its own row — but the GPU gets
-    three wide matmuls instead of 1 + Q + Q*K narrow ones.
+    Returns `(No,)` — one score per option row, in the batch's own flat order.
+    The cost is three segment reads whatever the question and option counts
+    are: the context once, every question as one branch of the context states,
+    every option as one branch of the question states. Options and questions
+    still cannot see each other, because each branch starts from a stored
+    state and writes into its own row.
     """
-    b, q_n, k_n, _ = opt_ids.shape
-    model.reset_state(batch_size=b)
+    model.reset_state(batch_size=batch.ctx.shape[0])
     if model.attn is not None:
         model.attn.reset()
 
-    _, h_ctx = read_segment(model, ctx_ids, cfg)
+    _, h_ctx = read_segment(model, batch.ctx, cfg)
     ctx_mark = _mark(model)
 
-    # Every question branches off the context state at once.
-    h_wide = _branch(model, h_ctx, q_n)
-    _, h_qry = read_segment(model, q_ids.reshape(b * q_n, -1), cfg,
-                            state=h_wide)
+    h_wide = _branch(model, h_ctx, batch.q_owner)
+    _, h_qry = read_segment(model, batch.qry, cfg, state=h_wide)
 
-    # And every option branches off its own question's state at once. The
-    # (B, Q, K) layout survives because both branches are interleaved: row
-    # (i*Q + j) is example i's question j, and (i*Q + j)*K + k is its option k.
-    o_wide = _branch(model, h_qry, k_n)
-    opt_flat = opt_ids.reshape(b * q_n * k_n, -1)
-    step_scores, _ = read_segment(model, opt_flat, cfg,
-                                  state=o_wide, return_sequence=True)
+    o_wide = _branch(model, h_qry, batch.o_owner)
+    step_scores, _ = read_segment(model, batch.opt, cfg, state=o_wide,
+                                  return_sequence=True)
 
     _rewind(model, ctx_mark)
     if model.attn is not None:
-        model.attn.select_first_of(q_n * k_n)
+        # Every branch is gone; one row per context is what the next step
+        # expects, and the rewind above already dropped what the branches wrote.
+        model.attn.gather_rows(
+            torch.arange(batch.ctx.shape[0], device=batch.ctx.device))
 
-    # Trajectory shape: (B, Q, K, TotalSteps)
-    total_steps = step_scores.shape[1]
-    step_scores = step_scores.view(b, q_n, k_n, total_steps)
-    active_lens = (opt_ids != PAD_ID).sum(dim=-1)
-
-    s = smooth_trajectory_score(step_scores, active_lens, power=2.0)
-    scores = s.masked_fill(~mask, -1e4)
+    lens = (batch.opt != PAD_ID).sum(dim=-1)
+    scores = smooth_trajectory_score(step_scores, lens, power=2.0)
     if return_trajectories:
-        return scores, step_scores, active_lens
+        return scores, step_scores, lens
     return scores
 
 
-def decision_loss(scores, correct, mask):
+def decision_loss(scores, batch):
     """
     Two terms on the same scalars.
 
@@ -654,39 +935,51 @@ def decision_loss(scores, correct, mask):
     term is minimised by driving every score down together. The counts are
     offset by one so a batch whose every question is a rejection — no positive
     to balance — stays finite instead of needing a floor.
-    """
-    target = torch.zeros_like(scores)
-    has = correct >= 0
-    if has.any():
-        i, j = has.nonzero(as_tuple=True)
-        target[i, j, correct[has]] = 1.0
 
-    pos = target[mask].sum()
-    neg = mask.sum() - pos
+    The ranking term runs over flat rows: options of one question are a
+    contiguous slice, so a segment-wise log-sum-exp is the cross-entropy
+    without ever materialising a `(Nq, K_max)` matrix.
+    """
+    starts, ends = batch.q_span[:-1], batch.q_span[1:]
+    has = batch.correct >= 0
+
+    target = torch.zeros_like(scores)
+    if has.any():
+        target[starts[has] + batch.correct[has]] = 1.0
+    pos = target.sum()
+    neg = target.numel() - pos
     absolute = F.binary_cross_entropy_with_logits(
-        scores[mask], target[mask], pos_weight=(neg + 1) / (pos + 1))
-    rank = (F.cross_entropy(scores[has], correct[has]) if has.any()
-            else scores.new_zeros(()))
+        scores, target, pos_weight=(neg + 1) / (pos + 1))
+
+    if has.any():
+        # log-sum-exp per question, max-shifted, over a ragged partition.
+        q_of = torch.repeat_interleave(
+            torch.arange(len(starts), device=scores.device), ends - starts)
+        peak = torch.full((len(starts),), -float("inf"), device=scores.device)
+        peak = peak.scatter_reduce(0, q_of, scores, reduce="amax")
+        total = torch.zeros_like(peak).index_add_(
+            0, q_of, (scores - peak[q_of]).exp())
+        chosen = scores[starts[has] + batch.correct[has]]
+        rank = (peak[has] + total[has].log() - chosen).mean()
+    else:
+        rank = scores.new_zeros(())
     return absolute + rank, {"abs": float(absolute), "rank": float(rank)}
 
 
 def train_step(trainer, model, cfg, batch):
     """One optimizer step over a batch of contexts."""
-    ctx, questions, options, mask, correct = batch
     terms = {}
 
     def transform(_out):
         # The trainer owns the step for its optimizer bookkeeping, but this
         # protocol needs many forwards per step, so the real work happens here
         # and the trainer's criterion passes the scalar through.
-        total, parts = decision_loss(
-            score_all(model, cfg, ctx, questions, options, mask),
-            correct, mask)
+        total, parts = decision_loss(score_all(model, cfg, batch), batch)
         terms.update(parts)
         return total.reshape(1, 1, 1)
 
-    trainer.train_batch(ctx, torch.zeros(1, device=cfg.device),
-                        thinking_steps=ctx.shape[1] + cfg.think,
+    trainer.train_batch(batch.ctx, torch.zeros(1, device=cfg.device),
+                        thinking_steps=batch.ctx.shape[1] + cfg.think,
                         output_transform=transform)
     return terms
 
@@ -710,10 +1003,19 @@ class Validator:
     """
     Fixed held-out evaluation over the same contexts for every arm, so numbers
     from different configurations are directly comparable.
+
+    Every metric is reported against what it would be without a model. A
+    decision corpus mixes 2-option and 12-option questions, so chance is not
+    1/K for any single K — it is the mean of 1/K over the questions actually
+    scored, and an accuracy a point above it is noise rather than learning.
+    Rejection is worse: a flat distribution over three or more options already
+    has `max p < 0.5`, so the reject rate scores free and only its gap over
+    chance means anything.
     """
 
-    def __init__(self, groups, cfg):
+    def __init__(self, groups, cfg, corpus=None):
         self.cfg = cfg
+        self.corpus = corpus
         if cfg.eval_contexts and cfg.eval_contexts < len(groups):
             # A deterministic sample, not the first N: a corpus is written
             # grouped by whatever produced it, so the head of the file is one
@@ -724,11 +1026,24 @@ class Validator:
         # Batches of one width, as in training: a mixed-width batch pays its
         # longest row's steps for every row, and that is also what would make
         # the score move with --batch.
-        self.batches = bucket_by_width(groups, cfg.batch, cfg.chunk)
-        reads = [r for b in self.batches for _, rs in b for r in rs]
+        self.batches = bucket_by_width(groups, cfg.batch, cfg.chunk, corpus)
+        if corpus is None:
+            reads = [r for b in self.batches for _, rs in b for r in rs]
+        else:
+            reads = [corpus.read(j) for b in self.batches
+                     for _, idx in b for j in idx]
         self.contexts = len(groups)
-        self.answerable = sum(1 for r in reads if r.correct >= 0)
-        self.rejectable = len(reads) - self.answerable
+        answerable = [r for r in reads if r.correct >= 0]
+        rejectable = [r for r in reads if r.correct < 0]
+        self.answerable = len(answerable)
+        self.rejectable = len(rejectable)
+        # What a model that cannot read at all scores on exactly these
+        # questions: the baseline every number below is quoted against.
+        self.chance = (sum(1 / len(r.options) for r in answerable)
+                       / max(len(answerable), 1))
+        self.chance_reject = (sum(1.0 for r in rejectable
+                                  if 1 / len(r.options) < REJECT_AT)
+                              / max(len(rejectable), 1))
 
     @torch.no_grad()
     def run(self, model):
@@ -750,60 +1065,97 @@ class Validator:
         hit = n = rej_hit = rej_n = 0
         conf, ok = [], []
         abs_sum = rank_sum = loss_n = 0
+        spread = []
+        bands = {}
 
-        for chunk in self.batches:
-            ctx, questions, options, mask, correct = pack(chunk, cfg)
-            scores = score_all(model, cfg, ctx, questions, options, mask)
+        for rows in self.batches:
+            batch = pack(rows, cfg, self.corpus)
+            scores = score_all(model, cfg, batch)
 
             # Val loss: same criterion as training, no gradient.
-            _, parts = decision_loss(scores, correct, mask)
+            _, parts = decision_loss(scores, batch)
             abs_sum += parts["abs"]
             rank_sum += parts["rank"]
             loss_n += 1
+            spread.append(float(scores.std()))
 
-            prob = torch.softmax(scores, dim=2)
-            pred = prob.argmax(dim=2)
-            top = prob.max(dim=2).values
-
-            for i, (_, rs) in enumerate(chunk):
-                for j in range(len(rs)):
-                    c = int(correct[i, j])
-                    if c >= 0:
-                        n += 1
-                        good = int(pred[i, j]) == c
-                        hit += int(good)
-                        conf.append(float(top[i, j]))
-                        ok.append(float(good))
-                    else:
-                        # Nothing is right, so a low top score is the answer.
-                        rej_n += 1
-                        rej_hit += int(float(top[i, j]) < 0.5)
+            span = batch.q_span.tolist()
+            correct = batch.correct.tolist()
+            if self.corpus is None:
+                reads = [r for _, rs in rows for r in rs]
+            else:
+                reads = [self.corpus.read(j) for _, idx in rows for j in idx]
+            for j, r in enumerate(reads):
+                opt = scores[span[j]: span[j + 1]]
+                prob = torch.softmax(opt, dim=0)
+                top = float(prob.max())
+                c = correct[j]
+                if c >= 0:
+                    n += 1
+                    good = int(prob.argmax()) == c
+                    hit += int(good)
+                    conf.append(top)
+                    ok.append(float(good))
+                    tally = bands.setdefault(r.band, [0, 0])
+                    tally[0] += int(good)
+                    tally[1] += 1
+                else:
+                    # Nothing is right, so a low top score is the answer.
+                    rej_n += 1
+                    rej_hit += int(top < REJECT_AT)
 
         m = {"acc": hit / n if n else float("nan"),
+             "chance": self.chance,
              "abs": abs_sum / max(loss_n, 1),
              "rank": rank_sum / max(loss_n, 1),
+             # A near-zero spread is score collapse, which accuracy cannot
+             # see: argmax resolves ties at the last representable digit and
+             # produces a rising curve out of rounding residue.
+             "spread": sum(spread) / max(len(spread), 1),
              "questions": n + rej_n}
         if rej_n:
             m["reject"] = rej_hit / rej_n
+            m["chance_reject"] = self.chance_reject
         if conf:
             c, o = np.asarray(conf), np.asarray(ok)
             m["ece"] = _ece(c, o)
             m["brier"] = float(np.mean((c - o) ** 2))
             m["conf"] = float(c.mean())
+        if len(bands) > 1:
+            m["bands"] = {b: (h / t, t) for b, (h, t) in sorted(bands.items())}
         return m
 
 
 def fmt(m):
+    """
+    One line, every rate next to what it would be without a model.
+
+    `acc 24.83% (chance 23.39%)` is the whole difference between a result and
+    a number that looks like one.
+    """
     bits = [f"acc {m['acc']*100:6.2f}%"]
-    if "abs" in m:
-        bits.append(f"abs {m['abs']:.4f}")
-    if "rank" in m:
-        bits.append(f"rank {m['rank']:.4f}")
+    if "chance" in m:
+        bits[0] += f" (chance {m['chance']*100:5.2f}%)"
+    for key, label in (("abs", "abs"), ("rank", "rank")):
+        if key in m:
+            bits.append(f"{label} {m[key]:.4f}")
     if "reject" in m:
-        bits.append(f"reject {m['reject']*100:5.1f}%")
+        bits.append(f"reject {m['reject']*100:5.1f}%"
+                    + (f" (chance {m['chance_reject']*100:.0f}%)"
+                       if "chance_reject" in m else ""))
+    if "spread" in m:
+        bits.append(f"spread {m['spread']:.1e}")
     if "ece" in m:
         bits.append(f"ece {m['ece']:.3f}")
     return " | ".join(bits)
+
+
+def fmt_bands(m):
+    """Per-band accuracy, which is what a mixed corpus hides in one average."""
+    if "bands" not in m:
+        return ""
+    return "   bands " + "  ".join(
+        f"{b}:{acc*100:.1f}%/{t}" for b, (acc, t) in m["bands"].items())
 
 
 # --------------------------------------------------------------------------- #
@@ -821,21 +1173,21 @@ def ask(model, cfg, context, questions, return_trajectories=False):
     """
     was_training = model.training
     model.eval()
-    groups = [(context, [Read(context, q, list(o), -1) for q, o in questions])]
-    ctx, q_ids, opt_ids, mask, _ = pack(groups, cfg)
-    with torch.no_grad():
-        if return_trajectories:
-            scores_batch, step_scores, active_lens = score_all(
-                model, cfg, ctx, q_ids, opt_ids, mask, return_trajectories=True)
-            scores = scores_batch[0]
-        else:
-            scores = score_all(model, cfg, ctx, q_ids, opt_ids, mask)[0]
+    groups = [(context, [Read(context, q, list(o), -1, 0) for q, o in questions])]
+    batch = pack(groups, cfg)
+    if return_trajectories:
+        scores, step_scores, lens = score_all(model, cfg, batch,
+                                              return_trajectories=True)
+    else:
+        scores = score_all(model, cfg, batch)
+        step_scores = lens = None
     if was_training:
         model.train()
 
+    span = batch.q_span.tolist()
     answers = []
     for j, (q, options) in enumerate(questions):
-        s = scores[j, : len(options)]
+        s = scores[span[j]: span[j + 1]]
         p = torch.softmax(s, dim=0)
         order = torch.argsort(p, descending=True)
         ans = {
@@ -849,8 +1201,9 @@ def ask(model, cfg, context, questions, return_trajectories=False):
         }
         if return_trajectories:
             ans["trajectories"] = {
-                options[int(i)]: step_scores[0, j, int(i), :int(active_lens[0, j, int(i)])].cpu().tolist()
-                for i in range(len(options))
+                options[k]: step_scores[span[j] + k,
+                                        : int(lens[span[j] + k])].cpu().tolist()
+                for k in range(len(options))
             }
         answers.append(ans)
     return answers
@@ -997,14 +1350,17 @@ def adopt_saved_arch(cfg, path, fields):
     return replace(cfg, **changed)
 
 
-def _save(path, model, trainer, cfg, step, metrics, best):
+def _save(path, model, trainer, cfg, step, metrics, best, stream=None):
     payload = asdict(cfg)
     for f in ("activation", "weight_init", "gates"):
         payload[f] = list(payload[f])
+    extra = {"cfg": payload, "step": step,
+             "best_acc": best, "metrics": metrics}
+    if stream is not None:
+        extra["stream"] = stream
     save_checkpoint(model, trainer.optimizer, step,
                     metrics.get("acc", float("nan")), path,
-                    extra_data={"cfg": payload, "step": step,
-                                "best_acc": best, "metrics": metrics},
+                    extra_data=extra,
                     trainer_state=trainer.state_dict())
 
 
@@ -1020,12 +1376,21 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
     Used by `--mode train` (open-ended) and by every sweep arm (budgeted), so
     both paths exercise exactly the same code.
     """
-    train_groups, val_groups = corpus
+    if isinstance(corpus[0], tuple) and len(corpus[0]) == 2 and hasattr(corpus[0][0], "reads"):
+        (train_corpus, train_groups), (val_corpus, val_groups) = corpus
+    else:
+        train_corpus, val_corpus = None, None
+        train_groups, val_groups = corpus
+
     set_seed(cfg.seed)
 
+    if cfg.batch <= 0:
+        cfg = replace(cfg, batch=autotune_batch(cfg, train_groups, train_corpus))
+        set_seed(cfg.seed)
+
     model, trainer = build(cfg)
-    validator = Validator(val_groups, cfg)
-    batches = Batches(train_groups, cfg)
+    validator = Validator(val_groups, cfg, val_corpus)
+    batches = Batches(train_groups, cfg, train_corpus)
     latest_path, best_path = ckpt_paths(cfg)
 
     step, best = 0, -float("inf")
@@ -1065,19 +1430,28 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
                 f"--overwrite (destroys it)\n") from e
         step = int(info.get("step", 0))
         best = float(info.get("best_acc", -float("inf")))
+        if "stream" in info:
+            batches.restore(info["stream"])
         print(f"📂 resumed {os.path.basename(resume_path)} at step {step:,} "
               f"(best acc {best:.2%})")
 
     if not quiet:
         describe(cfg, model)
+        cost_advisory(cfg, model, batches.peek())
         print(f"   scoring {validator.contexts:,} contexts | "
               f"{validator.answerable:,} answerable + "
-              f"{validator.rejectable:,} rejectable questions\n")
+              f"{validator.rejectable:,} rejectable questions | "
+              f"chance {validator.chance:.2%}\n")
 
     metrics = {"acc": float("nan")}
     window = {"abs": 0.0, "rank": 0.0, "n": 0}
     started = time.time()
     interrupted = False
+    # Whether the step-scale estimate has left `--d0`; see the note below.
+    # True on a resumed run whose estimate already moved, so the notice fires
+    # once in a run's life rather than after every restart.
+    warmed = (cfg.lr is not None
+              or trainer.optimizer.param_groups[0]["d"] > 20 * cfg.d0)
     start_step = step
 
     try:
@@ -1092,6 +1466,22 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
             window["abs"] += terms["abs"]
             window["rank"] += terms["rank"]
             window["n"] += 1
+
+            # Say when the online step-scale estimate has found its scale.
+            # With `--lr` unset, ChaosGrad reads `grad · (p0 - p)` and needs a
+            # few hundred steps before `d` leaves `--d0`; until it does, the
+            # loss is genuinely flat and the run looks broken when it is only
+            # warming up. Measured on the bundled corpus at batch 64: `d`
+            # settles near step 750 and accuracy reaches 40% against a 24%
+            # chance level, so the quiet stretch is expected rather than a
+            # symptom. Announced once, when it ends.
+            if not quiet and cfg.lr is None and not warmed:
+                d_now = trainer.optimizer.param_groups[0]["d"]
+                if d_now > 20 * cfg.d0:
+                    warmed = True
+                    print(f"   ↳ step scale settled at {d_now:.2e} after "
+                          f"{step:,} steps (was --d0 {cfg.d0:.0e}); "
+                          f"the loss moves from here.")
 
             if not quiet and cfg.log_every and step % cfg.log_every == 0:
                 k = max(window["n"], 1)
@@ -1109,12 +1499,14 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
                     best, mark = metrics["acc"], "  🏆"
                     if save:
                         _save(best_path, model, trainer, cfg, step, metrics,
-                              best)
+                              best, stream=batches.state())
                 if not quiet:
                     print(f"   ↳ VAL  {fmt(metrics)}{mark}")
+                    if "bands" in metrics:
+                        print(fmt_bands(metrics))
                 if save:
                     _save(latest_path, model, trainer, cfg, step, metrics,
-                          best)
+                          best, stream=batches.state())
     except KeyboardInterrupt:
         interrupted = True
         print("\n⏹️  Interrupted — finishing cleanly.")
@@ -1125,8 +1517,10 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
         if save:
             if metrics["acc"] > best:
                 best = metrics["acc"]
-                _save(best_path, model, trainer, cfg, step, metrics, best)
-            _save(latest_path, model, trainer, cfg, step, metrics, best)
+                _save(best_path, model, trainer, cfg, step, metrics, best,
+                      stream=batches.state())
+            _save(latest_path, model, trainer, cfg, step, metrics, best,
+                  stream=batches.state())
 
     metrics.update({
         "steps": step - start_step,
@@ -1246,20 +1640,80 @@ def _empty_cache(device):
         torch.cuda.empty_cache()
 
 
+def _sync(device):
+    if str(device).startswith("cuda"):
+        torch.cuda.synchronize()
+
+
+def autotune_batch(cfg, groups, corpus=None, ladder=(8, 16, 32, 64, 128, 256, 512)):
+    """
+    Measure, don't model. `--batch` counts contexts, but a step's real width is
+    the option count it expands to — which varies per batch and cannot be
+    predicted from the flag. The step is also launch-bound, so extra rows ride
+    along nearly free until they suddenly do not.
+
+    Throughput here is questions per second rather than contexts, because a
+    context carrying six questions is six decisions' worth of work and
+    comparing contexts would rank a corpus's shape instead of the batch size.
+    """
+    print("\n⚖️  Autotuning batch size (measured questions/s, not estimated)")
+    best, best_rate = ladder[0], 0.0
+    for size in ladder:
+        c = replace(cfg, batch=size)
+        batches = Batches(groups, c, corpus)
+        set_seed(cfg.seed)
+        model, trainer = build(c)
+        try:
+            for _ in range(2):                                  # warmup
+                train_step(trainer, model, c, batches.next())
+            _sync(cfg.device)
+            t0 = time.time()
+            seen = 0
+            for _ in range(3):
+                batch = batches.next()
+                train_step(trainer, model, c, batch)
+                seen += batch.n_questions
+            _sync(cfg.device)
+            rate = seen / (time.time() - t0)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            print(f"   batch {size:>4}: OOM — stopping ladder")
+            del model, trainer
+            _empty_cache(cfg.device)
+            break
+        del model, trainer
+        _empty_cache(cfg.device)
+
+        mark = ""
+        if rate > best_rate * 1.03:
+            best, best_rate, mark = size, rate, "  <-- best"
+        print(f"   batch {size:>4}: {rate:9,.0f} q/s{mark}")
+        if rate < best_rate * 0.85:          # past the knee, stop burning time
+            break
+
+    print(f"   selected batch = {best} ({best_rate:,.0f} q/s)")
+    return best
+
+
 # --------------------------------------------------------------------------- #
 # Smoke test                                                                  #
 # --------------------------------------------------------------------------- #
 
 @torch.no_grad()
-def mean_loss(model, cfg, groups):
-    """Loss over fixed batches with no training — the learning-check baseline."""
+def mean_loss(model, cfg, groups, corpus=None):
+    """Loss over fixed batches with no training — the learning-check baseline.
+
+    Carries `corpus` for the same reason `pack` does: with one, a group is
+    `(ctx_id, [read_index, ...])` and the text has to be resolved through the
+    memmap; without one it is already `(context, [Read, ...])`.
+    """
     was_training = model.training
     model.eval()
     total = n = 0
-    for start in range(0, len(groups), cfg.batch):
-        ctx, q, o, mask, correct = pack(groups[start:start + cfg.batch], cfg)
-        t, _ = decision_loss(score_all(model, cfg, ctx, q, o, mask), correct,
-                             mask)
+    for rows in bucket_by_width(groups, cfg.batch, cfg.chunk, corpus):
+        batch = pack(rows, cfg, corpus)
+        t, _ = decision_loss(score_all(model, cfg, batch), batch)
         total += float(t)
         n += 1
     if was_training:
@@ -1293,7 +1747,12 @@ def run_smoke(cfg, corpus):
                    eval_contexts=0, tag="smoke")
     # Six contexts is enough to exercise every path and keeps the whole test
     # in seconds.
-    groups = corpus[0][:6]
+    if isinstance(corpus[0], tuple) and len(corpus[0]) == 2 and hasattr(corpus[0][0], "reads"):
+        train_corp, train_grps = corpus[0]
+        groups = [(train_corp.text(c), [train_corp.read(j) for j in idx])
+                  for c, idx in train_grps[:6]]
+    else:
+        groups = corpus[0][:6]
     corpus = (groups, groups)
     failures = []
 
@@ -1335,13 +1794,12 @@ def run_smoke(cfg, corpus):
         for k in (2, 25, 150):
             options = [f"option number {i}" for i in range(k)]
             g = [("some context",
-                  [Read("some context", "which one", options, 0)])]
+                  [Read("some context", "which one", options, 0, 0)])]
             model, _ = build(base)
             counts[k] = model.get_num_params()
             model.eval()
             with torch.no_grad():
-                shapes[k] = tuple(
-                    score_all(model, base, *pack(g, base)[:4]).shape)
+                shapes[k] = tuple(score_all(model, base, pack(g, base)).shape)
             del model
         check("option count is not a parameter",
               len(set(counts.values())) == 1,
@@ -1362,12 +1820,12 @@ def run_smoke(cfg, corpus):
             model.eval()
             options = ["cancel a reservation", "book a flight", "weather"]
             fwd = [("cancel my flight",
-                    [Read("cancel my flight", "what now", options, 0)])]
+                    [Read("cancel my flight", "what now", options, 0, 0)])]
             rev = [("cancel my flight",
-                    [Read("cancel my flight", "what now", options[::-1], 2)])]
+                    [Read("cancel my flight", "what now", options[::-1], 2, 0)])]
             with torch.no_grad():
-                a = score_all(model, c, *pack(fwd, c)[:4])[0, 0]
-                b = score_all(model, c, *pack(rev, c)[:4])[0, 0]
+                a = score_all(model, c, pack(fwd, c))
+                b = score_all(model, c, pack(rev, c))
             d = (a - b.flip(0)).abs().max().item()
             check(f"options blind to each other ({label})", d < 1e-4,
                   f"max Δ {d:.2e} between forward and reversed")
@@ -1387,12 +1845,9 @@ def run_smoke(cfg, corpus):
         for b in (1, 2, len(groups)):
             got = []
             for rows in bucket_by_width(groups, b, c.chunk):
-                ctx, q, o, mk, _ = pack(rows, c)
                 with torch.no_grad():
-                    s = score_all(model, c, ctx, q, o, mk)
-                # Masked slots come back at -1e4 and their count depends on
-                # the batch, so only the real options are comparable.
-                got += sorted(float(x) for x in s[mk])
+                    s = score_all(model, c, pack(rows, c))
+                got += [float(x) for x in s]
             scores[b] = sorted(got)
         # Tolerance rather than equality: a batched matmul reorders its
         # reductions, so identical inputs land a few ULPs apart. What must not
@@ -1415,28 +1870,31 @@ def run_smoke(cfg, corpus):
     #    BLAS picks a different reduction order per batch width, and in
     #    float64 the same comparison closes to 6e-14, so anything at 1e-4 or
     #    above is a real divergence rather than arithmetic.
-    def _sequential(model, cfg, ctx, q, o, mk):
-        bb, qq, kk, _ = o.shape
-        model.reset_state(batch_size=bb)
-        if model.attn is not None:
-            model.attn.reset()
-        _, h_c = read_segment(model, ctx, cfg)
-        cm = _mark(model)
-        out = []
-        for j in range(qq):
-            _rewind(model, cm)
-            _, h_q = read_segment(model, q[:, j], cfg, state=h_c)
-            qm = _mark(model)
-            cols = []
-            for k in range(kk):
-                _rewind(model, qm)
-                step_s, _ = read_segment(model, o[:, j, k], cfg, state=h_q, return_sequence=True)
-                act_lens = (o[:, j, k] != PAD_ID).sum(dim=-1).view(bb, 1, 1)
-                s = smooth_trajectory_score(step_s.view(bb, 1, 1, -1), act_lens, power=2.0).squeeze(1).squeeze(1)
-                cols.append(s)
-            out.append(torch.stack(cols, dim=1))
-        _rewind(model, cm)
-        return torch.stack(out, dim=1).masked_fill(~mk, -1e4)
+    def _sequential(model, cfg, batch):
+        """One option at a time, the loop the gather replaced."""
+        b = batch.ctx.shape[0]
+        q_owner = batch.q_owner.tolist()
+        o_owner = batch.o_owner.tolist()
+        got = torch.zeros(batch.n_options, device=batch.ctx.device)
+        for j, owner in enumerate(q_owner):
+            for k, q_of in enumerate(o_owner):
+                if q_of != j:
+                    continue
+                # A fresh read per option, so the comparison does not depend
+                # on the cache bookkeeping it is meant to check.
+                model.reset_state(batch_size=b)
+                if model.attn is not None:
+                    model.attn.reset()
+                _, h_c = read_segment(model, batch.ctx, cfg)
+                _, h_q = read_segment(
+                    model, batch.qry[j: j + 1], cfg,
+                    state=_branch(model, h_c,
+                                  batch.q_owner.new_tensor([owner])))
+                step_s, _ = read_segment(model, batch.opt[k: k + 1], cfg,
+                                         state=h_q, return_sequence=True)
+                lens = (batch.opt[k: k + 1] != PAD_ID).sum(dim=-1)
+                got[k] = smooth_trajectory_score(step_s, lens, power=2.0)
+        return got
 
     for attn, hebb in ((0, None), (4, None), (0, "temporal"), (4, "temporal")):
         label = f"attn={attn or 0} hebb={hebb or 'none'}"
@@ -1446,9 +1904,9 @@ def run_smoke(cfg, corpus):
             model.eval()
             batch = pack(bucket_by_width(groups, c.batch, c.chunk)[0], c)
             with torch.no_grad():
-                want = _sequential(model, c, *batch[:4])
-                got = score_all(model, c, *batch[:4])
-            d = (want[batch[3]] - got[batch[3]]).abs().max().item()
+                want = _sequential(model, c, batch)
+                got = score_all(model, c, batch)
+            d = (want - got).abs().max().item()
             check(f"batched options match the loop ({label})", d < 1e-4,
                   f"max Δ {d:.1e} (float32 reduction order; 6e-14 in float64)")
             del model
@@ -1470,11 +1928,11 @@ def run_smoke(cfg, corpus):
             return real(*a, **kw)
 
         model.forward = counted
-        reads = [Read("ctx", "q1", ["a", "b"], 0),
-                 Read("ctx", "q2", ["a", "b"], 1),
-                 Read("ctx", "q3", ["a", "b"], 0)]
+        reads = [Read("ctx", "q1", ["a", "b"], 0, 0),
+                 Read("ctx", "q2", ["a", "b"], 1, 0),
+                 Read("ctx", "q3", ["a", "b"], 0, 0)]
         with torch.no_grad():
-            score_all(model, c, *pack([("ctx", reads)], c)[:4])
+            score_all(model, c, pack([("ctx", reads)], c))
         # One context read, one batched read for every question, and one
         # batched read for every option of every question — three, whatever
         # Q and K are.
@@ -1493,9 +1951,8 @@ def run_smoke(cfg, corpus):
     try:
         c = replace(base)
         model, trainer = build(c)
-        ctx, q, o, mask, correct = pack(groups[:3], c)
-        total, _ = decision_loss(score_all(model, c, ctx, q, o, mask),
-                                 correct, mask)
+        batch = pack(groups[:3], c)
+        total, _ = decision_loss(score_all(model, c, batch), batch)
         trainer.optimizer.zero_grad(set_to_none=True)
         total.backward()
         named = {"W": model.W, "embed": model.embed.weight,
@@ -1518,7 +1975,7 @@ def run_smoke(cfg, corpus):
         _, model, _ = run_session(c, corpus, quiet=True, save=False)
         novel = [("pay my electricity bill",
                   [Read("pay my electricity bill", "what does the user want?",
-                        ["pay a bill", "rent a car", "none of these"], 0)])]
+                        ["pay a bill", "rent a car", "none of these"], 0, 0)])]
         r = Validator(novel, replace(c, eval_contexts=0)).run(model)
         check("unseen option set scores", np.isfinite(r["acc"]),
               f"{fmt(r)} on options absent from training")
@@ -1577,7 +2034,7 @@ def run_smoke(cfg, corpus):
         before = {n: p.detach().clone() for n, p in model.named_parameters()}
 
         b = pack(bucket_by_width(fit, c.batch, c.chunk)[0], c)
-        loss, _ = decision_loss(score_all(model, c, *b[:4]), b[4], b[3])
+        loss, _ = decision_loss(score_all(model, c, b), b)
         reached = {n for n, g in zip(
             (n for n, _ in model.named_parameters()),
             torch.autograd.grad(loss, [p for _, p in model.named_parameters()],
@@ -1602,13 +2059,47 @@ def run_smoke(cfg, corpus):
         # together, which reads as progress while the scores stop telling the
         # options apart. The class weight is what prevents it.
         with torch.no_grad():
-            s = score_all(model, c, *b[:4])[b[3]]
+            s = score_all(model, c, b)
         spread = float(s.std())
         check("scores stay apart", spread > 1e-4,
               f"option score std {spread:.1e}")
         del model
     except Exception as e:                           # noqa: BLE001
         check("the loss reaches the core", False,
+              f"{type(e).__name__}: {e}")
+
+    # Learning check: a handful of contexts is memorizable, so the loss has to
+    # fall below where it started. This is the one gate that would catch a
+    # pipeline that is wired correctly and still cannot learn — the failure the
+    # wiring checks above are blind to by construction.
+    #
+    # Deliberately at a fixed lr. ChaosGrad's online estimate reads
+    # `grad · (p0 - p)`, the alignment between the gradient and the distance
+    # already travelled, and on six contexts at batch 6 that product is pure
+    # noise: measured over 1200 steps it ratcheted `d` to 5e-3 on seed 7
+    # (loss -79%) and left it at 1e-5 on seeds 42 and 1234 (loss flat). The
+    # same default reaches 40% against a 24% chance level on the real corpus
+    # once `d` settles around step 750 — the estimator needs a real batch, not
+    # a bigger budget. Testing the script's wiring through the estimator's
+    # warm-up would therefore gate on the seed, so the warm-up is removed from
+    # this test and left to the library's own suite.
+    print()
+    try:
+        c = replace(base, max_steps=300, eval_every=0, log_every=0, batch=6,
+                    lr=1e-2)
+        set_seed(c.seed)
+        model, trainer = build(c)
+        batches = Batches(groups, c)
+        start = mean_loss(model, c, groups)
+        for _ in range(c.max_steps):
+            train_step(trainer, model, c, batches.next())
+        end = mean_loss(model, c, groups)
+        check("loss falls on a memorizable slice", end < start * 0.98,
+              f"{start:.4f} -> {end:.4f} over {c.max_steps} steps on "
+              f"{len(groups)} contexts at lr={c.lr:g}")
+        del model
+    except Exception as e:                           # noqa: BLE001
+        check("loss falls on a memorizable slice", False,
               f"{type(e).__name__}: {e}")
 
     for stale in glob.glob(os.path.join(CKPT_DIR, "s1_odyss_smoke*.pth")):
@@ -1771,15 +2262,31 @@ def parse_args():
     g = p.add_argument_group("optimization")
     g.add_argument("--batch", type=int, default=d.batch, metavar="N",
                    help="contexts per step; every question under a context "
-                        "shares its single context read "
+                        "shares its single context read. -1 measures "
+                        "throughput and picks the fastest "
                         "(default: %(default)s)")
     g.add_argument("--lr", default="keep", metavar="RATE",
                    help="'auto' for ChaosGrad's online estimate, a float for "
                         "fixed-rate mode. Default 'keep': a fresh run uses "
                         "auto (zero-config); --resume keeps the checkpoint's mode")
+    g.add_argument("--clip", type=float, default=d.clip, metavar="NORM",
+                   help="gradient clipping threshold. The default is sized to "
+                        "this loss: clipping far below the natural gradient "
+                        "norm starves the automatic step-scale estimate "
+                        "(default: %(default)s)")
+    g.add_argument("--d0", type=float, default=d.d0, metavar="SCALE",
+                   help="initial step-scale estimate for --lr auto. The "
+                        "estimate only ratchets up, so too low a start never "
+                        "catches up on a sparse loss (default: %(default)s)")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra "
                         "sequential forward per step")
+    g.add_argument("--compile", action="store_true",
+                   help="torch.compile the forward pass. Three segment reads "
+                        "per step, each a loop of small kernels, make this "
+                        "launch-bound — so fusing it is the largest speedup "
+                        "on offer. Costs a warmup of a minute or two, and "
+                        "does not combine with --grad-ckpt")
 
     g = p.add_argument_group("run control")
     g.add_argument("--minutes", type=float, default=d.minutes, metavar="M",
@@ -1839,10 +2346,12 @@ def parse_args():
 
     # Validate here rather than at construction time, so a typo costs a second
     # and a message instead of a corpus load and a CUDA init.
-    for name in ("neurons", "n_in", "n_out", "batch", "chunk"):
+    for name in ("neurons", "n_in", "n_out", "chunk"):
         if getattr(a, name) <= 0:
             p.error(f"--{name.replace('_', '-')} must be positive, "
                     f"got {getattr(a, name)}")
+    if a.batch == 0:
+        p.error("--batch must be positive, or -1 to autotune")
     if a.n_in + a.n_out > a.neurons:
         p.error(f"--n-in ({a.n_in}) + --n-out ({a.n_out}) = "
                 f"{a.n_in + a.n_out} exceeds --neurons ({a.neurons})")
@@ -1925,7 +2434,8 @@ def cfg_from_args(a):
         batch=a.batch,
         lr=d.lr if str(a.lr) == "keep" else (
             None if str(a.lr) == "auto" else float(a.lr)),
-        grad_ckpt=a.grad_ckpt,
+        grad_ckpt=a.grad_ckpt, compile=a.compile, clip=a.clip,
+        d0=a.d0,
         minutes=a.minutes, max_steps=a.max_steps,
         eval_every=a.eval_every, eval_contexts=a.eval_contexts,
         log_every=a.log_every,
@@ -1972,6 +2482,8 @@ def main():
             cfg = adopt_saved_arch(cfg, src, fields=RESUME_FIELDS)
 
     if a.mode == "ask":
+        if cfg.batch <= 0:
+            cfg = replace(cfg, batch=1)
         model, trainer = build(cfg)
         load_checkpoint(model, trainer.optimizer, path, device=cfg.device,
                         strict=True)
@@ -1987,17 +2499,26 @@ def main():
         return
 
     if a.mode == "eval":
-        val_groups = group_by_context(load_reads(cfg.val))
+        # Autotuning measures training throughput, which eval does not do.
+        if cfg.batch <= 0:
+            cfg = replace(cfg, batch=32)
+        val_paths = [p.strip() for p in cfg.val.split(",") if p.strip()]
+        val_paths = [os.path.join(p, "val.jsonl") if os.path.isdir(p) else p for p in val_paths]
+        val_corpus = open_corpus(val_paths, verbose=False)
+        val_groups = val_corpus.group_by_context()
         model, trainer = build(cfg)
         load_checkpoint(model, trainer.optimizer, path, device=cfg.device,
                         strict=True)
         print(f"📂 {path}")
-        validator = Validator(val_groups, cfg)
-        print(f"\n📚 scoring {len(validator.groups):,} contexts | "
+        validator = Validator(val_groups, cfg, val_corpus)
+        print(f"\n📚 scoring {validator.contexts:,} contexts | "
               f"{validator.answerable:,} answerable + "
-              f"{validator.rejectable:,} rejectable questions")
+              f"{validator.rejectable:,} rejectable questions | "
+              f"chance {validator.chance:.2%}")
         m = validator.run(model)
         print(f"\n📊 {fmt(m)}")
+        if "bands" in m:
+            print(fmt_bands(m))
         if "brier" in m:
             print(f"   brier {m['brier']:.4f} | mean confidence "
                   f"{m['conf']:.3f} | {model.get_num_params():,} params")
@@ -2022,6 +2543,8 @@ def main():
 
     print(f"\n{'='*78}")
     print(f"📊 FINAL  {fmt(metrics)}")
+    if "bands" in metrics:
+        print(fmt_bands(metrics))
     if "brier" in metrics:
         print(f"   brier {metrics['brier']:.4f} | mean confidence "
               f"{metrics['conf']:.3f}")

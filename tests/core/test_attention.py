@@ -591,6 +591,75 @@ class TestRewind:
         assert model.attn._mem_k.shape[0] == 2
         assert model.attn.cache_len == before
 
+    def test_gather_rows_matches_repeat_rows_on_a_uniform_index(self):
+        """repeat_rows is the uniform case of gather_rows.
+
+        Where the two overlap they must produce the same attention output, or
+        the ragged path and the uniform path disagree about what a branch
+        reads — an error of order 1 that no shape check would catch.
+        """
+        model = _model()
+        model.eval()
+        prefix, branches = _tokens(), 2
+        wide = torch.cat([_tokens(seed=s) for s in (1, 2)], dim=0)
+        order = [r * branches + b for r in range(3) for b in range(branches)]
+        wide = wide.view(branches, 3, -1).transpose(0, 1).reshape(len(order), -1)
+
+        outs = []
+        for use_gather in (False, True):
+            with torch.no_grad():
+                model.reset_state(3)
+                _, h = model(prefix, steps=12)
+                if use_gather:
+                    model.attn.gather_rows(torch.tensor([0, 0, 1, 1, 2, 2]))
+                else:
+                    model.attn.repeat_rows(branches)
+                out, _ = model(wide, steps=12,
+                               current_state=h.repeat_interleave(branches, dim=0))
+            outs.append(out[:, -1])
+        assert torch.allclose(outs[0], outs[1], atol=1e-6)
+
+    def test_gather_rows_reorders_and_drops(self):
+        """The ragged case: an index that is not a permutation or a repeat.
+
+        Row 2 feeds one branch, row 0 feeds three, row 1 feeds none. Each
+        branch must read the cache of the row the index names, which is only
+        observable through what attention returns.
+        """
+        model = _model()
+        model.eval()
+        index = [2, 0, 0, 0]
+        prefix = _tokens()
+        follow = _tokens(seed=5)
+
+        with torch.no_grad():
+            # One row at a time, the loop the gather replaces.
+            want = []
+            for src in index:
+                model.reset_state(3)
+                _, h = model(prefix, steps=12)
+                model.attn.gather_rows(torch.tensor([src]))
+                out, _ = model(follow[:1], steps=12,
+                               current_state=h[src: src + 1])
+                want.append(out[0, -1])
+
+            model.reset_state(3)
+            _, h = model(prefix, steps=12)
+            model.attn.gather_rows(torch.tensor(index))
+            got, _ = model(follow[:1].expand(len(index), -1), steps=12,
+                           current_state=h[torch.tensor(index)])
+
+        for b in range(len(index)):
+            assert torch.allclose(want[b], got[b, -1], atol=1e-5)
+
+    def test_gather_rows_rejects_an_out_of_range_index(self):
+        model = _model()
+        model.reset_state(2)
+        with torch.no_grad():
+            model(_tokens(batch=2), steps=12)
+        with pytest.raises(IndexError):
+            model.attn.gather_rows(torch.tensor([0, 2]))
+
     def test_rewind_past_the_end_raises(self):
         model = _model()
         model.reset_state(3)

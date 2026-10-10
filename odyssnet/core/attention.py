@@ -543,6 +543,18 @@ class TemporalAttention(nn.Module):
         self._ring_cursor = snap['ring_cursor']
         self._writes = snap['writes']
 
+    def gather_rows(self, index):
+        """
+        Reindex the cached batch rows by `index`, which may repeat or drop.
+
+        `repeat_rows` covers the case where every row branches the same number
+        of times. A decision protocol branches raggedly — one question has two
+        options and the next has twelve — so the general form takes the index
+        tensor that `h[index]` takes on the state side, and the two stay in
+        step.
+        """
+        self._map_rows(lambda t: t.index_select(0, index))
+
     def repeat_rows(self, times):
         """
         Repeat every cached batch row `times` times, interleaved.
@@ -552,8 +564,8 @@ class TemporalAttention(nn.Module):
         `h.repeat_interleave(times, dim=0)` on the state side. Without it the
         next write sees a different batch size and drops the carry.
         """
-        self._map_rows(lambda t: t.repeat_interleave(times, dim=0)
-                       if times > 1 else t)
+        if times > 1:
+            self._map_rows(lambda t: t.repeat_interleave(times, dim=0))
 
     def select_first_of(self, times):
         """

@@ -78,6 +78,33 @@ class TestTrainerInit:
         assert isinstance(t.optimizer, ChaosGrad)
         assert all(g['lr'] is None for g in t.optimizer.param_groups)
 
+    def test_clip_threshold_defaults_to_one(self):
+        # Every caller that does not ask for a threshold must keep the
+        # original clip, or raising it for one loss shape would silently
+        # change the step size of every other example in the repo.
+        assert OdyssNetTrainer(_model()).max_grad_norm == 1.0
+
+    def test_clip_threshold_is_what_clipping_uses(self):
+        # A threshold the step ignores would be worse than no knob at all:
+        # it would read as configured while doing nothing.
+        seen = {}
+        real = torch.nn.utils.clip_grad_norm_
+
+        def spy(params, max_norm, *a, **kw):
+            seen['max_norm'] = max_norm
+            return real(params, max_norm, *a, **kw)
+
+        model = _model()
+        t = OdyssNetTrainer(model, lr=1e-4, device="cpu", max_grad_norm=42.0)
+        x = torch.randn(2, 4)
+        y = torch.randn(2, 2)
+        torch.nn.utils.clip_grad_norm_ = spy
+        try:
+            t.train_batch(x, y, 4)
+        finally:
+            torch.nn.utils.clip_grad_norm_ = real
+        assert seen['max_norm'] == 42.0
+
     def test_default_optimizer_can_train(self):
         # Verify a full train_batch step completes with the default optimizer.
         model = _model()
