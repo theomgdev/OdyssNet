@@ -165,9 +165,10 @@ class Cfg:
     # orders above a per-token loss, and clipping at 1.0 throws that away.
     clip: float = 80.0              # gradient clipping threshold
     # ChaosGrad's estimate reads `(grad * (p0 - p)).sum()` — how well the
-    # gradient aligns with where the weights have actually travelled. Opposing
-    # gradients across steps keep that sum near zero or negative, so the
-    # estimate never ratchets and the run sits at chance however long it goes.
+    # gradient aligns with where the weights have actually travelled. That sum
+    # takes a few hundred steps to accumulate, so `d` sits at this value and
+    # the loss looks flat before it jumps; measured arrival is step 105-500 on
+    # the bundled corpus, and 1e-6 and 1e-4 both end up around 1.5-3.5e-3.
     d0: float = 1e-6                # initial step-scale estimate
     compile: bool = False           # torch.compile the forward. The step is
                                     # launch-bound at every size measured, so
@@ -2081,12 +2082,14 @@ def run_smoke(cfg, corpus):
     # size: measured as the first step where `d` exceeds 20x `d0`, over a
     # 900-step budget, it is step 105 at batch 128 and step 146 at batch 6 on
     # the full corpus, step 237 on these six contexts, step 407 on the full
-    # corpus at another seed — and on six contexts at seed 7 it never happens
-    # at all. Every run that does ratchet lands on the same 1.2-1.9e-3, so the
-    # estimate is right once it arrives; only its arrival is seed business.
-    # A 300-step budget therefore straddles the warm-up, and gating the
-    # script's wiring on it would gate on the seed. The warm-up is removed
-    # from this test and left to the library's own suite.
+    # corpus at another seed. On the full corpus every seed measured gets
+    # there; on six contexts seed 7 never does. Every run that ratchets lands
+    # on the same 1.2-3.5e-3 and scores within a point of a hand-tuned lr, so
+    # the estimate is right once it arrives — only its arrival is seed
+    # business, and this slice is exactly where that is least reliable. A
+    # 300-step budget therefore straddles the warm-up, and gating the script's
+    # wiring on it would gate on the seed. The warm-up is removed from this
+    # test and left to the library's own suite.
     print()
     try:
         c = replace(base, max_steps=300, eval_every=0, log_every=0, batch=6,
@@ -2279,9 +2282,11 @@ def parse_args():
                         "norm starves the automatic step-scale estimate "
                         "(default: %(default)s)")
     g.add_argument("--d0", type=float, default=d.d0, metavar="SCALE",
-                   help="initial step-scale estimate for --lr auto. The "
-                        "estimate only ratchets up, so too low a start never "
-                        "catches up on a sparse loss (default: %(default)s)")
+                   help="initial step-scale estimate for --lr auto. A higher "
+                        "start shortens the warm-up but does not change where "
+                        "the estimate lands: 1e-6 and 1e-4 both settle around "
+                        "1.5-3.5e-3 and score within a point of each other "
+                        "(default: %(default)s)")
     g.add_argument("--grad-ckpt", action="store_true",
                    help="gradient checkpointing: less memory, one extra "
                         "sequential forward per step")
