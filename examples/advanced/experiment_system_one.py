@@ -1471,10 +1471,11 @@ def run_session(cfg, corpus, budget_sec=0.0, resume=False, resume_best=False,
             # With `--lr` unset, ChaosGrad reads `grad · (p0 - p)` and needs a
             # few hundred steps before `d` leaves `--d0`; until it does, the
             # loss is genuinely flat and the run looks broken when it is only
-            # warming up. Measured on the bundled corpus at batch 64: `d`
-            # settles near step 750 and accuracy reaches 40% against a 24%
-            # chance level, so the quiet stretch is expected rather than a
-            # symptom. Announced once, when it ends.
+            # warming up. Measured on the bundled corpus, the step where `d`
+            # first exceeds 20x `d0` is 105 at batch 128 and 146 at batch 6,
+            # and 407 at another seed — it arrives in jumps rather than on a
+            # ramp, so the quiet stretch is expected rather than a symptom.
+            # Announced once, when it ends.
             if not quiet and cfg.lr is None and not warmed:
                 d_now = trainer.optimizer.param_groups[0]["d"]
                 if d_now > 20 * cfg.d0:
@@ -2075,14 +2076,17 @@ def run_smoke(cfg, corpus):
     #
     # Deliberately at a fixed lr. ChaosGrad's online estimate reads
     # `grad · (p0 - p)`, the alignment between the gradient and the distance
-    # already travelled, and on six contexts at batch 6 that product is pure
-    # noise: measured over 1200 steps it ratcheted `d` to 5e-3 on seed 7
-    # (loss -79%) and left it at 1e-5 on seeds 42 and 1234 (loss flat). The
-    # same default reaches 40% against a 24% chance level on the real corpus
-    # once `d` settles around step 750 — the estimator needs a real batch, not
-    # a bigger budget. Testing the script's wiring through the estimator's
-    # warm-up would therefore gate on the seed, so the warm-up is removed from
-    # this test and left to the library's own suite.
+    # already travelled, and that sum needs a few hundred steps to accumulate
+    # before `d` leaves `--d0`. How many is not a property of this slice's
+    # size: measured as the first step where `d` exceeds 20x `d0`, over a
+    # 900-step budget, it is step 105 at batch 128 and step 146 at batch 6 on
+    # the full corpus, step 237 on these six contexts, step 407 on the full
+    # corpus at another seed — and on six contexts at seed 7 it never happens
+    # at all. Every run that does ratchet lands on the same 1.2-1.9e-3, so the
+    # estimate is right once it arrives; only its arrival is seed business.
+    # A 300-step budget therefore straddles the warm-up, and gating the
+    # script's wiring on it would gate on the seed. The warm-up is removed
+    # from this test and left to the library's own suite.
     print()
     try:
         c = replace(base, max_steps=300, eval_every=0, log_every=0, batch=6,
