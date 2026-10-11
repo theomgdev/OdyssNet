@@ -68,6 +68,28 @@ run that reads as "never converges":
   40%, 0.69 for 50%. A reading of 1.69 after 500 steps is the plateau, not a
   verdict.
 
+What this core does NOT do
+--------------------------
+Converging on the training pool is not the same as learning the task, and on a
+WordNet corpus the gap is the whole story. At equal passes (150, batch 16,
+lr 1e-2), as the pool grows the fit improves and the transfer decays:
+
+      pool    train      val   val rank     (chance 19.4%, uniform rank 1.69)
+    96 ctx    45.7%   24.72%     2.1204
+   384 ctx    75.2%   22.10%     3.3127
+  1536 ctx    81.9%   21.35%     3.2286
+
+A val rank above 1.69 means the model is confidently wrong on held-out data, and
+it gets worse with more material. So 87k parameters reading raw bytes memorise
+(context, question, option-set) surfaces and do not factor out the relation the
+corpus is built on. More data does not fix that — it feeds it.
+
+The lever is representation, not volume: a byte-level read spends ~5.4x the
+recurrence steps of a word-level one (76 steps for an average context against
+14), and this core is latency- and depth-bound on sequential steps. A corpus of
+runtime-supplied options is still the right shape for System One; it just needs
+either a shorter input sequence or a wider core before held-out accuracy moves.
+
 Usage
 -----
     python -u experiment_system_one.py --mode smoke
