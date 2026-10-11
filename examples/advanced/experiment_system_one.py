@@ -40,6 +40,34 @@ absolute rather than a rank, so a question whose answer is none of the options
 reads as a flat low distribution; confidence is that distribution's own max and
 margin. A rejection option is just another option in the data.
 
+What it takes to converge
+-------------------------
+Measured on a shared-vocabulary WordNet corpus at `--lr 1e-2 --batch 16`, the
+loss does not slide down — it sits flat and then drops over a few hundred steps:
+
+      pool    step 200   step 600   step 900   step 1200   passes at the drop
+     6 ctx           -      100%           -           -                1600
+    24 ctx           -      100%           -           -                 400
+    96 ctx       22.9%      30.5%      57.1%       97.1%                 200
+
+Steps 400-600 of the 96-context run look dead and are two hundred steps from
+solving the pool. Three things follow, and ignoring any one of them produces a
+run that reads as "never converges":
+
+* **Give it passes, not data.** Every pool that converged had read its contexts
+  100+ times. A 40k-context corpus at batch 16 has made half a pass by step
+  1300 and is still at chance — not because it cannot learn, but because it has
+  not yet seen anything twice. Start on a few hundred contexts, let the drop
+  happen, then widen.
+* **Prefer many narrow steps.** The transition spends steps, not examples, so a
+  wide batch converts the same wall clock into fewer of them. `--batch 512`
+  measures 7x the throughput of 64 and never reaches the drop; the autotuner's
+  ladder is capped for this reason.
+* **Judge nothing before ~1500 steps.** `rank` equals mean `ln K` (~1.69 here)
+  for a uniform guesser, and `-ln(acc)` is what a given accuracy needs: 0.92 for
+  40%, 0.69 for 50%. A reading of 1.69 after 500 steps is the plateau, not a
+  verdict.
+
 Usage
 -----
     python -u experiment_system_one.py --mode smoke
