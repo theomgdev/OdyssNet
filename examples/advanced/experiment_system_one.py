@@ -1715,7 +1715,7 @@ def _sync(device):
         torch.cuda.synchronize()
 
 
-def autotune_batch(cfg, groups, corpus=None, ladder=(8, 16, 32, 64, 128, 256, 512)):
+def autotune_batch(cfg, groups, corpus=None, ladder=(8, 16, 32, 64)):
     """
     Measure, don't model. `--batch` counts contexts, but a step's real width is
     the option count it expands to — which varies per batch and cannot be
@@ -1725,6 +1725,15 @@ def autotune_batch(cfg, groups, corpus=None, ladder=(8, 16, 32, 64, 128, 256, 51
     Throughput here is questions per second rather than contexts, because a
     context carrying six questions is six decisions' worth of work and
     comparing contexts would rank a corpus's shape instead of the batch size.
+
+    The ladder stops at 64 on purpose. Throughput keeps climbing past it — 512
+    measured 3,560 q/s against 497 at 64 — but throughput is the wrong thing to
+    buy. Convergence here arrives as a sharp transition in the step scale after
+    a roughly fixed number of STEPS: measured at batch 16, a 96-context pool
+    sits at 30.5% through step 600 and reaches 97.1% by step 1200. A wide batch
+    spends the same wall clock on fewer steps and never reaches the transition —
+    a 120k-context run at batch 512 made 199.8 passes over its corpus, the same
+    pass count that solved 96 contexts at batch 16, and stayed at chance.
     """
     print("\n⚖️  Autotuning batch size (measured questions/s, not estimated)")
     best, best_rate = ladder[0], 0.0
