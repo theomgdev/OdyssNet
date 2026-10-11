@@ -296,8 +296,15 @@ class Generator:
         self.synsets = [s for s in dictionary.synsets
                         if dictionary.targets_of(s)
                         and all(w in owned for w in dictionary.targets_of(s))]
-        # Only sentences whose blanked word belongs to this split.
+        # Only sentences whose blanked word belongs to this split. A corpus
+        # sentence does not say which sense it used, so a polysemous word's
+        # blank is still answerable — the options are words, and only one of
+        # them fits — but anything asked ABOUT that word's sense is not. Keep
+        # the two apart: `cloze_words` fills blanks, `cloze_mono` is the subset
+        # a sense question may be built on.
         self.cloze_words = sorted(w for w in owned if w in sentences)
+        self.cloze_mono = [w for w in self.cloze_words
+                           if len(self.d.senses[w]) == 1]
         self.mono = [s for s in self.synsets
                      if any(w in self.d.mono for w in self.d.targets_of(s))]
         # Sense contrast needs WordNet's own examples on two senses at once,
@@ -410,19 +417,27 @@ class Generator:
 
         def q_kind():
             # "what kind of thing is a X" only parses for a noun, and only a
-            # noun has a hypernym worth naming anyway.
-            if synset.pos() != "n":
+            # noun has a hypernym worth naming anyway. It also asks about the
+            # word's SENSE, which this sentence does not pin down: `rumble`
+            # reads as noise, as a car seat and as a gang fight, and asking
+            # which group it belongs to beside a sentence about a pop single
+            # has no answer the context supports. Restrict it to words with one
+            # sense, where the blank and the question agree by construction.
+            if word not in self.cloze_mono or synset.pos() != "n":
                 return None
             hypernyms = synset.hypernyms()
             if len(hypernyms) != 1:
                 return None
             # The hypernym is the answer, so it has to be this split's word
             # too — otherwise every split answers "fence" and "jetty" with the
-            # same `barrier` and the test vocabulary is the training one.
+            # same `barrier` and the test vocabulary is the training one. Among
+            # the lemmas that qualify, take the most frequent rather than
+            # WordNet's own first: `process` and `appendage` name the same
+            # synset, and the common word is the one a reader would answer.
             names = self.mine(self.d.targets_of(hypernyms[0]))
             if not names:
                 return None
-            right = names[0]
+            right = max(names, key=lambda w: self.d.zipf.get(w, 0.0))
             got = self.options(right, [
                 (RELATED, self.d.related(right)),
                 (DISTANT, self.d.all_targets)], extra=(word,))

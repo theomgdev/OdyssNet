@@ -820,26 +820,77 @@ def read_segment(model, ids, cfg, state=None, return_sequence=False):
 
     The segment is read in `cfg.chunk`-wide pieces with the state carried
     between them, which is what makes a context of any length cost steps in
-    proportion to its bytes and nothing else. Every piece is exactly one chunk
-    wide: `pack` pads to a chunk multiple and `bucket_by_width` puts rows of
-    equal chunk count in one batch, so the step count a row runs depends on
-    nothing but its own length — pad bytes inject nothing, and a score cannot
-    move with what else shares the batch.
+    proportion to its bytes and nothing else.
+
+    Rows shorter than the batch's widest are trimmed to their own length
+    first. A `PAD_ID` column injects nothing, but the core still echoes on
+    that step and the state keeps evolving, so a row padded to 32 scores
+    differently from the same row padded to 16 (measured 0.0424 against
+    0.0617 on one option — the size of the score range itself). Reading each
+    distinct length on its own keeps a score a function of its own bytes.
     """
     total = ids.shape[1]
-    h = state
-    seq_outs = [] if return_sequence else None
-    for start in range(0, total, cfg.chunk):
-        piece = ids[:, start: start + cfg.chunk]
-        last = start + cfg.chunk >= total
-        out, h = model(piece,
-                       steps=piece.shape[1] + (cfg.think if last else 0),
-                       current_state=h, return_sequence=return_sequence)
+    rows = ids.shape[0]
+    seq = None
+    out_last = torch.zeros(rows, device=ids.device,
+                           dtype=torch.get_default_dtype())
+    end_state = None
+
+    lens = (ids != PAD_ID).sum(dim=1)
+    up = -(-lens.clamp(min=1) // cfg.chunk) * cfg.chunk
+    widths_here = torch.unique(up)
+    # One width means one group, which is the common case and needs none of
+    # the per-group cache juggling below.
+    if len(widths_here) == 1:
+        groups = [(int(widths_here[0]),
+                   torch.arange(rows, device=ids.device))]
+    else:
+        groups = [(int(w), (up == w).nonzero(as_tuple=True)[0])
+                  for w in widths_here]
+
+    # Attention caches by batch row and `gather_rows` rewrites that axis in
+    # place, so reading width groups separately would need the cache rebuilt
+    # between them. Keep the single-pass read there: with attention on, every
+    # row runs the batch's widest geometry, which is the padding dependency
+    # this function otherwise removes. Attention is off by default here.
+    if model.attn is not None:
+        groups = [(total, torch.arange(rows, device=ids.device))]
+
+    for w, sel in groups:
+        # A group with no incoming state starts cold, and `forward` falls back
+        # to `self.state` — which the previous group has already advanced. Hand
+        # it an explicit zero state so each group starts where it would have
+        # started alone.
+        if state is None:
+            h = torch.zeros(len(sel), model.num_neurons,
+                            device=ids.device,
+                            dtype=torch.get_default_dtype())
+        else:
+            h = state.index_select(0, sel)
+        piece_outs = []
+        for start in range(0, w, cfg.chunk):
+            piece = ids[sel, start: start + cfg.chunk]
+            last = start + cfg.chunk >= w
+            out, h = model(piece,
+                           steps=piece.shape[1] + (cfg.think if last else 0),
+                           current_state=h, return_sequence=return_sequence)
+            if return_sequence:
+                piece_outs.append(out)
         if return_sequence:
-            seq_outs.append(out)
+            got = torch.cat(piece_outs, dim=1).squeeze(-1)
+            if seq is None:
+                seq = got.new_zeros((rows, total))
+            seq[sel, :got.shape[1]] = got
+        else:
+            out_last[sel] = out[:, -1, 0].to(out_last.dtype)
+        # Allocated on the first group, so every row's slot is written by the
+        # group that owns it — never left as whatever `new_empty` found.
+        if end_state is None:
+            end_state = h.new_zeros((rows,) + tuple(h.shape[1:]))
+        end_state[sel] = h
     if return_sequence:
-        return torch.cat(seq_outs, dim=1).squeeze(-1), h
-    return out[:, -1, 0], h
+        return seq, end_state
+    return out_last, end_state
 
 
 def smooth_trajectory_score(step_scores, active_lengths, power=2.0):
@@ -979,9 +1030,16 @@ def train_step(trainer, model, cfg, batch):
         terms.update(parts)
         return total.reshape(1, 1, 1)
 
-    trainer.train_batch(batch.ctx, torch.zeros(1, device=cfg.device),
-                        thinking_steps=batch.ctx.shape[1] + cfg.think,
-                        output_transform=transform)
+    # The trainer runs one forward of its own before calling the transform, and
+    # its graph reaches the same parameters the decision loss does — leaving it
+    # live adds the gradient of reading a context with no question to every
+    # step, which points nowhere near the real objective (measured: cosine
+    # -0.23 on the core, -0.36 on the embedding). Hand it a single padding
+    # byte so that forward is one cheap step whose output the transform drops,
+    # and `score_all` below builds the only graph that reaches the loss.
+    stub = torch.full((1, 1), PAD_ID, dtype=torch.long, device=cfg.device)
+    trainer.train_batch(stub, torch.zeros(1, device=cfg.device),
+                        thinking_steps=1, output_transform=transform)
     return terms
 
 
@@ -2065,6 +2123,43 @@ def run_smoke(cfg, corpus):
         spread = float(s.std())
         check("scores stay apart", spread > 1e-4,
               f"option score std {spread:.1e}")
+
+        # The gradient the optimizer follows has to be the decision loss's own.
+        # The trainer runs a forward of its own before calling the transform,
+        # and anything that forward leaves in the graph is added to the real
+        # objective — pointing somewhere else entirely. The symptom is a run
+        # parked at the constant-output optimum forever, which no wiring check
+        # above can see. Compare the two gradients directly; the trainer clears
+        # its own after stepping, so take a copy from inside the transform.
+        captured = {}
+
+        def capture(_out):
+            total, _parts = decision_loss(score_all(model, c, b), b)
+            captured["loss"] = total
+            return total.reshape(1, 1, 1)
+
+        model.zero_grad(set_to_none=True)
+        stub = torch.full((1, 1), PAD_ID, dtype=torch.long, device=c.device)
+        with torch.autocast(device_type="cpu", enabled=False):
+            model.reset_state(1)
+            out, _h = model(stub, steps=1)
+            capture(out).mean().backward()
+        through = {n: p.grad.detach().float().flatten().clone()
+                   for n, p in model.named_parameters() if p.grad is not None}
+
+        model.zero_grad(set_to_none=True)
+        decision_loss(score_all(model, c, b), b)[0].backward()
+        worst, where = 1.0, ""
+        for n, p in model.named_parameters():
+            if p.grad is None or n not in through or p.grad.norm() == 0:
+                continue
+            cos = float(F.cosine_similarity(
+                through[n], p.grad.detach().float().flatten(), dim=0))
+            if cos < worst:
+                worst, where = cos, n
+        check("the optimizer follows the decision loss",
+              where and worst > 0.99,
+              f"worst gradient cosine {worst:+.4f} on {where or 'NOTHING COMPARED'}")
         del model
     except Exception as e:                           # noqa: BLE001
         check("the loss reaches the core", False,
