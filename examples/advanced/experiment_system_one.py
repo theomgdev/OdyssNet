@@ -619,13 +619,19 @@ def cut(buckets, size):
 
 class Batches:
     """
-    Shuffled epochs over the context groups, grouped by exact segment width.
+    Shuffled epochs over the context groups.
 
-    A batch is read at one width because the core spends a step per input
-    column, and the attention cache is indexed by batch row — so splitting a
-    read by row length is not available and padding a short row would make its
-    score depend on the longest row beside it. Grouping by the widths the rows
-    actually have removes the pad instead of hiding it.
+    Rows used to be grouped by exact segment width, because the core spends a
+    step per input column and padding a short row made its score depend on the
+    longest row beside it. `read_segment` now reads each distinct width for its
+    own step count, so that coupling is gone and the geometry key is not needed
+    — which matters because the key was a three-way exact match and on a large
+    corpus it shattered the pool: a 40k-context corpus at `--batch 256` was
+    handing out batches of three rows.
+
+    Attention is the exception: its cache is indexed by batch row, so a mixed
+    batch there still runs every row at the widest geometry. Group by width
+    when attention is on, and let a batch be a batch otherwise.
 
     Each epoch re-cuts the batches rather than reordering a fixed set, so a
     long run sees new combinations of rows instead of the same few hundred
@@ -638,8 +644,12 @@ class Batches:
         self.corpus = corpus
         self.rng = random.Random(cfg.seed)
         self.pools = {}
-        for g in groups:
-            self.pools.setdefault(widths(g, cfg.chunk, corpus), []).append(g)
+        if cfg.attn_heads:
+            for g in groups:
+                key = widths(g, cfg.chunk, corpus)
+                self.pools.setdefault(key, []).append(g)
+        else:
+            self.pools[None] = list(groups)
         self.epochs = 0
         self.queue = []
         self._refill()

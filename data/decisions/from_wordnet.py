@@ -618,18 +618,28 @@ SCENES = (("scene_cloze", 6), ("scene_usage", 2), ("scene_definition", 4),
           ("scene_sense", 2), ("scene_unknown", 2))
 
 
-def split_words(dictionary, rng):
+def split_words(dictionary, rng, mode="words"):
     """
-    Target words divided 80/10/10, so no answer word crosses a split.
+    Divide the target vocabulary 80/10/10 between train, val and test.
 
-    The split is on *words*, not synsets. A synset-level split looks right —
-    disjoint senses — but 55% of targets are polysemous and a cloze answer is
-    the word itself, so scattering one word's senses puts it on both sides and
-    28% of words end up in more than one split. Partitioning words instead
-    leaves 90% of synsets entirely inside one split, which is what the scene
-    builders ask for.
+    `mode="words"` partitions the words, so no answer word crosses a split. It
+    is the strict reading of "held out", and it is what a corpus should use to
+    prove a model is not reciting. It also makes val a different vocabulary
+    from train: measured on the 120k corpus, only 3.3% of val answer words ever
+    appear as a training answer, so a model that has learned the task perfectly
+    still has to name words it was never taught to produce.
+
+    `mode="contexts"` gives every split the whole vocabulary and lets the
+    contexts differ instead. Answers are shared, the sentences and option sets
+    are not. That measures whether the model generalises the RELATION — the
+    thing System One is supposed to learn — separately from whether it can
+    produce unseen vocabulary. Use it to tell a transfer failure apart from a
+    learning failure; use `words` for the headline number.
     """
     words = sorted(dictionary.target)
+    if mode == "contexts":
+        every = set(words)
+        return {"train": every, "val": every, "test": every}
     rng.shuffle(words)
     n = len(words)
     cut_a, cut_b = int(n * 0.8), int(n * 0.9)
@@ -727,6 +737,12 @@ def main():
                    help="frequency floor for answer words on the Zipf scale; "
                         "3.0 keeps ~18k words, 2.5 keeps ~28k "
                         "(default: %(default)s)")
+    p.add_argument("--split", choices=("words", "contexts"), default="words",
+                   help="'words' (default) gives each split its own answer "
+                        "vocabulary, so nothing is recited — but val answers "
+                        "are words training never produced. 'contexts' shares "
+                        "the vocabulary and holds out the sentences instead, "
+                        "which isolates whether the relation generalises.")
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
 
@@ -736,7 +752,7 @@ def main():
     dictionary = Dictionary(a.min_zipf)
     sentences = load_sentences(a.sentences or None, dictionary,
                                a.sentences_per_word, a.sentence_lines)
-    splits = split_words(dictionary, random.Random(a.seed))
+    splits = split_words(dictionary, random.Random(a.seed), a.split)
 
     tenth = max(1, a.contexts // 10)
     plan = (("train", a.contexts), ("val", tenth), ("test", tenth))
