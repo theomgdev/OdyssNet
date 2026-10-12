@@ -19,9 +19,6 @@ venv/
 examples/data/
 examples/advanced/data/
 data/*
-!data/decisions/
-data/decisions/*
-!data/decisions/*.py
 *.dataset
 
 # IDE
