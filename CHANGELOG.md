@@ -4,6 +4,16 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.0] — 2026-10-12
+
+### Removed
+- **The System One experiment and everything it alone needed.** `experiment_system_one.py` never produced a convergent run on its own task. It could memorise — 24 contexts to 100% and 96 to 97.1% train accuracy at 100-200 passes over the same material — but held-out accuracy stayed at chance in every configuration tried. Splitting validation questions by whether their answer word had ever been a training answer gave 20.77% for seen words against 24.34% for never-produced ones on a 19.69% chance baseline, so no word-to-relation mapping was forming at all; the model was reading its own training surfaces back. A 1.19M-parameter core at an explicit `lr 1e-2` for 3,429 steps left the ranking term flat at 1.60-1.70 against the uniform-guess 1.69. Removed with it: the three `data/decisions/` corpus builders and `tests/core/test_temporal_credit.py`, which only covered the script's trajectory scoring.
+- **`TemporalAttention.mark()`, `rewind()`, `gather_rows()`, `repeat_rows()`, `select_first_of()`.** Added so a decision protocol could read a context prefix once, branch it into every question and then every option, and rewind between branches. No second caller ever appeared — inside the library the five methods called nothing but each other — so the KV cache goes back to the discipline it had before: write, attend, detach, snapshot, restore, drop_rows. 107 fewer lines that every future cache change would have had to stay correct against.
+- **`OdyssNetTrainer(max_grad_norm=...)`.** One caller ever passed it, on the theory that a clip far below the natural gradient norm starves ChaosGrad's step-scale estimate. The theory did not survive its own test: with the clip raised to 80 the estimate still sat at its 1e-6 floor for 2,367 steps. The clip is the fixed 1.0 it was before; the non-finite-gradient guard around it is independent and stays.
+
+### Changed
+- **`-1` injects nothing in sequence mode too.** Direct mode has always treated `-1` as a pad sentinel (`valid_mask = token_indices != -1`); sequence mode embedded it as a real token, so a padded row read differently from the short row it was padded from. Kept as a consistency fix, independently of the experiment that found it.
+
 ## [3.15.0] — 2026-10-10
 
 ### Added

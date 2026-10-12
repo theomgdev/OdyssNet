@@ -1,4 +1,4 @@
-__version__ = "3.15.0"
+__version__ = "4.0.0"
 
 from .core.network import OdyssNet
 from .core.attention import TemporalAttention
