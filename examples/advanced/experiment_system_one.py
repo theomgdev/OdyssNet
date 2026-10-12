@@ -645,13 +645,53 @@ def widths(group, chunk, corpus=None):
             max(up(len(o.encode("utf-8"))) for r in reads for o in r.options))
 
 
+#: Chunk-count class boundaries used to keep a batch's long option reads away
+#: from short ones. `read_segment` costs one round per chunk of its WIDEST row
+#: and a round is nearly free of row count (measured: 9 rounds cost 50.2 ms for
+#: 458 rows and 51.2 ms for 2), so one 11-chunk option among hundreds of
+#: 1-chunk ones makes all of them pay ten rounds they do not need. Measured on
+#: WordNet, option widths are 72% one chunk with a tail out to eleven.
+#:
+#: The option axis is what these classes band, not the context: an option read
+#: is the step that runs hundreds of rows, while the context runs one row per
+#: context and its own length is paid once either way.
+WIDTH_CLASSES = (1, 2, 4, 8)
+
+
+def width_class(group, chunk, corpus=None):
+    """Which `WIDTH_CLASSES` band a group's widest option read falls in."""
+    opt = widths(group, chunk, corpus)[2]
+    for edge in WIDTH_CLASSES:
+        if opt <= edge:
+            return edge
+    return None  # everything longer shares one open-ended class
+
+
 def bucket_by_width(groups, size, chunk, corpus=None):
     """
-    Groups split into batches whose rows share a step geometry.
+    Groups split into batches, with long reads kept away from short ones.
 
-    Rows of one batch run the same number of steps, so a batch mixing
-    geometries would pay its longest row's steps for every row and its scores
-    would stop being reproducible across `--batch`.
+    `read_segment` costs one round per chunk of its widest row and a round
+    barely cares how many rows are in it, so one long option among hundreds of
+    short ones makes all of them pay its rounds. Keying on the exact geometry
+    stopped that and shattered the pool instead — a 40k-context corpus at
+    `--batch 256` handed out batches of three rows. A handful of coarse classes
+    gets both: batches stay full, and the long rows pay their own rounds.
+    """
+    buckets = {}
+    for g in groups:
+        buckets.setdefault(width_class(g, chunk, corpus), []).append(g)
+    return cut(buckets, size)
+
+
+def bucket_by_geometry(groups, size, chunk, corpus=None):
+    """
+    Batches whose rows share an exact step geometry.
+
+    Only attention needs this: its KV cache is indexed by batch row, so every
+    row of a batch has to run the same geometry there. Everywhere else
+    `read_segment` reads each row for its own length and `bucket_by_width` is
+    the cheaper split.
     """
     buckets = {}
     for g in groups:
@@ -699,7 +739,9 @@ class Batches:
                 key = widths(g, cfg.chunk, corpus)
                 self.pools.setdefault(key, []).append(g)
         else:
-            self.pools[None] = list(groups)
+            for g in groups:
+                key = width_class(g, cfg.chunk, corpus)
+                self.pools.setdefault(key, []).append(g)
         self.epochs = 0
         self.queue = []
         self._refill()
@@ -894,60 +936,65 @@ def read_segment(model, ids, cfg, state=None, return_sequence=False):
     seq = None
     out_last = torch.zeros(rows, device=ids.device,
                            dtype=torch.get_default_dtype())
-    end_state = None
 
     lens = (ids != PAD_ID).sum(dim=1)
-    up = -(-lens.clamp(min=1) // cfg.chunk) * cfg.chunk
-    widths_here = torch.unique(up)
-    # One width means one group, which is the common case and needs none of
-    # the per-group cache juggling below.
-    if len(widths_here) == 1:
-        groups = [(int(widths_here[0]),
-                   torch.arange(rows, device=ids.device))]
-    else:
-        groups = [(int(w), (up == w).nonzero(as_tuple=True)[0])
-                  for w in widths_here]
+    up = (-(-lens.clamp(min=1) // cfg.chunk) * cfg.chunk).clamp(max=total)
 
-    # Attention caches by batch row and `gather_rows` rewrites that axis in
-    # place, so reading width groups separately would need the cache rebuilt
-    # between them. Keep the single-pass read there: with attention on, every
-    # row runs the batch's widest geometry, which is the padding dependency
-    # this function otherwise removes. Attention is off by default here.
+    # Attention caches by batch row, so a row leaving the read early would
+    # desynchronise that cache from the rows still going. There every row runs
+    # the batch's widest geometry — the padding dependency this function
+    # otherwise removes. Attention is off by default here.
     if model.attn is not None:
-        groups = [(total, torch.arange(rows, device=ids.device))]
+        up = torch.full_like(up, total)
 
-    for w, sel in groups:
-        # A group with no incoming state starts cold, and `forward` falls back
-        # to `self.state` — which the previous group has already advanced. Hand
-        # it an explicit zero state so each group starts where it would have
-        # started alone.
-        if state is None:
-            h = torch.zeros(len(sel), model.num_neurons,
-                            device=ids.device,
-                            dtype=torch.get_default_dtype())
-        else:
-            h = state.index_select(0, sel)
-        piece_outs = []
-        for start in range(0, w, cfg.chunk):
-            piece = ids[sel, start: start + cfg.chunk]
-            last = start + cfg.chunk >= w
-            out, h = model(piece,
-                           steps=piece.shape[1] + (cfg.think if last else 0),
-                           current_state=h, return_sequence=return_sequence)
-            if return_sequence:
-                piece_outs.append(out)
+    widest = int(up.max())
+    if state is None:
+        h = torch.zeros(rows, model.num_neurons, device=ids.device,
+                        dtype=torch.get_default_dtype())
+    else:
+        h = state
+    end_state = h.new_zeros((rows,) + tuple(h.shape[1:]))
+
+    # All rows advance together and each one leaves when its own bytes run out,
+    # so the read costs the widest row's steps rather than the sum over the
+    # distinct lengths present. Reading the lengths one after another was
+    # correct but serialised the batch: 428 option rows spanning ten lengths
+    # paid 184 sequential steps instead of 40, for 53 questions/s against 579.
+    live = torch.arange(rows, device=ids.device)
+    for start in range(0, widest, cfg.chunk):
+        done = up[live] <= start
+        if done.any():
+            end_state[live[done]] = h[done]
+            keep = ~done
+            live, h = live[keep], h[keep]
+            if not live.numel():
+                break
+        piece = ids[live, start: start + cfg.chunk]
+        out, h = model(piece, steps=piece.shape[1],
+                       current_state=h, return_sequence=return_sequence)
         if return_sequence:
-            got = torch.cat(piece_outs, dim=1).squeeze(-1)
             if seq is None:
-                seq = got.new_zeros((rows, total))
-            seq[sel, :got.shape[1]] = got
+                seq = out.new_zeros((rows, total))
+            got = out.squeeze(-1)
+            seq[live, start: start + got.shape[1]] = got
         else:
-            out_last[sel] = out[:, -1, 0].to(out_last.dtype)
-        # Allocated on the first group, so every row's slot is written by the
-        # group that owns it — never left as whatever `new_empty` found.
-        if end_state is None:
-            end_state = h.new_zeros((rows,) + tuple(h.shape[1:]))
-        end_state[sel] = h
+            out_last[live] = out[:, -1, 0].to(out_last.dtype)
+    if live.numel():
+        end_state[live] = h
+
+    # The think steps inject nothing, so a row's echo depends only on its own
+    # end state — which is why they can run for every row at once here instead
+    # of inside each row's last chunk. Rows that finished early would otherwise
+    # have to either skip them or take them while longer rows were still
+    # reading, and the first is wrong while the second reintroduces exactly the
+    # neighbour dependency this function exists to remove.
+    if cfg.think:
+        blank = ids.new_full((rows, cfg.think), PAD_ID)
+        out, end_state = model(blank, steps=cfg.think,
+                               current_state=end_state,
+                               return_sequence=return_sequence)
+        if not return_sequence:
+            out_last = out[:, -1, 0].to(out_last.dtype)
     if return_sequence:
         return seq, end_state
     return out_last, end_state
@@ -1142,9 +1189,9 @@ class Validator:
             # validation set. The seed is fixed so every arm scores the same
             # contexts.
             groups = random.Random(0).sample(groups, cfg.eval_contexts)
-        # Batches of one width, as in training: a mixed-width batch pays its
-        # longest row's steps for every row, and that is also what would make
-        # the score move with --batch.
+        # Long reads batched away from short ones, as in training: a round of
+        # the read costs the same whatever its row count, so one long option
+        # among short ones would make all of them pay its rounds.
         self.batches = bucket_by_width(groups, cfg.batch, cfg.chunk, corpus)
         if corpus is None:
             reads = [r for b in self.batches for _, rs in b for r in rs]
@@ -2031,7 +2078,7 @@ def run_smoke(cfg, corpus):
             c = replace(base, attn_heads=attn, hebb_type=hebb)
             model, _ = build(c)
             model.eval()
-            batch = pack(bucket_by_width(groups, c.batch, c.chunk)[0], c)
+            batch = pack(bucket_by_geometry(groups, c.batch, c.chunk)[0], c)
             with torch.no_grad():
                 want = _sequential(model, c, batch)
                 got = score_all(model, c, batch)
@@ -2064,12 +2111,16 @@ def run_smoke(cfg, corpus):
             score_all(model, c, pack([("ctx", reads)], c))
         # One context read, one batched read for every question, and one
         # batched read for every option of every question — three, whatever
-        # Q and K are.
-        expect = 3
-        naive = sum(len(r.options) for r in reads) * 3
+        # Q and K are. Each segment spends one forward per chunk of input plus
+        # one for its think steps, which inject nothing and so run for every
+        # row at once after the read; what must not scale with Q and K is the
+        # number of SEGMENTS, which is what this counts.
+        per_segment = 1 + (1 if c.think else 0)
+        expect = 3 * per_segment
+        naive = sum(len(r.options) for r in reads) * 3 * per_segment
         check("context and question read once", calls["n"] == expect,
-              f"{calls['n']} segment reads (cached {expect}, uncached would "
-              f"be {naive})")
+              f"{calls['n']} forwards over 3 segments (cached {expect}, "
+              f"uncached would be {naive})")
         model.forward = real
         del model
     except Exception as e:                           # noqa: BLE001
@@ -2192,6 +2243,32 @@ def run_smoke(cfg, corpus):
         spread = float(s.std())
         check("scores stay apart", spread > 1e-4,
               f"option score std {spread:.1e}")
+
+        # A batch must cost its widest row's rounds, not the sum over the
+        # lengths in it. Reading each distinct width on its own made scores
+        # independent of batch composition and serialised the batch doing it:
+        # 428 option rows spanning nine widths paid 541 chunk rounds instead of
+        # 9, which measured 53 questions/s against 579 and never showed up in
+        # any check above — the losses and accuracies were all still correct,
+        # just eleven times slower to arrive. Count the rounds directly.
+        rounds = {"n": 0}
+        real_fwd = model.forward
+
+        def count_rounds(*a, **kw):
+            rounds["n"] += 1
+            return real_fwd(*a, **kw)
+
+        model.forward = count_rounds
+        with torch.no_grad():
+            read_segment(model, b.opt, c, return_sequence=True)
+        model.forward = real_fwd
+        lens = (b.opt != PAD_ID).sum(dim=1).clamp(min=1)
+        up = -(-lens // c.chunk)
+        ceiling = int(up.max()) + (1 if c.think else 0)
+        check("a batch costs its widest row, not the sum",
+              rounds["n"] <= ceiling,
+              f"{rounds['n']} forwards for {b.opt.shape[0]} rows "
+              f"({int(up.max())} chunks widest, {int(up.sum())} summed)")
 
         # The gradient the optimizer follows has to be the decision loss's own.
         # The trainer runs a forward of its own before calling the transform,
