@@ -24,6 +24,7 @@ OdyssNet achieves its efficiency through **Space-Time Trade-off**. Instead of ad
 ## TL;DR
 
 - OdyssNet replaces spatial depth with temporal depth: one recurrent core "thinks" for multiple steps instead of stacking hidden layers.
+- That depth does not have to be backpropagated whole. Training on truncated windows, where the state crosses each boundary detached, still learns dependencies that reach back further than any single window — the core carries them forward through signals that have already been echoed and mixed. Long contexts are therefore reachable without a gradient graph spanning every timestep.
 - Optional multi-head attention over the core's own state history, with a real KV cache, attached along time instead of between layers. Off by default.
 - It solves non-linear tasks (XOR, MNIST) with **zero hidden layers** via trainable dynamics.
 - Achieves **89.89% MNIST accuracy** with **634 parameters**, and **96.05%** on 7x7 MNIST with 4,669.

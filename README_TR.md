@@ -24,6 +24,7 @@ OdyssNet verimliliğini **Uzay-Zaman Takası** (Space-Time Trade-off) ile sağla
 ## TLDR
 
 - OdyssNet, uzamsal derinlik yerine zamansal derinlik kullanır: katman yığmak yerine tek bir dinamik çekirdek birden fazla adım "düşünür".
+- Bu derinliğin tamamının geri yayılması şart değil. Durumun her sınırı graftan kopuk geçtiği kesilmiş pencerelerle eğitim, tek bir pencereden daha geriye uzanan bağımlılıkları yine öğreniyor — çekirdek onları çoktan yankılanıp karışmış sinyaller üzerinden ileri taşıyor. Dolayısıyla uzun bağlamlar, her zaman adımını kapsayan bir gradyan grafı olmadan da erişilebilir.
 - Çekirdeğin kendi durum geçmişi üzerinde isteğe bağlı çok başlı dikkat (gerçek bir KV önbelleğiyle birlikte) katmanlar arasına değil zaman eksenine bağlanır. Varsayılan olarak kapalıdır.
 - **Sıfır gizli katman** ile XOR ve MNIST gibi doğrusal olmayan görevleri eğitilebilir dinamiklerle çözer.
 - **634 parametre** ile **%89.89 MNIST doğruluğu**, 4,669 parametre ile 7x7 MNIST'te **%96.05** elde eder.
