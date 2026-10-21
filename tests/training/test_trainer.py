@@ -654,3 +654,107 @@ class TestTrainerHelpers:
         all_states = torch.randn(batch, steps, vocab)
         out = t._extract_outputs(all_states, None, full_sequence=True)
         assert out is all_states
+
+
+# ===========================================================================
+# Trainer Heatup (Signal Highway Pre-training)
+# ===========================================================================
+
+class TestTrainerHeatup:
+    def test_heatup_defaults_to_true(self):
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu")
+        assert t.heatup_enabled is True
+        assert t._has_heated_up is True
+
+    def test_heatup_disabled_when_false(self):
+        model = _model()
+        w_before = model.W.data.clone()
+        t = OdyssNetTrainer(model, device="cpu", heatup=False)
+        assert t.heatup_enabled is False
+        assert t._has_heated_up is False
+        assert torch.equal(model.W.data, w_before)
+
+    def test_heatup_modifies_recurrent_core(self):
+        model = _model()
+        w_before = model.W.data.clone()
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=15)
+        assert not torch.equal(model.W.data, w_before)
+
+    def test_heatup_preserves_zero_diagonal(self):
+        model = _model(n=8, in_ids=[0, 1], out_ids=[6, 7])
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=15)
+        assert torch.all(model.W.diagonal() == 0.0)
+
+    def test_heatup_freezes_attention_o_proj(self):
+        model = OdyssNet(
+            num_neurons=8, input_ids=[0, 1], output_ids=[6, 7],
+            attn_heads=2, attn_head_dim=4, device="cpu",
+        )
+        assert torch.all(model.attn.o_proj.weight == 0.0)
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=15)
+        assert torch.all(model.attn.o_proj.weight == 0.0)
+
+    def test_heatup_freezes_hebbian_gain(self):
+        model = OdyssNet(
+            num_neurons=8, input_ids=[0, 1], output_ids=[6, 7],
+            hebb_type="temporal", device="cpu",
+        )
+        assert torch.all(model.hebb_norm.weight == 0.0)
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=15)
+        assert torch.all(model.hebb_norm.weight == 0.0)
+
+    def test_heatup_bypasses_vocab_decoder(self):
+        model = OdyssNet(
+            num_neurons=8, input_ids=[0, 1], output_ids=[6, 7],
+            vocab_size=16, device="cpu",
+        )
+        dec_before = model.output_decoder.weight.data.clone()
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=15)
+        assert torch.equal(model.output_decoder.weight.data, dec_before)
+
+    def test_heatup_asymmetric_dimensions(self):
+        # Many inputs to few outputs (e.g. classification / MNIST style)
+        m1 = OdyssNet(num_neurons=20, input_ids=list(range(15)), output_ids=[18, 19], device="cpu")
+        t1 = OdyssNetTrainer(m1, device="cpu", heatup=True, heatup_steps=10)
+        assert t1._has_heated_up is True
+        assert torch.all(m1.W.diagonal() == 0.0)
+
+        # Few inputs to many outputs
+        m2 = OdyssNet(num_neurons=20, input_ids=[0, 1], output_ids=list(range(5, 15)), device="cpu")
+        t2 = OdyssNetTrainer(m2, device="cpu", heatup=True, heatup_steps=10)
+        assert t2._has_heated_up is True
+        assert torch.all(m2.W.diagonal() == 0.0)
+
+    def test_heatup_state_dict_roundtrip(self):
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=5)
+        state = t.state_dict()
+        assert state.get("has_heated_up") is True
+
+        t2 = OdyssNetTrainer(model, device="cpu", heatup=False)
+        assert t2._has_heated_up is False
+        t2.load_state_dict(state)
+        assert t2._has_heated_up is True
+
+    def test_heatup_diagnostics_includes_status(self):
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=5)
+        diag = t.get_diagnostics()
+        assert diag.get("has_heated_up") is True
+
+    def test_heatup_edge_cases_zero_steps_or_empty_ids(self):
+        # Empty input/output IDs or zero steps should safely no-op
+        model = _model()
+        t = OdyssNetTrainer(model, device="cpu", heatup=True, heatup_steps=0)
+        assert t._has_heated_up is True
+        losses = t.heatup(steps=0)
+        assert losses == []
+
+        # Empty ids
+        m_empty = OdyssNet(num_neurons=5, input_ids=[], output_ids=[], device="cpu")
+        t_empty = OdyssNetTrainer(m_empty, device="cpu", heatup=True)
+        assert t_empty._has_heated_up is True
+        assert t_empty.heatup() == []
+
+

@@ -14,7 +14,8 @@ from .chaos_optimizer import ChaosGrad
 class OdyssNetTrainer:
     def __init__(self, model, optimizer=None, loss_fn=None, lr=None, device=None,
                  gradient_persistence=0.0, synaptic_noise=0.0,
-                 anomaly_hook=None):
+                 anomaly_hook=None, heatup=True, heatup_steps=25,
+                 heatup_thinking_steps=10, heatup_lr=0.01):
         """
         Initializes the trainer.
 
@@ -34,6 +35,11 @@ class OdyssNetTrainer:
             synaptic_noise (float): Scale of noise added to weights during training. Default 0.0.
             anomaly_hook (callable, optional): Called as hook(event_type, loss_value) on
                 anomalies ('spike', 'plateau', 'increase').
+            heatup (bool): If True, pre-conditions the recurrent core via identity
+                training to establish signal highways across thinking steps. Default: True.
+            heatup_steps (int): Number of heatup optimization steps. Default: 25.
+            heatup_thinking_steps (int): Recurrence depth used during heatup. Default: 10.
+            heatup_lr (float): Learning rate for the heatup optimizer. Default: 0.01.
         """
         self.model = model
         self.device = device if device is not None else model.device
@@ -41,6 +47,12 @@ class OdyssNetTrainer:
         self.gradient_persistence = gradient_persistence
         self.synaptic_noise = synaptic_noise
         self.initial_lr = lr
+
+        self.heatup_enabled = heatup
+        self._has_heated_up = False
+
+        if self.heatup_enabled:
+            self.heatup(steps=heatup_steps, thinking_steps=heatup_thinking_steps, lr=heatup_lr)
 
         # --- Optimizer Initialization ---
         self.anomaly_hook: Callable[[str, float], None] | None = anomaly_hook
@@ -150,6 +162,7 @@ class OdyssNetTrainer:
             'last_loss': self._last_loss,
             'acc_counter': self._acc_counter,
             'gradient_persistence': self.gradient_persistence,
+            'has_heated_up': self._has_heated_up,
         }
 
         if hasattr(self, 'scaler'):
@@ -173,6 +186,7 @@ class OdyssNetTrainer:
         self._step_count = int(state.get('step_count', self._step_count))
         self._last_loss = state.get('last_loss', self._last_loss)
         self._acc_counter = int(state.get('acc_counter', 0))
+        self._has_heated_up = bool(state.get('has_heated_up', self._has_heated_up))
 
         saved_gp = state.get('gradient_persistence', None)
         if isinstance(saved_gp, (float, int)) and self.gradient_persistence <= 0.0:
@@ -437,6 +451,147 @@ class OdyssNetTrainer:
 
         return history
 
+    def heatup(self, steps=15, thinking_steps=10, lr=0.01, batch_size=32, verbose=False):
+        """Pre-conditions the recurrent chaos core via identity training.
+
+        Establishes highway signal transmission through the recurrent matrix W
+        by training it to preserve random input signals across time.
+        Protects external and auxiliary subsystems:
+          - Attention: kept frozen (o_proj remains 0) so it cannot bypass W.
+          - Plasticity: kept frozen with zero gain so ephemeral traces do not accumulate.
+          - Embeddings / Decoders: bypassed so semantic mappings remain untouched.
+
+        Args:
+            steps (int): Number of heatup optimization steps. Default 15.
+            thinking_steps (int): Recurrence depth for signal propagation. Default 10.
+            lr (float): Learning rate for the lightweight heatup optimizer. Default 0.01.
+            batch_size (int): Batch size of random input signals. Default 32.
+            verbose (bool): If True, prints heatup progress. Default False.
+
+        Returns:
+            list[float]: Loss history during heatup.
+        """
+        if steps <= 0:
+            self._has_heated_up = True
+            return []
+
+        raw_model = getattr(self.model, '_orig_mod', self.model)
+        input_ids = getattr(raw_model, 'input_ids', None)
+        output_ids = getattr(raw_model, 'output_ids', None)
+        num_neurons = getattr(raw_model, 'num_neurons', None)
+
+        if not input_ids or not output_ids or not num_neurons:
+            self._has_heated_up = True
+            return []
+
+        d_in = len(input_ids)
+        d_out = len(output_ids)
+        if d_in == 0 or d_out == 0 or num_neurons == 0:
+            self._has_heated_up = True
+            return []
+
+        was_training = self.model.training
+        self.model.train()
+
+        # 1. Save requires_grad flags for all parameters
+        saved_requires_grad = {name: p.requires_grad for name, p in self.model.named_parameters()}
+
+        # 2. Select parameters to optimize: recurrent core W and modulation (scales/gates)
+        # Freeze auxiliary subsystems: attention, plasticity, embeddings, projections, decoders
+        heatup_params = []
+        for name, p in self.model.named_parameters():
+            is_auxiliary = any(k in name for k in ('attn', 'hebb', 'embed', 'proj', 'output_decoder'))
+            if not is_auxiliary and saved_requires_grad[name]:
+                p.requires_grad = True
+                heatup_params.append(p)
+            else:
+                p.requires_grad = False
+
+        if not heatup_params:
+            for name, p in self.model.named_parameters():
+                p.requires_grad = saved_requires_grad[name]
+            if not was_training:
+                self.model.eval()
+            self._has_heated_up = True
+            return []
+
+        # 3. Bypass vocab mode and force pulse injection during heatup
+        orig_vocab_size = getattr(raw_model, 'vocab_size', None)
+        orig_output_decoder = getattr(raw_model, 'output_decoder', None)
+        orig_pulse_mode = getattr(raw_model, 'pulse_mode', True)
+
+        optimizer = optim.AdamW(heatup_params, lr=lr, weight_decay=0.0)
+        loss_fn = nn.MSELoss()
+        losses = []
+
+        try:
+            if orig_vocab_size is not None:
+                raw_model.vocab_size = None
+                raw_model.output_decoder = None
+            raw_model.pulse_mode = True
+
+            for s in range(steps):
+                optimizer.zero_grad()
+
+                # Rademacher random signal (+1 / -1)
+                raw_in = torch.randint(0, 2, (batch_size, d_in), device=self.device).float() * 2.0 - 1.0
+                x_in, _ = prepare_input(raw_in, input_ids, num_neurons, self.device)
+
+                self.model.reset_state(batch_size)
+
+                all_states, h_t = self.model(x_in, steps=thinking_steps, return_sequence=False)
+
+                # Equal geometry -> end-to-end identity at output neurons.
+                # Asymmetric geometry -> core signal retention over all input channels.
+                if d_in == d_out:
+                    pred = all_states[:, -1, output_ids]
+                else:
+                    pred = h_t[:, input_ids]
+
+                loss = loss_fn(pred, raw_in)
+                loss.backward()
+
+                # Enforce zero-diagonal invariant on core W gradients
+                w_param = getattr(raw_model, 'W', None)
+                if w_param is not None and w_param.grad is not None:
+                    w_param.grad.fill_diagonal_(0.0)
+
+                optimizer.step()
+
+                # Defensive zero-diagonal invariant enforcement
+                with torch.no_grad():
+                    if w_param is not None:
+                        w_param.fill_diagonal_(0.0)
+
+                loss_val = float(loss.item())
+                losses.append(loss_val)
+
+                if verbose and (s == 0 or s == steps - 1 or s % 10 == 0):
+                    print(f"Heatup step {s+1}/{steps}: loss {loss_val:.6f}")
+
+                if loss_val < 1e-4:
+                    if verbose:
+                        print(f"Heatup converged early at step {s+1}/{steps}: loss {loss_val:.6f}")
+                    break
+
+        finally:
+            # 4. Restore original attributes and state
+            if orig_vocab_size is not None:
+                raw_model.vocab_size = orig_vocab_size
+                raw_model.output_decoder = orig_output_decoder
+            raw_model.pulse_mode = orig_pulse_mode
+
+            for name, p in self.model.named_parameters():
+                p.requires_grad = saved_requires_grad[name]
+
+            self.model.reset_state(1)
+            if not was_training:
+                self.model.eval()
+
+            self._has_heated_up = True
+
+        return losses
+
     def expand(self, amount=1, verbose=True):
         """
         Dynamically adds neurons to the model (Neurogenesis).
@@ -477,6 +632,7 @@ class OdyssNetTrainer:
             'last_loss': self._last_loss,
             'current_lr': self._current_lr(),
             'gradient_persistence': self.gradient_persistence,
+            'has_heated_up': self._has_heated_up,
         }
 
         if isinstance(self.optimizer, ChaosGrad):

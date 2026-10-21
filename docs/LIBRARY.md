@@ -314,8 +314,19 @@ trainer = OdyssNetTrainer(model, optimizer=torch.optim.AdamW(model.parameters(),
     *   `"increase"`: Triggered *every single time* the current step's loss is strictly greater than the previous step's loss (even by 0.0001). Perfect for custom patience counters or algorithmic early stopping.
     *   `"plateau"`: The loss has stagnated and is barely moving over a window.
     *   **Usage**: Allows for smart interventions (like custom logging or early stopping when stuck).
+*   `heatup` (bool, default `True`): **Signal Highway Pre-training**. Automatically pre-conditions the recurrent core $W$ via random identity mapping before primary training begins. Creates gradient highways from output back to input neurons, preventing signal dissipation in deep recurrence.
+*   `heatup_steps` (int, default `25`): Optimization steps taken during heatup.
+*   `heatup_thinking_steps` (int, default `10`): Recurrence depth used during heatup.
+*   `heatup_lr` (float, default `0.01`): Learning rate for the internal heatup optimizer.
 
 ### Key Methods
+
+#### `trainer.heatup(...)`
+Explicitly runs the identity pre-conditioning pass on the recurrent core. Can be called manually to re-condition or customize depth. Keeps auxiliary modules (attention $o\_proj=0$, plasticity zero gain, embeddings/decoders) strictly protected.
+
+```python
+losses = trainer.heatup(steps=25, thinking_steps=10, lr=0.01, batch_size=32)
+```
 
 #### `trainer.fit(...)`
 Runs a full training loop.

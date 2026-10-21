@@ -4,6 +4,11 @@ All notable changes to OdyssNet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.1.0] — 2026-10-21
+
+### Added
+- **`OdyssNetTrainer(heatup=True)`**: Trainer heatup feature enabled by default. Pre-conditions the recurrent chaos core $W$ via an internal random identity training loop before main training starts. Establishes signal highways from output back to input neurons across thinking steps, preventing signal dissipation and gradient bottlenecks in deep recurrence without polluting external subsystems (attention $o\_proj=0$, Hebbian zero gain, and vocab projection layers remain strictly protected). Includes `trainer.heatup(...)` API, state persistence via `state_dict`, and status reporting in `get_diagnostics`.
+
 ## [4.0.0] — 2026-10-12
 
 ### Removed
