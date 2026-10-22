@@ -270,3 +270,15 @@ GitHub Actions runs `python -m pytest tests/ -v` on Python 3.10–3.12 (CPU). Te
 You will know it is when diffs contain only what was asked for, when reviews
 stop turning into rewrites, and when questions arrive before the work rather
 than after the mistake.
+
+## graphify
+
+This project supports knowledge graph analysis with graphify (outputs kept local in `graphify-out/`).
+
+When the user types `/graphify`, use the installed graphify skill or instructions if available.
+
+Rules:
+- When `graphify-out/graph.json` exists and `graphify` is installed, run `graphify query "<question>"` before your first grep, search or source-file read for a codebase question. Read raw files only for lines the graph or an earlier read already located. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts.
+- If `graphify-out/wiki/index.md` exists, use it for broad navigation instead of raw source browsing.
+- Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review or when query/path/explain do not surface enough context.
+- If `graphify` is installed and `graphify-out/` exists, run `graphify update .` after modifying code to keep the graph current.

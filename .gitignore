@@ -52,6 +52,7 @@ GEMINI.md
 .mcp.json
 opencode.json
 .github/copilot-instructions.md
+graphify-out/
 
 # Migrations & Plans
 *[mM]igration*.md
